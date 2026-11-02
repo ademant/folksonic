@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -15,9 +16,21 @@ import (
 	"github.com/tsirysndr/tinysonic/internal/db"
 	"github.com/tsirysndr/tinysonic/internal/scanner"
 	"github.com/tsirysndr/tinysonic/internal/server"
+	"github.com/tsirysndr/tinysonic/internal/users"
 )
 
 func main() {
+	// Account and pairing commands run directly against the database and exit.
+	if len(os.Args) > 1 && (os.Args[1] == "user" || os.Args[1] == "pair") {
+		if err := runAdmin(os.Args[1:]); err != nil {
+			if !errors.Is(err, flag.ErrHelp) {
+				fmt.Fprintf(os.Stderr, "tinysonic: %v\n", err)
+			}
+			os.Exit(2)
+		}
+		return
+	}
+
 	args := cli.Parse()
 
 	cfg, err := config.Load(args.ConfigPath)
@@ -33,6 +46,17 @@ func main() {
 		log.Fatalf("db: %v", err)
 	}
 	defer pool.Close()
+
+	created, err := users.Bootstrap(context.Background(), pool, cfg.Username, cfg.Password)
+	if err != nil {
+		log.Fatalf("users: %v", err)
+	}
+	if created {
+		log.Printf("created admin account %q from the config file", cfg.Username)
+	}
+	if n, _ := users.Count(context.Background(), pool); n == 0 {
+		log.Printf("warning: no user accounts exist; create one with: tinysonic user add <name> --admin")
+	}
 
 	progress := &scanner.Progress{}
 

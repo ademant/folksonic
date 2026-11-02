@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-webauthn/webauthn/webauthn"
+
 	"github.com/tsirysndr/tinysonic/internal/config"
 	"github.com/tsirysndr/tinysonic/internal/scanner"
 )
@@ -19,11 +21,19 @@ import (
 // State is shared by all handlers.
 type State struct {
 	Pool      *sql.DB
-	Username  string
-	Password  string
 	MusicDir  string
 	CoversDir string
 	Progress  *scanner.Progress
+
+	// BaseURL is the public address clients reach the server at; it is
+	// embedded in pairing QR codes. Empty means derive it from the request.
+	BaseURL string
+	// AllowRegistration enables self-registration. New accounts stay pending
+	// until an active user approves them.
+	AllowRegistration bool
+
+	webAuthn   *webauthn.WebAuthn
+	ceremonies *ceremonyStore
 
 	// songCache maps a song id to its (path, content_type). Populated lazily
 	// on cache miss and warmed in the background at startup. Bypassing the DB
@@ -76,15 +86,24 @@ func (s *State) preloadSongs(ctx context.Context) {
 
 func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scanner.Progress) error {
 	s := &State{
-		Pool:      pool,
-		Username:  cfg.Username,
-		Password:  cfg.Password,
-		MusicDir:  cfg.MusicDir,
-		CoversDir: cfg.CoversDir,
-		Progress:  progress,
+		Pool:              pool,
+		BaseURL:           cfg.BaseURL,
+		AllowRegistration: cfg.AllowRegistration,
+		MusicDir:          cfg.MusicDir,
+		CoversDir:         cfg.CoversDir,
+		Progress:          progress,
 	}
 
 	go s.preloadSongs(ctx)
+
+	// A bad base_url disables passkeys but must not stop the server: password
+	// and API-key access keep working.
+	wa, err := newWebAuthn(cfg.BaseURL)
+	if err != nil {
+		log.Printf("warning: passkeys disabled: %v", err)
+	}
+	s.webAuthn = wa
+	s.ceremonies = &ceremonyStore{m: map[string]ceremony{}}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
@@ -155,6 +174,24 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 	register("getTopSongs", s.GetTopSongs)
 	register("getLyrics", s.GetLyrics)
 
+	// Account and device management (JSON, not Subsonic)
+	mux.HandleFunc("POST /api/register", s.APIRegister)
+	mux.HandleFunc("GET /api/users", s.APIListUsers)
+	mux.HandleFunc("POST /api/users/{id}/approve", s.APIApprove)
+	mux.HandleFunc("POST /api/users/{id}/reject", s.APIReject)
+	mux.HandleFunc("POST /api/keys", s.APICreateKey)
+	mux.HandleFunc("GET /api/keys", s.APIListKeys)
+	mux.HandleFunc("DELETE /api/keys/{id}", s.APIRevokeKey)
+	mux.HandleFunc("POST /api/pair/start", s.APIPairStart)
+	mux.HandleFunc("POST /api/pair/complete", s.APIPairComplete)
+	mux.HandleFunc("POST /api/passkey/register/begin", s.APIPasskeyRegisterBegin)
+	mux.HandleFunc("POST /api/passkey/register/finish", s.APIPasskeyRegisterFinish)
+	mux.HandleFunc("POST /api/passkey/login/begin", s.APIPasskeyLoginBegin)
+	mux.HandleFunc("POST /api/passkey/login/finish", s.APIPasskeyLoginFinish)
+	mux.HandleFunc("POST /api/login", s.APILogin)
+	mux.HandleFunc("POST /api/logout", s.APILogout)
+	mux.HandleFunc("GET /login", s.ServeLoginPage)
+
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 	srv := &http.Server{
 		Addr:              addr,
@@ -184,7 +221,7 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 func corsMiddleware(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "*")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -275,8 +312,7 @@ type writerOnly struct{ io.Writer }
 // requireAuth returns true when the request authenticated; it has already
 // written the error response when this returns false.
 func (s *State) requireAuth(w http.ResponseWriter, r *http.Request) bool {
-	q := params(r)
-	if !authCheck(s.Username, s.Password, q.Get("u"), q.Get("p"), q.Get("t"), q.Get("s")) {
+	if _, ok := s.authenticate(r); !ok {
 		writeError(w, 40, "Wrong username or password")
 		return false
 	}

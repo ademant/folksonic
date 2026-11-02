@@ -19,6 +19,7 @@ import (
 	"github.com/tsirysndr/tinysonic/internal/cli"
 	"github.com/tsirysndr/tinysonic/internal/models"
 	"github.com/tsirysndr/tinysonic/internal/scanner"
+	"github.com/tsirysndr/tinysonic/internal/users"
 )
 
 // ── Root index ───────────────────────────────────────────────────────────────
@@ -262,16 +263,19 @@ func (s *State) Ping(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *State) GetUser(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAuth(w, r) {
+	u, ok := s.authenticate(r)
+	if !ok {
+		writeError(w, 40, "Wrong username or password")
 		return
 	}
+	isAdmin := u.Role == users.RoleAdmin
 	writeOK(w, J{
 		"user": J{
-			"username":          s.Username,
+			"username":          u.Username,
 			"email":             "",
 			"scrobblingEnabled": false,
-			"adminRole":         true,
-			"settingsRole":      true,
+			"adminRole":         isAdmin,
+			"settingsRole":      isAdmin,
 			"downloadRole":      true,
 			"uploadRole":        false,
 			"playlistRole":      true,

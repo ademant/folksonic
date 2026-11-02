@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tinysonic sign in</title>
+<style>
+  :root { --bg:#fff; --fg:#1d1d1f; --muted:#6e6e73; --accent:#0a66c2; --line:#d2d2d7; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#111; --fg:#f5f5f7; --muted:#a1a1a6; --accent:#4ea1ff; --line:#333; } }
+  :root[data-theme="dark"] { --bg:#111; --fg:#f5f5f7; --muted:#a1a1a6; --accent:#4ea1ff; --line:#333; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.4 system-ui, sans-serif; }
+  main { max-width:360px; margin:12vh auto; padding:0 16px; }
+  h1 { font-size:1.4rem; margin:0 0 1rem; }
+  label { display:block; margin:.6rem 0 .2rem; color:var(--muted); font-size:.9rem; }
+  input { width:100%; box-sizing:border-box; padding:.6rem; font:inherit; color:var(--fg); background:var(--bg); border:1px solid var(--line); border-radius:6px; }
+  button { width:100%; margin-top:.8rem; padding:.7rem; font:inherit; color:#fff; background:var(--accent); border:0; border-radius:6px; cursor:pointer; }
+  button.secondary { background:transparent; color:var(--accent); border:1px solid var(--accent); }
+  #msg { min-height:1.4em; margin-top:.8rem; color:var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Sign in to tinysonic</h1>
+  <label for="u">Username</label>
+  <input id="u" name="username" autocomplete="username webauthn" autocapitalize="none">
+  <button id="passkey">Sign in with a passkey</button>
+  <label for="p">Password</label>
+  <input id="p" type="password" autocomplete="current-password">
+  <button id="pw" class="secondary">Sign in with password</button>
+  <div id="msg" role="status"></div>
+</main>
+<script>
+(function () {
+  "use strict";
+  var msg = document.getElementById("msg");
+  function say(t) { msg.textContent = t; }
+  function b64uToBuf(s) {
+    s = s.replace(/-/g, "+").replace(/_/g, "/");
+    while (s.length % 4) s += "=";
+    var bin = atob(s), buf = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+    return buf.buffer;
+  }
+  function bufToB64u(buf) {
+    var bytes = new Uint8Array(buf), s = "";
+    for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+  async function post(path, body) {
+    var r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+    var j = await r.json().catch(function () { return {}; });
+    if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+    return j;
+  }
+  function finish(token, username) {
+    try { sessionStorage.setItem("tinysonic.token", token); sessionStorage.setItem("tinysonic.user", username); } catch (e) {}
+    say("Signed in as " + username + ".");
+  }
+  document.getElementById("passkey").addEventListener("click", async function () {
+    var name = document.getElementById("u").value.trim();
+    if (!name) { say("Enter your username first."); return; }
+    try {
+      say("Waiting for your passkey…");
+      var begin = await post("/api/passkey/login/begin", { username: name });
+      var o = begin.options.publicKey;
+      o.challenge = b64uToBuf(o.challenge);
+      (o.allowCredentials || []).forEach(function (c) { c.id = b64uToBuf(c.id); });
+      var cred = await navigator.credentials.get({ publicKey: o });
+      var resp = {
+        id: bufToB64u(cred.rawId), rawId: bufToB64u(cred.rawId), type: cred.type,
+        response: {
+          authenticatorData: bufToB64u(cred.response.authenticatorData),
+          clientDataJSON: bufToB64u(cred.response.clientDataJSON),
+          signature: bufToB64u(cred.response.signature),
+          userHandle: cred.response.userHandle ? bufToB64u(cred.response.userHandle) : null
+        },
+        clientExtensionResults: {}
+      };
+      var done = await fetch("/api/passkey/login/finish?ceremony=" + encodeURIComponent(begin.ceremony), {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(resp)
+      });
+      var j = await done.json();
+      if (!done.ok) throw new Error(j.error || "sign-in failed");
+      finish(j.token, j.username);
+    } catch (e) { say(e.message || String(e)); }
+  });
+  document.getElementById("pw").addEventListener("click", async function () {
+    var name = document.getElementById("u").value.trim();
+    var pw = document.getElementById("p").value;
+    try {
+      var j = await post("/api/login", { username: name, password: pw });
+      finish(j.token, j.username);
+    } catch (e) { say(e.message || String(e)); }
+  });
+})();
+</script>
+</body>
+</html>

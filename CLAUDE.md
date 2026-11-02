@@ -65,20 +65,25 @@ Copy `smolsonic.example.toml` to `smolsonic.toml` for local testing. Don't commi
 | `internal/audioinfo/` | Per-format duration and bitrate probing |
 | `internal/scanner/` | `WalkDir` scan, tag extraction, cover art, fsnotify watcher, ID generation |
 | `internal/server/server.go` | Routing, CORS, request logging, song cache |
-| `internal/server/auth.go` | Subsonic token / plaintext auth |
+| `internal/server/auth.go` | Caller resolution: API key, session, Subsonic credentials |
+| `internal/server/api_users.go` | JSON endpoints for accounts, API keys and pairing |
+| `internal/server/webauthn.go` | Passkey (WebAuthn) registration and sign-in |
+| `internal/server/login.go` | Password sign-in and the `/login` page (`static/login.html`) |
+| `internal/users/` | Accounts, API keys, pairing tokens, sessions, passkey storage |
+| `cmd/tinysonic/admin.go` | `tinysonic user …` and `tinysonic pair` commands |
 | `internal/server/handlers.go` | Subsonic endpoint handlers |
 | `internal/server/repo.go` | `database/sql` queries |
 | `internal/server/response.go` | Subsonic JSON envelope helpers |
 
 ## Key facts
 
-- **Pure Go, one user**: no external services. The single user and password come from the TOML config; there is no user database.
+- **Pure Go, no external services.** Accounts, API keys, pairing tokens and sessions live in the SQLite database (`internal/users`). The optional `username`/`password` in the config only bootstraps the first admin.
 - **DB**: SQLite at `database_path` (default `smolsonic.db`), WAL mode, FTS5 for search.
 - **IDs**: `ar-…` / `al-…` / `so-…`, derived from tag content. Keep them stable — clients store them as bookmarks. Changing the derivation breaks existing clients.
 - **Schema changes**: `schema` in `internal/db/db.go` uses `CREATE TABLE IF NOT EXISTS`. For a change to an existing table, add an explicit, idempotent migration step in `migrate()` rather than editing the `CREATE` statement alone, since existing databases won't pick it up.
 - **Streams**: `State.songCache` (`internal/server/server.go`) maps song IDs to file paths. Any code path that changes or deletes a song's path must also call `evictSong`. Verify the scanner/watcher paths do this before relying on it.
 - **Subsonic compatibility**: every endpoint is registered at both `/rest/x` and `/rest/x.view`, for GET and POST. Keep responses in the Subsonic envelope. Clients are sensitive to field names and shapes.
-- **Auth**: every `/rest/*` handler calls `requireAuth`. A new endpoint without it is a bug unless it's deliberately public.
+- **Auth**: every `/rest/*` handler calls `requireAuth`, and every `/api/*` handler that needs a user calls `requireUser`. `authenticate` (`internal/server/auth.go`) is the only place that resolves a caller. A new endpoint without one of these is a bug unless it's deliberately public.
 - **Watcher**: file events are debounced (`watchDebounce`, 750 ms) so partially copied files aren't read. Don't remove the debounce.
 - **CORS** is intentionally permissive (any origin) for web clients. Don't tighten it without asking.
 
