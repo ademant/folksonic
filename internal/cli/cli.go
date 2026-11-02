@@ -39,7 +39,7 @@ func Parse() Args {
 	return a
 }
 
-func PrintBanner(host string, port int, musicDir string) {
+func PrintBanner(host string, port int, musicDirs []string) {
 	const (
 		hotPink        = "\x1b[1;38;2;255;42;109m"
 		electricCyan   = "\x1b[1;38;2;5;217;232m"
@@ -50,6 +50,12 @@ func PrintBanner(host string, port int, musicDir string) {
 	)
 	fmt.Print(hotPink + Banner + reset)
 	fmt.Printf("  %slistening%s %s→%s %shttp://%s:%d%s\n", electricCyan, reset, dim, reset, neonMagenta, host, port, reset)
-	fmt.Printf("  %slibrary  %s %s→%s %s%s%s\n", electricCyan, reset, dim, reset, electricPurple, musicDir, reset)
+	for i, d := range musicDirs {
+		label := "library "
+		if i > 0 {
+			label = "        "
+		}
+		fmt.Printf("  %s%s%s %s→%s %s%s%s\n", electricCyan, label, reset, dim, reset, electricPurple, d, reset)
+	}
 	fmt.Println()
 }

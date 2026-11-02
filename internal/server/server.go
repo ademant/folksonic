@@ -21,7 +21,7 @@ import (
 // State is shared by all handlers.
 type State struct {
 	Pool      *sql.DB
-	MusicDir  string
+	MusicDirs []string
 	CoversDir string
 	Progress  *scanner.Progress
 
@@ -89,7 +89,7 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 		Pool:              pool,
 		BaseURL:           cfg.BaseURL,
 		AllowRegistration: cfg.AllowRegistration,
-		MusicDir:          cfg.MusicDir,
+		MusicDirs:         cfg.MusicDirs,
 		CoversDir:         cfg.CoversDir,
 		Progress:          progress,
 	}

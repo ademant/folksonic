@@ -61,13 +61,13 @@ CGO_ENABLED=0 go build -o tinysonic ./cmd/tinysonic
 ```sh
 # 1. Create a config
 cp smolsonic.example.toml smolsonic.toml
-$EDITOR smolsonic.toml      # set music_dir; optionally a bootstrap admin
+$EDITOR smolsonic.toml      # set music_dirs; optionally a bootstrap admin
 
 # 2. Run
 ./tinysonic --config smolsonic.toml
 ```
 
-On first launch tinysonic scans `music_dir`, creates the SQLite database, and
+On first launch tinysonic scans `music_dirs`, creates the SQLite database, and
 starts the HTTP server. Point any Subsonic client at
 `http://<host>:<port>/rest/…` using the credentials from your TOML file.
 
@@ -76,7 +76,7 @@ starts the HTTP server. Point any Subsonic client at
 `smolsonic.toml` (all keys shown):
 
 ```toml
-music_dir         = "/path/to/your/music"    # required
+music_dirs       = ["/path/to/your/music", "/mnt/nas/albums"]   # required
 
 # Optional. When both are set and no users exist yet, they create the first
 # admin account. After that, manage users with `tinysonic user …`.
@@ -101,7 +101,7 @@ allow_registration = false
 Configuration is checked at startup:
 
 - **Unknown keys are an error**, so a typo cannot silently disable a setting.
-- **Relative paths** (`music_dir`, `database_path`, `covers_dir`) resolve from
+- **Relative paths** (`music_dirs`, `database_path`, `covers_dir`) resolve from
   the directory containing the config file, not from the working directory.
   Use absolute paths if you start tinysonic from elsewhere.
 - **Loose permissions** on the config file produce a warning, because it can
@@ -111,7 +111,7 @@ Configuration is checked at startup:
 
 | Key                  | Purpose                                                              |
 | -------------------- | -------------------------------------------------------------------- |
-| `music_dir`          | Root of your library. Walked recursively.                            |
+| `music_dirs`         | Library roots, each walked recursively. `music_dir = "…"` is accepted as a one-entry list. |
 | `username`/`password`| Optional bootstrap admin, imported once when the database has no users. |
 | `port`               | TCP port to bind.                                                    |
 | `host`               | Interface to bind (use `127.0.0.1` to keep it local).                |

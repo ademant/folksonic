@@ -328,7 +328,7 @@ func (s *State) StartScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	go func() {
-		if _, err := scanner.Scan(s.Pool, s.MusicDir, s.CoversDir, s.Progress); err != nil {
+		if _, err := scanner.Scan(s.Pool, s.MusicDirs, s.CoversDir, s.Progress); err != nil {
 			log.Printf("scan: %v", err)
 		}
 	}()

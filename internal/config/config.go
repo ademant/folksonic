@@ -11,6 +11,10 @@ import (
 )
 
 type Config struct {
+	// MusicDirs are the library roots, scanned and watched recursively.
+	MusicDirs []string `toml:"music_dirs"`
+	// MusicDir is the older single-directory key. It is kept as an alias and
+	// folded into MusicDirs by Load; setting both keys is an error.
 	MusicDir          string `toml:"music_dir"`
 	Username          string `toml:"username"`
 	Password          string `toml:"password"`
@@ -52,8 +56,15 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("config file %s: unknown key(s): %s", path, strings.Join(names, ", "))
 	}
 
-	if c.MusicDir == "" {
-		return nil, errors.New("config: music_dir must not be empty")
+	if c.MusicDir != "" && len(c.MusicDirs) > 0 {
+		return nil, errors.New("config: set music_dirs or music_dir, not both")
+	}
+	if c.MusicDir != "" {
+		c.MusicDirs = []string{c.MusicDir}
+		c.MusicDir = ""
+	}
+	if len(c.MusicDirs) == 0 {
+		return nil, errors.New("config: music_dirs must list at least one directory")
 	}
 	if (c.Username == "") != (c.Password == "") {
 		return nil, errors.New("config: set both username and password, or neither")
@@ -64,7 +75,14 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("config file %s: %w", path, err)
 	}
 	base := filepath.Dir(abs)
-	c.MusicDir = resolve(base, c.MusicDir)
+	c.MusicDirs = uniqueDirs(resolveAll(base, c.MusicDirs))
+	for _, d := range c.MusicDirs {
+		// A missing directory is not fatal: the rest of the library keeps
+		// working, and its songs are not pruned while it is unavailable.
+		if info, err := os.Stat(d); err != nil || !info.IsDir() {
+			c.Warnings = append(c.Warnings, fmt.Sprintf("music directory %s does not exist or is not a directory", d))
+		}
+	}
 	c.DatabasePath = resolve(base, c.DatabasePath)
 	c.CoversDir = resolve(base, c.CoversDir)
 
@@ -74,6 +92,31 @@ func Load(path string) (*Config, error) {
 			path, info.Mode().Perm(), path))
 	}
 	return c, nil
+}
+
+func resolveAll(base string, ps []string) []string {
+	out := make([]string, 0, len(ps))
+	for _, p := range ps {
+		if p == "" {
+			continue
+		}
+		out = append(out, resolve(base, p))
+	}
+	return out
+}
+
+// uniqueDirs removes duplicates after cleaning, keeping the first occurrence.
+func uniqueDirs(ds []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, d := range ds {
+		c := filepath.Clean(d)
+		if !seen[c] {
+			seen[c] = true
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // resolve makes p absolute relative to base. Absolute paths are unchanged.

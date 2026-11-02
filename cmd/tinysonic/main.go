@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/tsirysndr/tinysonic/internal/cli"
@@ -42,7 +43,7 @@ func main() {
 		log.Printf("warning: %s", w)
 	}
 
-	cli.PrintBanner(cfg.Host, cfg.Port, cfg.MusicDir)
+	cli.PrintBanner(cfg.Host, cfg.Port, cfg.MusicDirs)
 
 	pool, err := db.Init(cfg.DatabasePath)
 	if err != nil {
@@ -68,8 +69,8 @@ func main() {
 
 	if !args.NoScan {
 		go func() {
-			log.Printf("starting library scan of %s", cfg.MusicDir)
-			if _, err := scanner.Scan(pool, cfg.MusicDir, cfg.CoversDir, progress); err != nil {
+			log.Printf("starting library scan of %s", strings.Join(cfg.MusicDirs, ", "))
+			if _, err := scanner.Scan(pool, cfg.MusicDirs, cfg.CoversDir, progress); err != nil {
 				log.Printf("scan failed: %v", err)
 			}
 		}()
@@ -77,7 +78,7 @@ func main() {
 
 	if !args.NoWatch {
 		go func() {
-			if err := scanner.Watch(ctx, pool, cfg.MusicDir, cfg.CoversDir, progress); err != nil {
+			if err := scanner.Watch(ctx, pool, cfg.MusicDirs, cfg.CoversDir, progress); err != nil {
 				log.Printf("watch: %v", err)
 			}
 		}()

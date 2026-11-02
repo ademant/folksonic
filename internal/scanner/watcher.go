@@ -19,18 +19,20 @@ import (
 // in-progress copies and read truncated tag data.
 const watchDebounce = 750 * time.Millisecond
 
-// Watch monitors musicDir recursively and keeps the library in sync with the
+// Watch monitors every root recursively and keeps the library in sync with the
 // filesystem: new audio files are scanned and inserted, removed files are
 // purged from the database. It blocks until ctx is cancelled.
-func Watch(ctx context.Context, pool *sql.DB, musicDir, coversDir string, progress *Progress) error {
+func Watch(ctx context.Context, pool *sql.DB, roots []string, coversDir string, progress *Progress) error {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return err
 	}
 	defer w.Close()
 
-	progress.watchFailures.Add(int64(addRecursive(w, musicDir)))
-	log.Printf("watch: monitoring %s for changes (%d directories not watched)", musicDir, progress.WatchFailures())
+	for _, root := range roots {
+		progress.watchFailures.Add(int64(addRecursive(w, root)))
+	}
+	log.Printf("watch: monitoring %d music director(ies) for changes (%d directories not watched)", len(roots), progress.WatchFailures())
 
 	d := newDebouncer(watchDebounce)
 	defer d.stopAll()
