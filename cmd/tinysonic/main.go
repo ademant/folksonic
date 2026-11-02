@@ -38,6 +38,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "config: %v\n", err)
 		os.Exit(1)
 	}
+	for _, w := range cfg.Warnings {
+		log.Printf("warning: %s", w)
+	}
 
 	cli.PrintBanner(cfg.Host, cfg.Port, cfg.MusicDir)
 

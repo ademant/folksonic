@@ -37,6 +37,9 @@ func openDB(cfgPath string) (*config.Config, *sql.DB, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	for _, w := range cfg.Warnings {
+		fmt.Fprintln(os.Stderr, "warning:", w)
+	}
 	pool, err := db.Init(cfg.DatabasePath)
 	if err != nil {
 		return nil, nil, err

@@ -1,9 +1,26 @@
-# tinysonic example configuration
-music_dir = "/path/to/your/music"
-username = "admin"
-password = "changeme"
+# tinysonic example configuration.
+#
+# Unknown keys are an error, so check spelling. Relative paths are resolved
+# from the directory containing this file. Keep this file readable only by the
+# user that runs tinysonic (chmod 600): it can hold a password.
 
-# Optional — defaults shown
+# Required: the library root. Walked recursively.
+music_dir = "/path/to/your/music"
+
+# Optional bootstrap admin. Used only when the database has no users yet.
+# After that, manage accounts with `tinysonic user …`, and remove these lines.
+# username = "admin"
+# password = "changeme"
+
+# Public address clients reach the server at. Needed for QR-code pairing and
+# passkeys. Use HTTPS when clients reach it over the internet.
+# base_url = "https://music.example.com"
+
+# Let anyone register. New accounts stay pending until an active user approves
+# them. Off by default.
+allow_registration = false
+
+# Optional, defaults shown
 port = 4533
 host = "0.0.0.0"
 database_path = "smolsonic.db"

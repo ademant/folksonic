@@ -61,7 +61,7 @@ CGO_ENABLED=0 go build -o tinysonic ./cmd/tinysonic
 ```sh
 # 1. Create a config
 cp smolsonic.example.toml smolsonic.toml
-$EDITOR smolsonic.toml      # set music_dir, username, password
+$EDITOR smolsonic.toml      # set music_dir; optionally a bootstrap admin
 
 # 2. Run
 ./tinysonic --config smolsonic.toml
@@ -97,6 +97,17 @@ base_url          = "https://music.example.com"
 # user approves them. Off by default.
 allow_registration = false
 ```
+
+Configuration is checked at startup:
+
+- **Unknown keys are an error**, so a typo cannot silently disable a setting.
+- **Relative paths** (`music_dir`, `database_path`, `covers_dir`) resolve from
+  the directory containing the config file, not from the working directory.
+  Use absolute paths if you start tinysonic from elsewhere.
+- **Loose permissions** on the config file produce a warning, because it can
+  hold a password. Fix with `chmod 600 smolsonic.toml`.
+- Changes take effect after a restart. There are no environment variable
+  overrides.
 
 | Key                  | Purpose                                                              |
 | -------------------- | -------------------------------------------------------------------- |
