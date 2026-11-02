@@ -2,19 +2,23 @@ package server
 
 import (
 	"crypto/md5"
+	"crypto/subtle"
 	"encoding/hex"
 	"strings"
 )
 
-// Check returns true when the given Subsonic-style query params authenticate.
-// Either (t, s) token-style or p plaintext (with optional "enc:" hex prefix).
+// authCheck returns true when the given Subsonic-style params authenticate.
+// Either token auth (t with s) or plaintext auth (p, optionally "enc:"-hex
+// encoded). Every secret comparison is constant-time so response timing does
+// not reveal how much of a password or token matched.
 func authCheck(username, password, u, p, t, s string) bool {
-	if u == "" || u != username {
+	if u == "" || subtle.ConstantTimeCompare([]byte(u), []byte(username)) != 1 {
 		return false
 	}
 	if t != "" && s != "" {
 		sum := md5.Sum([]byte(password + s))
-		return strings.EqualFold(t, hex.EncodeToString(sum[:]))
+		want := hex.EncodeToString(sum[:])
+		return subtle.ConstantTimeCompare([]byte(strings.ToLower(t)), []byte(want)) == 1
 	}
 	if p != "" {
 		decoded := p
@@ -23,7 +27,7 @@ func authCheck(username, password, u, p, t, s string) bool {
 				decoded = string(b)
 			}
 		}
-		return decoded == password
+		return subtle.ConstantTimeCompare([]byte(decoded), []byte(password)) == 1
 	}
 	return false
 }

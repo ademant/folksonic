@@ -22,17 +22,15 @@ const watchDebounce = 750 * time.Millisecond
 // Watch monitors musicDir recursively and keeps the library in sync with the
 // filesystem: new audio files are scanned and inserted, removed files are
 // purged from the database. It blocks until ctx is cancelled.
-func Watch(ctx context.Context, pool *sql.DB, musicDir, coversDir string) error {
+func Watch(ctx context.Context, pool *sql.DB, musicDir, coversDir string, progress *Progress) error {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return err
 	}
 	defer w.Close()
 
-	if err := addRecursive(w, musicDir); err != nil {
-		return err
-	}
-	log.Printf("watch: monitoring %s for changes", musicDir)
+	progress.watchFailures.Add(int64(addRecursive(w, musicDir)))
+	log.Printf("watch: monitoring %s for changes (%d directories not watched)", musicDir, progress.WatchFailures())
 
 	d := newDebouncer(watchDebounce)
 	defer d.stopAll()
@@ -50,12 +48,12 @@ func Watch(ctx context.Context, pool *sql.DB, musicDir, coversDir string) error 
 			if !ok {
 				return nil
 			}
-			handleEvent(w, pool, coversDir, ev, d)
+			handleEvent(w, pool, coversDir, ev, d, progress)
 		}
 	}
 }
 
-func handleEvent(w *fsnotify.Watcher, pool *sql.DB, coversDir string, ev fsnotify.Event, d *debouncer) {
+func handleEvent(w *fsnotify.Watcher, pool *sql.DB, coversDir string, ev fsnotify.Event, d *debouncer, progress *Progress) {
 	switch {
 	case ev.Op&fsnotify.Create != 0:
 		info, err := os.Stat(ev.Name)
@@ -63,9 +61,7 @@ func handleEvent(w *fsnotify.Watcher, pool *sql.DB, coversDir string, ev fsnotif
 			return
 		}
 		if info.IsDir() {
-			if err := addRecursive(w, ev.Name); err != nil {
-				log.Printf("watch add %s: %v", ev.Name, err)
-			}
+			progress.watchFailures.Add(int64(addRecursive(w, ev.Name)))
 			walkAudio(ev.Name, make(map[string]bool), func(p string) {
 				d.schedule(p, func() { runProcess(pool, coversDir, p) })
 			})
@@ -88,8 +84,13 @@ func handleEvent(w *fsnotify.Watcher, pool *sql.DB, coversDir string, ev fsnotif
 		if err := DeletePath(pool, ev.Name); err != nil {
 			log.Printf("watch delete %s: %v", ev.Name, err)
 		}
-		if err := deletePrefix(pool, ev.Name); err != nil {
-			log.Printf("watch delete prefix %s: %v", ev.Name, err)
+		// A file cannot contain songs, so the directory sweep is only needed
+		// for paths that are not audio files. This avoids a full-table LIKE
+		// scan on every removed audio file.
+		if !hasAudioExt(ev.Name) {
+			if err := deletePrefix(pool, ev.Name); err != nil {
+				log.Printf("watch delete prefix %s: %v", ev.Name, err)
+			}
 		}
 	}
 }
@@ -112,11 +113,17 @@ func runProcess(pool *sql.DB, coversDir, path string) {
 	}
 }
 
-func addRecursive(w *fsnotify.Watcher, root string) error {
-	return filepath.WalkDir(root, func(path string, dirEntry os.DirEntry, err error) error {
+// addRecursive watches root and every directory below it. It returns how many
+// directories could not be watched, for example at the inotify watch limit.
+// Those directories stay out of sync until the next restart, so the count is
+// surfaced in getScanStatus rather than only written to the log.
+func addRecursive(w *fsnotify.Watcher, root string) int {
+	failures := 0
+	_ = filepath.WalkDir(root, func(path string, dirEntry os.DirEntry, err error) error {
 		if err != nil {
 			// Don't abort the whole walk on a single unreadable dir.
 			log.Printf("watch walk %s: %v", path, err)
+			failures++
 			return nil
 		}
 		if !dirEntry.IsDir() {
@@ -124,9 +131,11 @@ func addRecursive(w *fsnotify.Watcher, root string) error {
 		}
 		if err := w.Add(path); err != nil {
 			log.Printf("watch add %s: %v", path, err)
+			failures++
 		}
 		return nil
 	})
+	return failures
 }
 
 // DeletePath removes the song at path from the library and prunes its album
@@ -210,26 +219,8 @@ func pruneArtist(tx *sql.Tx, artistID string) error {
 // deletePrefix removes every song whose path lives under prefix. Used when a
 // directory is removed and we don't get per-file events for its contents.
 func deletePrefix(pool *sql.DB, prefix string) error {
-	like := strings.ReplaceAll(prefix, "\\", "\\\\")
-	like = strings.ReplaceAll(like, "%", "\\%")
-	like = strings.ReplaceAll(like, "_", "\\_")
-	like += string(filepath.Separator) + "%"
-
-	rows, err := pool.Query(`SELECT path FROM songs WHERE path LIKE ? ESCAPE '\'`, like)
+	paths, err := songPathsUnder(pool, prefix)
 	if err != nil {
-		return err
-	}
-	var paths []string
-	for rows.Next() {
-		var p string
-		if err := rows.Scan(&p); err != nil {
-			rows.Close()
-			return err
-		}
-		paths = append(paths, p)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
 		return err
 	}
 	for _, p := range paths {
@@ -280,4 +271,27 @@ func (d *debouncer) stopAll() {
 		t.Stop()
 		delete(d.pending, k)
 	}
+}
+
+// songPathsUnder returns the stored path of every song below root.
+func songPathsUnder(pool *sql.DB, root string) ([]string, error) {
+	like := strings.ReplaceAll(root, "\\", "\\\\")
+	like = strings.ReplaceAll(like, "%", "\\%")
+	like = strings.ReplaceAll(like, "_", "\\_")
+	like += string(filepath.Separator) + "%"
+
+	rows, err := pool.Query(`SELECT path FROM songs WHERE path LIKE ? ESCAPE '\'`, like)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var paths []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		paths = append(paths, p)
+	}
+	return paths, rows.Err()
 }

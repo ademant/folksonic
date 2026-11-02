@@ -163,6 +163,17 @@ Subsonic clients send credentials as query parameters:
 `tinysonic` accepts both. The single user/password come from the TOML config.
 There's no user database.
 
+## Running over HTTPS
+
+tinysonic serves plain HTTP. Subsonic clients send the password (or a token
+derived from it) on every request, so anyone on the network path can read it.
+Put tinysonic behind a TLS-terminating reverse proxy (nginx, Caddy, Traefik)
+when it is reachable from outside a trusted network, and bind it to
+`127.0.0.1` so only the proxy can reach it.
+
+Request logs record the path only; credentials in the query string or form
+body are never written to the log.
+
 ## Format coverage
 
 Tag extraction (title, artist, album, genre, year, track, disc, embedded art)

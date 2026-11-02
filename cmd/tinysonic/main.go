@@ -50,7 +50,7 @@ func main() {
 
 	if !args.NoWatch {
 		go func() {
-			if err := scanner.Watch(ctx, pool, cfg.MusicDir, cfg.CoversDir); err != nil {
+			if err := scanner.Watch(ctx, pool, cfg.MusicDir, cfg.CoversDir, progress); err != nil {
 				log.Printf("watch: %v", err)
 			}
 		}()
