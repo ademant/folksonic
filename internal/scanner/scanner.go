@@ -24,12 +24,14 @@ var audioExts = map[string]bool{
 
 // Progress is the live counter exposed through getScanStatus.
 type Progress struct {
-	running atomic.Bool
-	count   atomic.Int64
+	running       atomic.Bool
+	count         atomic.Int64
+	watchFailures atomic.Int64
 }
 
-func (p *Progress) Running() bool { return p.running.Load() }
-func (p *Progress) Count() int64  { return p.count.Load() }
+func (p *Progress) Running() bool        { return p.running.Load() }
+func (p *Progress) Count() int64         { return p.count.Load() }
+func (p *Progress) WatchFailures() int64 { return p.watchFailures.Load() }
 
 // Stats summarises a completed scan run.
 type Stats struct {
@@ -37,6 +39,7 @@ type Stats struct {
 	Inserted int
 	Updated  int
 	Skipped  int
+	Pruned   int
 }
 
 type processResult int
@@ -57,8 +60,10 @@ func Scan(pool *sql.DB, musicDir, coversDir string, progress *Progress) (Stats, 
 	}
 
 	var stats Stats
+	seen := make(map[string]bool)
 	visited := make(map[string]bool)
-	walkAudio(musicDir, visited, func(path string) {
+	walkFailures := walkAudio(musicDir, visited, func(path string) {
+		seen[path] = true
 		stats.Scanned++
 		progress.count.Store(int64(stats.Scanned))
 		switch res, perr := processFile(pool, path, coversDir); {
@@ -73,42 +78,79 @@ func Scan(pool *sql.DB, musicDir, coversDir string, progress *Progress) (Stats, 
 			stats.Skipped++
 		}
 	})
-	log.Printf("scan complete: %d scanned, %d inserted, %d updated, %d skipped",
-		stats.Scanned, stats.Inserted, stats.Updated, stats.Skipped)
+	// Songs whose files vanished while the server was down are only removed
+	// after a complete walk. If any directory could not be read, its songs
+	// would look missing, so pruning is skipped rather than risk deleting them.
+	if walkFailures == 0 {
+		pruned, err := pruneMissing(pool, musicDir, seen)
+		if err != nil {
+			return stats, fmt.Errorf("pruning missing songs: %w", err)
+		}
+		stats.Pruned = pruned
+	} else {
+		log.Printf("scan: %d unreadable directories, skipping removal of missing songs", walkFailures)
+	}
+	log.Printf("scan complete: %d scanned, %d inserted, %d updated, %d skipped, %d removed",
+		stats.Scanned, stats.Inserted, stats.Updated, stats.Skipped, stats.Pruned)
 	return stats, nil
+}
+
+// pruneMissing removes songs under root whose paths were not seen during the
+// walk, along with any album or artist left empty by the removal.
+func pruneMissing(pool *sql.DB, root string, seen map[string]bool) (int, error) {
+	paths, err := songPathsUnder(pool, root)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, p := range paths {
+		if seen[p] {
+			continue
+		}
+		if err := DeletePath(pool, p); err != nil {
+			log.Printf("prune %s: %v", p, err)
+			continue
+		}
+		n++
+	}
+	return n, nil
 }
 
 // walkAudio recursively walks dir, following symlinks for both files and
 // directories. Cycles are broken by tracking the canonical (symlink-resolved)
-// path of every directory we descend into.
-func walkAudio(dir string, visited map[string]bool, fn func(path string)) {
+// path of every directory we descend into. It returns how many directories
+// could not be read; a non-zero count means the walk is incomplete.
+func walkAudio(dir string, visited map[string]bool, fn func(path string)) int {
 	real, err := filepath.EvalSymlinks(dir)
 	if err != nil {
-		return
+		return 1
 	}
 	if visited[real] {
-		return
+		return 0
 	}
 	visited[real] = true
 	log.Printf("scan: walking %s", dir)
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return
+		return 1
 	}
+	failures := 0
 	for _, entry := range entries {
 		full := filepath.Join(dir, entry.Name())
 		info, err := os.Stat(full)
 		if err != nil {
+			// Usually a dangling symlink, which is not a read failure.
 			continue
 		}
 		switch {
 		case info.IsDir():
-			walkAudio(full, visited, fn)
+			failures += walkAudio(full, visited, fn)
 		case info.Mode().IsRegular() && hasAudioExt(full):
 			fn(full)
 		}
 	}
+	return failures
 }
 
 func hasAudioExt(path string) bool {
@@ -344,9 +386,8 @@ func savePicture(coversDir, albumKey string, pic *tag.Picture) (string, error) {
 	}
 	filename := albumKey + "." + ext
 	full := filepath.Join(coversDir, filename)
-	if _, err := os.Stat(full); err == nil {
-		return filename, nil
-	}
+	// Always rewrite: this runs only for files whose mtime changed, so the
+	// cover follows the newest embedded artwork instead of a stale cache entry.
 	if err := os.WriteFile(full, pic.Data, 0o644); err != nil {
 		return "", err
 	}
@@ -371,9 +412,6 @@ func findDirCover(audioPath, coversDir, albumKey string) (string, bool) {
 		ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(cand), "."))
 		filename := albumKey + "." + ext
 		dest := filepath.Join(coversDir, filename)
-		if _, err := os.Stat(dest); err == nil {
-			return filename, true
-		}
 		if err := copyFile(p, dest); err != nil {
 			continue
 		}

@@ -182,6 +182,50 @@ CREATE TRIGGER IF NOT EXISTS artists_au AFTER UPDATE ON artists BEGIN
     DELETE FROM artists_fts WHERE id = OLD.id;
     INSERT INTO artists_fts (id, name) VALUES (NEW.id, NEW.name);
 END;
+CREATE TABLE IF NOT EXISTS users (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    username    TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    password    TEXT NOT NULL,
+    role        TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
+    status      TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'disabled')),
+    approved_by INTEGER,
+    created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS api_keys (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    label        TEXT NOT NULL,
+    prefix       TEXT NOT NULL,
+    key_hash     TEXT NOT NULL UNIQUE,
+    created_at   TEXT NOT NULL,
+    expires_at   TEXT,
+    last_used_at TEXT,
+    revoked_at   TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
+
+CREATE TABLE IF NOT EXISTS pairing_tokens (
+    token_hash TEXT PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at TEXT NOT NULL,
+    used_at    TEXT
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS webauthn_credentials (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    credential TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
 `
 
 func backfillFTS(d *sql.DB) error {

@@ -22,7 +22,7 @@ import (
 
 // Info holds the audio properties we care about for the Subsonic schema.
 type Info struct {
-	DurationMs int64
+	DurationMs  int64
 	BitrateKbps int64
 }
 

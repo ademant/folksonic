@@ -2,7 +2,7 @@
 
 A tiny, self-contained [Subsonic](http://www.subsonic.org/pages/api.jsp)-compatible
 music server written in **pure Go** (no cgo). Point it at a folder of music, give
-it a username and a password in a TOML file, and any
+it an account (created with `tinysonic user add`), and any
 [Subsonic client](https://www.navidrome.org/apps/) can browse and stream your library.
 
 ```
@@ -61,7 +61,7 @@ CGO_ENABLED=0 go build -o tinysonic ./cmd/tinysonic
 ```sh
 # 1. Create a config
 cp smolsonic.example.toml smolsonic.toml
-$EDITOR smolsonic.toml      # set music_dir, username, password
+$EDITOR smolsonic.toml      # set music_dir; optionally a bootstrap admin
 
 # 2. Run
 ./tinysonic --config smolsonic.toml
@@ -76,36 +76,67 @@ starts the HTTP server. Point any Subsonic client at
 `smolsonic.toml` (all keys shown):
 
 ```toml
-music_dir     = "/path/to/your/music"   # required
-username      = "admin"                  # required
-password      = "changeme"               # required
+music_dir         = "/path/to/your/music"    # required
+
+# Optional. When both are set and no users exist yet, they create the first
+# admin account. After that, manage users with `tinysonic user …`.
+username          = "admin"
+password          = "changeme"
 
 # Optional — defaults shown
-port          = 4533
-host          = "0.0.0.0"
-database_path = "smolsonic.db"
-covers_dir    = "covers"
+port              = 4533
+host              = "0.0.0.0"
+database_path     = "smolsonic.db"
+covers_dir        = "covers"
+
+# Public address clients reach the server at. Required for passkeys and for
+# QR-code pairing. Must be HTTPS when served beyond localhost.
+base_url          = "https://music.example.com"
+
+# Let anyone create an account. New accounts stay pending until an active
+# user approves them. Off by default.
+allow_registration = false
 ```
 
-| Key             | Purpose                                                   |
-| --------------- | --------------------------------------------------------- |
-| `music_dir`     | Root of your library. Walked recursively.                 |
-| `username`      | The single Subsonic user.                                 |
-| `password`      | Cleartext on disk; used for both token and plaintext auth.|
-| `port`          | TCP port to bind.                                         |
-| `host`          | Interface to bind (use `127.0.0.1` to keep it local).     |
-| `database_path` | Path to the SQLite file. Created if missing.              |
-| `covers_dir`    | Where extracted album art is cached.                      |
+Configuration is checked at startup:
+
+- **Unknown keys are an error**, so a typo cannot silently disable a setting.
+- **Relative paths** (`music_dir`, `database_path`, `covers_dir`) resolve from
+  the directory containing the config file, not from the working directory.
+  Use absolute paths if you start tinysonic from elsewhere.
+- **Loose permissions** on the config file produce a warning, because it can
+  hold a password. Fix with `chmod 600 smolsonic.toml`.
+- Changes take effect after a restart. There are no environment variable
+  overrides.
+
+| Key                  | Purpose                                                              |
+| -------------------- | -------------------------------------------------------------------- |
+| `music_dir`          | Root of your library. Walked recursively.                            |
+| `username`/`password`| Optional bootstrap admin, imported once when the database has no users. |
+| `port`               | TCP port to bind.                                                    |
+| `host`               | Interface to bind (use `127.0.0.1` to keep it local).                |
+| `database_path`      | Path to the SQLite file. Created if missing. Holds users and keys.   |
+| `covers_dir`         | Where extracted album art is cached.                                 |
+| `base_url`           | Public URL clients use. Embedded in pairing QR codes; host is the passkey RP ID. |
+| `allow_registration` | Enables `POST /api/register`. Default `false`.                       |
 
 ## CLI
 
 ```
-Usage: tinysonic [OPTIONS]
+tinysonic [--config FILE] [--no-scan] [--no-watch]    run the server
 
-Options:
-  -c, --config <CONFIG>  Path to the TOML config file (default: smolsonic.toml)
-      --no-scan          Skip the startup library scan
+tinysonic user add [-c FILE] [--admin] <username>     create an active account (prompts for password)
+tinysonic user list [-c FILE]                         list accounts and their status
+tinysonic user approve [-c FILE] <username>           activate a pending account
+tinysonic user disable|enable [-c FILE] <username>
+tinysonic user set-password [-c FILE] <username>
+tinysonic user remove [-c FILE] <username>
+
+tinysonic pair [-c FILE] --user <username>            print a pairing QR code (valid 5 min, single use)
 ```
+
+Account commands work directly on the database, so run them on the server
+host. When stdin is not a terminal, the password is read from one line of stdin.
 
 Trigger a rescan from a running server with the standard Subsonic endpoint:
 
@@ -154,14 +185,57 @@ work, including Substreamer, play:sub, Symfonium, Tempo, and Sonixd.
 
 ## How auth works
 
-Subsonic clients send credentials as query parameters:
+Every `/rest/*` request is authenticated in this order:
 
-- **Token auth** (preferred): `u=<user>&t=<token>&s=<salt>` where
-  `token = md5(password + salt)`.
-- **Plaintext**: `u=<user>&p=<password>` or `p=enc:<hex-encoded password>`.
+1. **API key** (`apiKey=<key>`): the Android app uses this. Keys are created by
+   scanning a pairing QR code, or with `POST /api/keys`. A key has the same
+   rights as its user and can be revoked.
+2. **Session token** (`Authorization: Bearer <token>`): issued by a passkey or
+   password sign-in on the web page at `/login`.
+3. **Subsonic credentials**: token auth (`u`, `t = md5(password + salt)`, `s`)
+   or plaintext (`u`, `p`, or `p=enc:<hex>`). Stock Subsonic clients use this.
 
-`tinysonic` accepts both. The single user/password come from the TOML config.
-There's no user database.
+Credentials may be sent in the query string or as a form-encoded POST body.
+Only active accounts authenticate; pending and disabled accounts are refused.
+
+Passwords are stored so that token auth can verify them, so anyone with read
+access to the database file can read them. Protect the database file, and use
+passkeys for the web UI.
+
+### Accounts and pairing
+
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| POST | `/api/register` | none | Create a pending account (needs `allow_registration`) |
+| GET | `/api/users` | user | List accounts |
+| POST | `/api/users/{id}/approve` | user | Activate a pending account |
+| POST | `/api/users/{id}/reject` | user | Delete a pending account |
+| POST | `/api/keys` | user | Create an API key (shown once) |
+| GET | `/api/keys` | user | List own keys |
+| DELETE | `/api/keys/{id}` | user | Revoke an own key |
+| POST | `/api/pair/start` | user | Create a pairing token and QR payload |
+| POST | `/api/pair/complete` | token | App redeems a pairing token for an API key |
+| POST | `/api/passkey/register/begin` · `/finish` | user | Enrol a passkey |
+| POST | `/api/passkey/login/begin` · `/finish` | none | Sign in with a passkey |
+| POST | `/api/login` | none | Sign in with username and password |
+| POST | `/api/logout` | Bearer | End a session |
+
+The QR code encodes `tinysonic://pair?server=<base_url>&token=<token>`. The app
+posts the token to `/api/pair/complete` and stores the returned key.
+
+Passkeys need HTTPS (or `localhost`) and `base_url`. Without `base_url` the
+passkey endpoints return 503, and every other method keeps working.
+
+## Running over HTTPS
+
+tinysonic serves plain HTTP. Subsonic clients send the password (or a token
+derived from it) on every request, and passkeys require HTTPS. Put tinysonic
+behind a TLS-terminating reverse proxy (nginx, Caddy, Traefik) when it is
+reachable from outside a trusted network, bind it to `127.0.0.1` so only the
+proxy can reach it, and set `base_url` to the proxy's public address.
+
+Request logs record the path only; credentials in the query string or form
+body are never written to the log.
 
 ## Format coverage
 

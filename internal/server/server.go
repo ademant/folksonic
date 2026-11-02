@@ -7,9 +7,12 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/go-webauthn/webauthn/webauthn"
 
 	"github.com/tsirysndr/tinysonic/internal/config"
 	"github.com/tsirysndr/tinysonic/internal/scanner"
@@ -18,11 +21,19 @@ import (
 // State is shared by all handlers.
 type State struct {
 	Pool      *sql.DB
-	Username  string
-	Password  string
 	MusicDir  string
 	CoversDir string
 	Progress  *scanner.Progress
+
+	// BaseURL is the public address clients reach the server at; it is
+	// embedded in pairing QR codes. Empty means derive it from the request.
+	BaseURL string
+	// AllowRegistration enables self-registration. New accounts stay pending
+	// until an active user approves them.
+	AllowRegistration bool
+
+	webAuthn   *webauthn.WebAuthn
+	ceremonies *ceremonyStore
 
 	// songCache maps a song id to its (path, content_type). Populated lazily
 	// on cache miss and warmed in the background at startup. Bypassing the DB
@@ -75,15 +86,24 @@ func (s *State) preloadSongs(ctx context.Context) {
 
 func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scanner.Progress) error {
 	s := &State{
-		Pool:      pool,
-		Username:  cfg.Username,
-		Password:  cfg.Password,
-		MusicDir:  cfg.MusicDir,
-		CoversDir: cfg.CoversDir,
-		Progress:  progress,
+		Pool:              pool,
+		BaseURL:           cfg.BaseURL,
+		AllowRegistration: cfg.AllowRegistration,
+		MusicDir:          cfg.MusicDir,
+		CoversDir:         cfg.CoversDir,
+		Progress:          progress,
 	}
 
 	go s.preloadSongs(ctx)
+
+	// A bad base_url disables passkeys but must not stop the server: password
+	// and API-key access keep working.
+	wa, err := newWebAuthn(cfg.BaseURL)
+	if err != nil {
+		log.Printf("warning: passkeys disabled: %v", err)
+	}
+	s.webAuthn = wa
+	s.ceremonies = &ceremonyStore{m: map[string]ceremony{}}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
@@ -154,10 +174,28 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 	register("getTopSongs", s.GetTopSongs)
 	register("getLyrics", s.GetLyrics)
 
+	// Account and device management (JSON, not Subsonic)
+	mux.HandleFunc("POST /api/register", s.APIRegister)
+	mux.HandleFunc("GET /api/users", s.APIListUsers)
+	mux.HandleFunc("POST /api/users/{id}/approve", s.APIApprove)
+	mux.HandleFunc("POST /api/users/{id}/reject", s.APIReject)
+	mux.HandleFunc("POST /api/keys", s.APICreateKey)
+	mux.HandleFunc("GET /api/keys", s.APIListKeys)
+	mux.HandleFunc("DELETE /api/keys/{id}", s.APIRevokeKey)
+	mux.HandleFunc("POST /api/pair/start", s.APIPairStart)
+	mux.HandleFunc("POST /api/pair/complete", s.APIPairComplete)
+	mux.HandleFunc("POST /api/passkey/register/begin", s.APIPasskeyRegisterBegin)
+	mux.HandleFunc("POST /api/passkey/register/finish", s.APIPasskeyRegisterFinish)
+	mux.HandleFunc("POST /api/passkey/login/begin", s.APIPasskeyLoginBegin)
+	mux.HandleFunc("POST /api/passkey/login/finish", s.APIPasskeyLoginFinish)
+	mux.HandleFunc("POST /api/login", s.APILogin)
+	mux.HandleFunc("POST /api/logout", s.APILogout)
+	mux.HandleFunc("GET /login", s.ServeLoginPage)
+
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           requestLogger(corsMiddleware(mux)),
+		Handler:           requestLogger(corsMiddleware(limitBody(mux))),
 		ReadHeaderTimeout: 15 * time.Second,
 	}
 
@@ -175,27 +213,29 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 	return nil
 }
 
-// corsMiddleware mirrors actix-cors permissive: allow any origin, any method,
-// any header, with credentials.
+// corsMiddleware allows any origin, method and header. Credentials travel in
+// the query string or form body, never in cookies, so the response does not
+// need Access-Control-Allow-Credentials. Reflecting the origin together with
+// that header would let any site read responses for anyone who holds the
+// credentials, which this avoids.
 func corsMiddleware(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		origin := r.Header.Get("Origin")
-		if origin == "" {
-			origin = "*"
-		}
-		w.Header().Set("Access-Control-Allow-Origin", origin)
-		w.Header().Set("Vary", "Origin")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		if reqHdrs := r.Header.Get("Access-Control-Request-Headers"); reqHdrs != "" {
-			w.Header().Set("Access-Control-Allow-Headers", reqHdrs)
-		} else {
-			w.Header().Set("Access-Control-Allow-Headers", "*")
-		}
-		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "*")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+		h.ServeHTTP(w, r)
+	})
+}
+
+// limitBody caps request bodies. Subsonic only needs small form posts (playlist
+// edits), so anything larger is rejected before it is read into memory.
+func limitBody(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		h.ServeHTTP(w, r)
 	})
 }
@@ -208,7 +248,9 @@ func requestLogger(h http.Handler) http.Handler {
 		start := time.Now()
 		rw := &recordedResponse{ResponseWriter: w, status: http.StatusOK}
 		h.ServeHTTP(rw, r)
-		log.Printf("%s %s %d %dB %s", r.Method, r.URL.RequestURI(), rw.status, rw.bytes, time.Since(start))
+		// Path only: the query string carries p=, t= and s= credentials and
+		// must never reach the log.
+		log.Printf("%s %s %d %dB %s", r.Method, r.URL.Path, rw.status, rw.bytes, time.Since(start))
 	})
 }
 
@@ -270,8 +312,7 @@ type writerOnly struct{ io.Writer }
 // requireAuth returns true when the request authenticated; it has already
 // written the error response when this returns false.
 func (s *State) requireAuth(w http.ResponseWriter, r *http.Request) bool {
-	q := r.URL.Query()
-	if !authCheck(s.Username, s.Password, q.Get("u"), q.Get("p"), q.Get("t"), q.Get("s")) {
+	if _, ok := s.authenticate(r); !ok {
 		writeError(w, 40, "Wrong username or password")
 		return false
 	}
@@ -282,10 +323,18 @@ func (s *State) requireAuth(w http.ResponseWriter, r *http.Request) bool {
 // query string — both GET and POST are routed identically and the Subsonic
 // spec puts params in the query string regardless of method.
 func queryFirst(r *http.Request, key string) string {
-	return strings.TrimSpace(r.URL.Query().Get(key))
+	return strings.TrimSpace(params(r).Get(key))
 }
 
 // queryAll returns every value for the given key, in the order they appeared.
 func queryAll(r *http.Request, key string) []string {
-	return r.URL.Query()[key]
+	return params(r)[key]
+}
+
+// params returns the request parameters from the query string and, for POST,
+// the form-encoded body. Subsonic clients may send either, so every handler
+// reads through here rather than r.URL.Query().
+func params(r *http.Request) url.Values {
+	_ = r.ParseForm() // on error, r.Form still holds the query-string values
+	return r.Form
 }

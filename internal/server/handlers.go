@@ -19,6 +19,7 @@ import (
 	"github.com/tsirysndr/tinysonic/internal/cli"
 	"github.com/tsirysndr/tinysonic/internal/models"
 	"github.com/tsirysndr/tinysonic/internal/scanner"
+	"github.com/tsirysndr/tinysonic/internal/users"
 )
 
 // ── Root index ───────────────────────────────────────────────────────────────
@@ -262,26 +263,29 @@ func (s *State) Ping(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *State) GetUser(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAuth(w, r) {
+	u, ok := s.authenticate(r)
+	if !ok {
+		writeError(w, 40, "Wrong username or password")
 		return
 	}
+	isAdmin := u.Role == users.RoleAdmin
 	writeOK(w, J{
 		"user": J{
-			"username":           s.Username,
-			"email":              "",
-			"scrobblingEnabled":  false,
-			"adminRole":          true,
-			"settingsRole":       true,
-			"downloadRole":       true,
-			"uploadRole":         false,
-			"playlistRole":       true,
-			"coverArtRole":       true,
-			"commentRole":        false,
-			"podcastRole":        false,
-			"streamRole":         true,
-			"jukeboxRole":        false,
-			"shareRole":          false,
-			"folder":             []int{1},
+			"username":          u.Username,
+			"email":             "",
+			"scrobblingEnabled": false,
+			"adminRole":         isAdmin,
+			"settingsRole":      isAdmin,
+			"downloadRole":      true,
+			"uploadRole":        false,
+			"playlistRole":      true,
+			"coverArtRole":      true,
+			"commentRole":       false,
+			"podcastRole":       false,
+			"streamRole":        true,
+			"jukeboxRole":       false,
+			"shareRole":         false,
+			"folder":            []int{1},
 		},
 	})
 }
@@ -303,8 +307,9 @@ func (s *State) GetScanStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	writeOK(w, J{
 		"scanStatus": J{
-			"scanning": s.Progress.Running(),
-			"count":    s.Progress.Count(),
+			"scanning":      s.Progress.Running(),
+			"count":         s.Progress.Count(),
+			"watchFailures": s.Progress.WatchFailures(),
 		},
 	})
 }
@@ -1069,7 +1074,7 @@ func (s *State) UpdatePlaylist(w http.ResponseWriter, r *http.Request) {
 }
 
 func singleParam(r *http.Request, key string) (string, bool) {
-	q := r.URL.Query()
+	q := params(r)
 	if _, ok := q[key]; !ok {
 		return "", false
 	}

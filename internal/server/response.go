@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"maps"
 	"net/http"
 )
 
@@ -19,9 +20,7 @@ func writeOK(w http.ResponseWriter, payload J) {
 		"version": apiVersion,
 		"type":    serverType,
 	}
-	for k, v := range payload {
-		body[k] = v
-	}
+	maps.Copy(body, payload)
 	writeJSON(w, http.StatusOK, J{"subsonic-response": body})
 }
 
