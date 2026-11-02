@@ -237,6 +237,21 @@ proxy can reach it, and set `base_url` to the proxy's public address.
 Request logs record the path only; credentials in the query string or form
 body are never written to the log.
 
+## Deployment
+
+Example files are in [`deploy/`](deploy/):
+
+- `tinysonic.service`: systemd unit with a dedicated `tinysonic` user, a state
+  directory under `/var/lib/tinysonic`, and sandboxing. The install steps are
+  in the file header. Verify with `systemd-analyze verify deploy/tinysonic.service`.
+- `nginx.conf`: TLS reverse proxy with streaming enabled and the same 1 MiB
+  body limit as tinysonic.
+- `Caddyfile`: the same proxy with automatic certificates.
+
+Set `base_url` to the public address the proxy serves (for example
+`https://music.example.com`), and keep `host` at `127.0.0.1` so only the proxy
+can reach tinysonic.
+
 ## Format coverage
 
 Tag extraction (title, artist, album, genre, year, track, disc, embedded art)

@@ -1,0 +1,22 @@
+# Caddy reverse proxy for tinysonic. Caddy obtains and renews the TLS
+# certificate automatically, provided the domain resolves to this host and
+# ports 80 and 443 are reachable.
+#
+# Replace music.example.com with the domain in base_url, then:
+#   install -m 0644 deploy/Caddyfile /etc/caddy/Caddyfile
+#   systemctl reload caddy
+
+music.example.com {
+    encode zstd gzip
+
+    # Caps request bodies at 1 MiB, matching tinysonic.
+    request_body {
+        max_size 1MB
+    }
+
+    reverse_proxy 127.0.0.1:4533 {
+        # Stream audio without buffering it.
+        flush_interval -1
+        header_up X-Forwarded-Proto {scheme}
+    }
+}
