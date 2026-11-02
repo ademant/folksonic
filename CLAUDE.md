@@ -35,7 +35,7 @@ Skip the discussion step only for obvious typos or single-line fixes, which may 
 
 ## Go version
 
-This project declares **Go 1.26.2** in `go.mod`. Check it rather than trusting this line:
+This project declares **Go 1.27.3** in `go.mod`. Check it rather than trusting this line:
 
 ```bash
 go version  # must be at least the version in go.mod
