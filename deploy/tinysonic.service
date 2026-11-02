@@ -1,0 +1,61 @@
+# systemd unit for tinysonic.
+#
+# Install (as root):
+#   useradd --system --home-dir /var/lib/tinysonic --shell /usr/sbin/nologin tinysonic
+#   install -m 0755 tinysonic /usr/local/bin/tinysonic
+#   install -d -m 0750 -o root -g tinysonic /etc/tinysonic
+#   install -m 0640 -o root -g tinysonic smolsonic.example.toml /etc/tinysonic/tinysonic.toml
+#   install -m 0644 deploy/tinysonic.service /etc/systemd/system/tinysonic.service
+#   systemctl daemon-reload && systemctl enable --now tinysonic
+#
+# Account commands run as the service user so they touch the same database:
+#   sudo -u tinysonic /usr/local/bin/tinysonic user add --admin alice -c /etc/tinysonic/tinysonic.toml
+#   sudo -u tinysonic /usr/local/bin/tinysonic pair --user alice -c /etc/tinysonic/tinysonic.toml
+
+[Unit]
+Description=tinysonic Subsonic-compatible music server
+Documentation=https://github.com/ademant/folksonic
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tinysonic
+Group=tinysonic
+ExecStart=/usr/local/bin/tinysonic --config /etc/tinysonic/tinysonic.toml
+# The database and album art cache live in the state directory (created and
+# owned by the service user). Relative paths in the config resolve from
+# /etc/tinysonic, so set absolute paths for database_path and covers_dir, e.g.
+#   database_path = "/var/lib/tinysonic/tinysonic.db"
+#   covers_dir    = "/var/lib/tinysonic/covers"
+StateDirectory=tinysonic
+WorkingDirectory=/var/lib/tinysonic
+Restart=on-failure
+RestartSec=5s
+
+# Hardening. The music directories must be readable by the service user;
+# add them to ReadOnlyPaths if they live outside the default system paths.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+ReadWritePaths=/var/lib/tinysonic
+ReadOnlyPaths=/etc/tinysonic
+# ReadOnlyPaths=/srv/music /mnt/nas/albums
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target
