@@ -7,6 +7,7 @@ require (
 	github.com/abema/go-mp4 v1.7.4
 	github.com/dhowden/tag v0.0.0-20240417053706-3d75831295e8
 	github.com/fsnotify/fsnotify v1.10.1
+	github.com/fxamacker/cbor/v2 v2.9.4
 	github.com/go-audio/wav v1.1.0
 	github.com/go-webauthn/webauthn v0.18.2
 	github.com/mewkiz/flac v1.0.14
@@ -17,7 +18,6 @@ require (
 )
 
 require (
-	github.com/fxamacker/cbor/v2 v2.9.4 // indirect
 	github.com/go-audio/audio v1.0.0 // indirect
 	github.com/go-audio/riff v1.0.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect

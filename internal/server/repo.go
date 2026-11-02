@@ -374,16 +374,16 @@ func repoSearchSongs(ctx context.Context, db *sql.DB, term string, limit, offset
 
 // ── Starred ─────────────────────────────────────────────────────────────────
 
-func repoStar(ctx context.Context, db *sql.DB, id, when string) error {
+func repoStar(ctx context.Context, db *sql.DB, userID int64, id, when string) error {
 	_, err := db.ExecContext(ctx,
-		"INSERT INTO starred (id, starred_at) VALUES (?, ?) "+
-			"ON CONFLICT(id) DO UPDATE SET starred_at = excluded.starred_at",
-		id, when)
+		"INSERT INTO starred (user_id, id, starred_at) VALUES (?, ?, ?) "+
+			"ON CONFLICT(user_id, id) DO UPDATE SET starred_at = excluded.starred_at",
+		userID, id, when)
 	return err
 }
 
-func repoUnstar(ctx context.Context, db *sql.DB, id string) error {
-	_, err := db.ExecContext(ctx, "DELETE FROM starred WHERE id = ?", id)
+func repoUnstar(ctx context.Context, db *sql.DB, userID int64, id string) error {
+	_, err := db.ExecContext(ctx, "DELETE FROM starred WHERE user_id = ? AND id = ?", userID, id)
 	return err
 }
 
@@ -400,10 +400,10 @@ type starredArtist struct {
 	When   string
 }
 
-func repoStarredSongs(ctx context.Context, db *sql.DB) ([]starredSong, error) {
+func repoStarredSongs(ctx context.Context, db *sql.DB, userID int64) ([]starredSong, error) {
 	rows, err := db.QueryContext(ctx,
 		"SELECT st.id, st.starred_at FROM starred st INNER JOIN songs s ON s.id = st.id "+
-			"ORDER BY st.starred_at DESC")
+			"WHERE st.user_id = ? ORDER BY st.starred_at DESC", userID)
 	if err != nil {
 		return nil, err
 	}
@@ -431,10 +431,10 @@ func repoStarredSongs(ctx context.Context, db *sql.DB) ([]starredSong, error) {
 	return out, nil
 }
 
-func repoStarredAlbums(ctx context.Context, db *sql.DB) ([]starredAlbum, error) {
+func repoStarredAlbums(ctx context.Context, db *sql.DB, userID int64) ([]starredAlbum, error) {
 	rows, err := db.QueryContext(ctx,
 		"SELECT st.id, st.starred_at FROM starred st INNER JOIN albums a ON a.id = st.id "+
-			"ORDER BY st.starred_at DESC")
+			"WHERE st.user_id = ? ORDER BY st.starred_at DESC", userID)
 	if err != nil {
 		return nil, err
 	}
@@ -462,10 +462,10 @@ func repoStarredAlbums(ctx context.Context, db *sql.DB) ([]starredAlbum, error) 
 	return out, nil
 }
 
-func repoStarredArtists(ctx context.Context, db *sql.DB) ([]starredArtist, error) {
+func repoStarredArtists(ctx context.Context, db *sql.DB, userID int64) ([]starredArtist, error) {
 	rows, err := db.QueryContext(ctx,
 		"SELECT st.id, st.starred_at FROM starred st INNER JOIN artists ar ON ar.id = st.id "+
-			"ORDER BY st.starred_at DESC")
+			"WHERE st.user_id = ? ORDER BY st.starred_at DESC", userID)
 	if err != nil {
 		return nil, err
 	}
@@ -495,10 +495,10 @@ func repoStarredArtists(ctx context.Context, db *sql.DB) ([]starredArtist, error
 
 // ── Playlists ───────────────────────────────────────────────────────────────
 
-func repoAllPlaylists(ctx context.Context, db *sql.DB) ([]models.Playlist, error) {
+func repoAllPlaylists(ctx context.Context, db *sql.DB, ownerID int64) ([]models.Playlist, error) {
 	rows, err := db.QueryContext(ctx,
 		"SELECT id, name, comment, public, created_at, updated_at FROM playlists "+
-			"ORDER BY name COLLATE NOCASE")
+			"WHERE owner_id = ? ORDER BY name COLLATE NOCASE", ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -514,10 +514,13 @@ func repoAllPlaylists(ctx context.Context, db *sql.DB) ([]models.Playlist, error
 	return out, rows.Err()
 }
 
-func repoFindPlaylist(ctx context.Context, db *sql.DB, id string) (*models.Playlist, error) {
+// repoFindPlaylist returns the playlist only if it belongs to ownerID, so a
+// playlist id from another account reads as not found.
+func repoFindPlaylist(ctx context.Context, db *sql.DB, ownerID int64, id string) (*models.Playlist, error) {
 	var p models.Playlist
 	err := db.QueryRowContext(ctx,
-		"SELECT id, name, comment, public, created_at, updated_at FROM playlists WHERE id = ?", id).
+		"SELECT id, name, comment, public, created_at, updated_at FROM playlists WHERE id = ? AND owner_id = ?",
+		id, ownerID).
 		Scan(&p.ID, &p.Name, &p.Comment, &p.Public, &p.CreatedAt, &p.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -528,11 +531,11 @@ func repoFindPlaylist(ctx context.Context, db *sql.DB, id string) (*models.Playl
 	return &p, nil
 }
 
-func repoCreatePlaylist(ctx context.Context, db *sql.DB, id, name, now string) error {
+func repoCreatePlaylist(ctx context.Context, db *sql.DB, ownerID int64, id, name, now string) error {
 	_, err := db.ExecContext(ctx,
-		"INSERT INTO playlists (id, name, comment, public, created_at, updated_at) "+
-			"VALUES (?, ?, NULL, 1, ?, ?)",
-		id, name, now, now)
+		"INSERT INTO playlists (id, name, comment, public, created_at, updated_at, owner_id) "+
+			"VALUES (?, ?, NULL, 1, ?, ?, ?)",
+		id, name, now, now, ownerID)
 	return err
 }
 
@@ -548,11 +551,15 @@ func repoSetPlaylistComment(ctx context.Context, db *sql.DB, id, comment, now st
 	return err
 }
 
-func repoDeletePlaylist(ctx context.Context, db *sql.DB, id string) error {
-	if _, err := db.ExecContext(ctx, "DELETE FROM playlists WHERE id = ?", id); err != nil {
+func repoDeletePlaylist(ctx context.Context, db *sql.DB, ownerID int64, id string) error {
+	res, err := db.ExecContext(ctx, "DELETE FROM playlists WHERE id = ? AND owner_id = ?", id, ownerID)
+	if err != nil {
 		return err
 	}
-	_, err := db.ExecContext(ctx, "DELETE FROM playlist_songs WHERE playlist_id = ?", id)
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil
+	}
+	_, err = db.ExecContext(ctx, "DELETE FROM playlist_songs WHERE playlist_id = ?", id)
 	return err
 }
 

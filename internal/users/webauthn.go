@@ -3,6 +3,7 @@ package users
 import (
 	"context"
 	"database/sql"
+	"errors"
 )
 
 // PasskeyRecord is one stored WebAuthn credential. JSON is the serialized
@@ -45,4 +46,26 @@ func UpdatePasskey(ctx context.Context, db *sql.DB, id int64, credentialJSON str
 		return err
 	}
 	return requireOne(res)
+}
+
+// AdoptLegacyData assigns starred songs, albums, artists and playlists that
+// predate accounts to the first admin. Rows keep a NULL owner until an admin
+// exists, so this runs after the bootstrap and is safe to call repeatedly.
+func AdoptLegacyData(ctx context.Context, db *sql.DB) error {
+	var owner sql.NullInt64
+	err := db.QueryRowContext(ctx,
+		"SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1").Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx,
+		"UPDATE OR IGNORE starred SET user_id = ? WHERE user_id IS NULL", owner.Int64); err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx,
+		"UPDATE playlists SET owner_id = ? WHERE owner_id IS NULL", owner.Int64)
+	return err
 }

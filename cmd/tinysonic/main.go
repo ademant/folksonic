@@ -57,6 +57,9 @@ func main() {
 	if created {
 		log.Printf("created admin account %q from the config file", cfg.Username)
 	}
+	if err := users.AdoptLegacyData(context.Background(), pool); err != nil {
+		log.Fatalf("users: adopting existing playlists and stars: %v", err)
+	}
 	if n, _ := users.Count(context.Background(), pool); n == 0 {
 		log.Printf("warning: no user accounts exist; create one with: tinysonic user add <name> --admin")
 	}

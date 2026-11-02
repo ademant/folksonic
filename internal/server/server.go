@@ -16,6 +16,7 @@ import (
 
 	"github.com/tsirysndr/tinysonic/internal/config"
 	"github.com/tsirysndr/tinysonic/internal/scanner"
+	"github.com/tsirysndr/tinysonic/internal/users"
 )
 
 // State is shared by all handlers.
@@ -311,6 +312,17 @@ type writerOnly struct{ io.Writer }
 
 // requireAuth returns true when the request authenticated; it has already
 // written the error response when this returns false.
+// requireCaller is requireAuth for handlers that act on behalf of a specific
+// account (stars, playlists). It returns that account.
+func (s *State) requireCaller(w http.ResponseWriter, r *http.Request) (users.User, bool) {
+	u, ok := s.authenticate(r)
+	if !ok {
+		writeError(w, 40, "Wrong username or password")
+		return users.User{}, false
+	}
+	return u, true
+}
+
 func (s *State) requireAuth(w http.ResponseWriter, r *http.Request) bool {
 	if _, ok := s.authenticate(r); !ok {
 		writeError(w, 40, "Wrong username or password")

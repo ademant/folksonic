@@ -50,6 +50,10 @@ func openDB(cfgPath string) (*config.Config, *sql.DB, error) {
 		pool.Close()
 		return nil, nil, err
 	}
+	if err := users.AdoptLegacyData(context.Background(), pool); err != nil {
+		pool.Close()
+		return nil, nil, err
+	}
 	return cfg, pool, nil
 }
 
