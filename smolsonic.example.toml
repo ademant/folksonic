@@ -4,8 +4,11 @@
 # from the directory containing this file. Keep this file readable only by the
 # user that runs tinysonic (chmod 600): it can hold a password.
 
-# Required: the library root. Walked recursively.
-music_dir = "/path/to/your/music"
+# Required: one or more library roots. Each is walked recursively, so files in
+# subdirectories are found. Relative entries resolve from this file's directory.
+# A directory that is missing at startup is reported as a warning; the others
+# keep working. (The older single-directory key `music_dir = "…"` still works.)
+music_dirs = ["/path/to/your/music"]
 
 # Optional bootstrap admin. Used only when the database has no users yet.
 # After that, manage accounts with `tinysonic user …`, and remove these lines.

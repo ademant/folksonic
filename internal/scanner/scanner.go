@@ -50,7 +50,14 @@ const (
 	resultSkipped
 )
 
-func Scan(pool *sql.DB, musicDir, coversDir string, progress *Progress) (Stats, error) {
+// Scan indexes every audio file under each root directory. A file reached
+// through two roots (nested roots, or a symlink) is indexed once.
+//
+// Songs are pruned per root: a song is removed only if its root was read
+// completely and its file was not seen. A root that cannot be read blocks
+// pruning for its own songs only, so one unavailable disk does not cost the
+// rest of the library its entries.
+func Scan(pool *sql.DB, roots []string, coversDir string, progress *Progress) (Stats, error) {
 	progress.running.Store(true)
 	progress.count.Store(0)
 	defer progress.running.Store(false)
@@ -62,34 +69,37 @@ func Scan(pool *sql.DB, musicDir, coversDir string, progress *Progress) (Stats, 
 	var stats Stats
 	seen := make(map[string]bool)
 	visited := make(map[string]bool)
-	walkFailures := walkAudio(musicDir, visited, func(path string) {
-		seen[path] = true
-		stats.Scanned++
-		progress.count.Store(int64(stats.Scanned))
-		switch res, perr := processFile(pool, path, coversDir); {
-		case perr != nil:
-			log.Printf("scan %s: %v", path, perr)
-			stats.Skipped++
-		case res == resultInserted:
-			stats.Inserted++
-		case res == resultUpdated:
-			stats.Updated++
-		case res == resultSkipped:
-			stats.Skipped++
+	var completeRoots []string
+	for _, root := range roots {
+		failures := walkAudio(root, visited, func(path string) {
+			seen[path] = true
+			stats.Scanned++
+			progress.count.Store(int64(stats.Scanned))
+			switch res, perr := processFile(pool, path, coversDir); {
+			case perr != nil:
+				log.Printf("scan %s: %v", path, perr)
+				stats.Skipped++
+			case res == resultInserted:
+				stats.Inserted++
+			case res == resultUpdated:
+				stats.Updated++
+			case res == resultSkipped:
+				stats.Skipped++
+			}
+		})
+		if failures == 0 {
+			completeRoots = append(completeRoots, root)
+		} else {
+			log.Printf("scan: %s: %d unreadable directories, its missing songs are kept", root, failures)
 		}
-	})
-	// Songs whose files vanished while the server was down are only removed
-	// after a complete walk. If any directory could not be read, its songs
-	// would look missing, so pruning is skipped rather than risk deleting them.
-	if walkFailures == 0 {
-		pruned, err := pruneMissing(pool, musicDir, seen)
-		if err != nil {
-			return stats, fmt.Errorf("pruning missing songs: %w", err)
-		}
-		stats.Pruned = pruned
-	} else {
-		log.Printf("scan: %d unreadable directories, skipping removal of missing songs", walkFailures)
 	}
+	// Songs whose files vanished while the server was down are removed only
+	// under roots that were read completely.
+	pruned, err := pruneMissing(pool, completeRoots, seen)
+	if err != nil {
+		return stats, fmt.Errorf("pruning missing songs: %w", err)
+	}
+	stats.Pruned = pruned
 	log.Printf("scan complete: %d scanned, %d inserted, %d updated, %d skipped, %d removed",
 		stats.Scanned, stats.Inserted, stats.Updated, stats.Skipped, stats.Pruned)
 	return stats, nil
@@ -97,21 +107,23 @@ func Scan(pool *sql.DB, musicDir, coversDir string, progress *Progress) (Stats, 
 
 // pruneMissing removes songs under root whose paths were not seen during the
 // walk, along with any album or artist left empty by the removal.
-func pruneMissing(pool *sql.DB, root string, seen map[string]bool) (int, error) {
-	paths, err := songPathsUnder(pool, root)
-	if err != nil {
-		return 0, err
-	}
+func pruneMissing(pool *sql.DB, roots []string, seen map[string]bool) (int, error) {
 	n := 0
-	for _, p := range paths {
-		if seen[p] {
-			continue
+	for _, root := range roots {
+		paths, err := songPathsUnder(pool, root)
+		if err != nil {
+			return n, err
 		}
-		if err := DeletePath(pool, p); err != nil {
-			log.Printf("prune %s: %v", p, err)
-			continue
+		for _, p := range paths {
+			if seen[p] {
+				continue
+			}
+			if err := DeletePath(pool, p); err != nil {
+				log.Printf("prune %s: %v", p, err)
+				continue
+			}
+			n++
 		}
-		n++
 	}
 	return n, nil
 }
