@@ -50,7 +50,52 @@ func migrate(d *sql.DB) error {
 	if _, err := d.Exec(schema); err != nil {
 		return fmt.Errorf("running migrations: %w", err)
 	}
+	if err := migrateUserScope(d); err != nil {
+		return fmt.Errorf("user-scoped tables: %w", err)
+	}
 	return backfillFTS(d)
+}
+
+// migrateUserScope brings starred and playlists to the per-user layout. It is
+// idempotent. Rows created before accounts existed have a NULL owner; the
+// users package assigns them to the first admin once the bootstrap has run.
+func migrateUserScope(d *sql.DB) error {
+	var n int
+	if err := d.QueryRow("SELECT COUNT(*) FROM pragma_table_info('starred') WHERE name = 'user_id'").Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		// Legacy starred table: primary key was the item id alone.
+		stmts := []string{
+			"ALTER TABLE starred RENAME TO starred_legacy",
+			`CREATE TABLE starred (
+				user_id     INTEGER REFERENCES users(id) ON DELETE CASCADE,
+				id          TEXT NOT NULL,
+				starred_at  TEXT NOT NULL
+			)`,
+			"INSERT INTO starred (user_id, id, starred_at) SELECT NULL, id, starred_at FROM starred_legacy",
+			"DROP TABLE starred_legacy",
+		}
+		for _, q := range stmts {
+			if _, err := d.Exec(q); err != nil {
+				return err
+			}
+		}
+	}
+	if _, err := d.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_starred_user_item ON starred(user_id, id)"); err != nil {
+		return err
+	}
+
+	if err := d.QueryRow("SELECT COUNT(*) FROM pragma_table_info('playlists') WHERE name = 'owner_id'").Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		if _, err := d.Exec("ALTER TABLE playlists ADD COLUMN owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE"); err != nil {
+			return err
+		}
+	}
+	_, err := d.Exec("CREATE INDEX IF NOT EXISTS idx_playlists_owner ON playlists(owner_id)")
+	return err
 }
 
 const schema = `
@@ -102,7 +147,8 @@ CREATE INDEX IF NOT EXISTS idx_songs_title ON songs(title);
 CREATE INDEX IF NOT EXISTS idx_songs_genre ON songs(genre);
 
 CREATE TABLE IF NOT EXISTS starred (
-    id          TEXT PRIMARY KEY,
+    user_id     INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    id          TEXT NOT NULL,
     starred_at  TEXT NOT NULL
 );
 

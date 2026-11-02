@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tsirysndr/tinysonic/internal/users"
 )
@@ -75,5 +76,28 @@ func TestLoginPageServed(t *testing.T) {
 	}
 	if !strings.Contains(rec.Header().Get("Content-Security-Policy"), "default-src 'self'") {
 		t.Fatal("login page missing CSP header")
+	}
+}
+
+// An expired API key must stop authenticating; a key with no expiry keeps working.
+func TestAPIKeyExpiry(t *testing.T) {
+	s := newTestState(t)
+	ctx := context.Background()
+	admin, _ := users.ByName(ctx, s.Pool, "admin")
+	// A key whose expiry is an hour in the past.
+	expired, err := users.CreateAPIKey(ctx, s.Pool, admin.ID, "old", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().Add(-time.Hour).UTC().Format("2006-01-02T15:04:05Z")
+	if _, err := s.Pool.Exec("UPDATE api_keys SET expires_at = ? WHERE label = 'old'", past); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.authenticate(httptest.NewRequest(http.MethodGet, "/rest/ping?apiKey="+expired, nil)); ok {
+		t.Fatal("expired API key still authenticates")
+	}
+	live, _ := users.CreateAPIKey(ctx, s.Pool, admin.ID, "new", time.Hour)
+	if _, ok := s.authenticate(httptest.NewRequest(http.MethodGet, "/rest/ping?apiKey="+live, nil)); !ok {
+		t.Fatal("unexpired API key rejected")
 	}
 }

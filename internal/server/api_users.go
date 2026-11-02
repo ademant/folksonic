@@ -171,16 +171,27 @@ func (s *State) APICreateKey(w http.ResponseWriter, r *http.Request) {
 	}
 	var in struct {
 		Label string `json:"label"`
+		// ExpiresDays limits the key's lifetime. Zero means no expiry.
+		ExpiresDays int `json:"expires_days"`
 	}
 	if !decodeBody(w, r, &in) {
 		return
 	}
-	key, err := users.CreateAPIKey(r.Context(), s.Pool, u.ID, in.Label, 0)
+	if in.ExpiresDays < 0 || in.ExpiresDays > 3650 {
+		writeAPIError(w, http.StatusBadRequest, "expires_days must be between 0 and 3650")
+		return
+	}
+	ttl := time.Duration(in.ExpiresDays) * 24 * time.Hour
+	key, err := users.CreateAPIKey(r.Context(), s.Pool, u.ID, in.Label, ttl)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "database error")
 		return
 	}
-	writeJSON(w, http.StatusCreated, J{"apiKey": key, "label": in.Label})
+	resp := J{"apiKey": key, "label": in.Label, "expiresAt": nil}
+	if ttl > 0 {
+		resp["expiresAt"] = time.Now().Add(ttl).UTC().Format(time.RFC3339)
+	}
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 func (s *State) APIListKeys(w http.ResponseWriter, r *http.Request) {

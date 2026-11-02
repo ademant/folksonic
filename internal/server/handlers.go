@@ -651,13 +651,14 @@ func (s *State) GetStarred(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *State) GetStarred2(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAuth(w, r) {
+	caller, ok := s.requireCaller(w, r)
+	if !ok {
 		return
 	}
 	ctx := r.Context()
-	songs, _ := repoStarredSongs(ctx, s.Pool)
-	albums, _ := repoStarredAlbums(ctx, s.Pool)
-	artists, _ := repoStarredArtists(ctx, s.Pool)
+	songs, _ := repoStarredSongs(ctx, s.Pool, caller.ID)
+	albums, _ := repoStarredAlbums(ctx, s.Pool, caller.ID)
+	artists, _ := repoStarredArtists(ctx, s.Pool, caller.ID)
 
 	songJSONs := make([]J, 0, len(songs))
 	for _, p := range songs {
@@ -697,7 +698,8 @@ func (s *State) Unstar(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *State) starOp(w http.ResponseWriter, r *http.Request, star bool) {
-	if !s.requireAuth(w, r) {
+	caller, ok := s.requireCaller(w, r)
+	if !ok {
 		return
 	}
 	target := queryFirst(r, "id")
@@ -713,9 +715,9 @@ func (s *State) starOp(w http.ResponseWriter, r *http.Request, star bool) {
 	}
 	var err error
 	if star {
-		err = repoStar(r.Context(), s.Pool, target, nowISO8601())
+		err = repoStar(r.Context(), s.Pool, caller.ID, target, nowISO8601())
 	} else {
-		err = repoUnstar(r.Context(), s.Pool, target)
+		err = repoUnstar(r.Context(), s.Pool, caller.ID, target)
 	}
 	if err != nil {
 		log.Printf("starOp: %v", err)
@@ -903,10 +905,11 @@ func (s *State) playlistJSON(r *http.Request, pl *models.Playlist) J {
 }
 
 func (s *State) GetPlaylists(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAuth(w, r) {
+	caller, ok := s.requireCaller(w, r)
+	if !ok {
 		return
 	}
-	playlists, _ := repoAllPlaylists(r.Context(), s.Pool)
+	playlists, _ := repoAllPlaylists(r.Context(), s.Pool, caller.ID)
 	out := make([]J, 0, len(playlists))
 	for i := range playlists {
 		out = append(out, s.playlistJSON(r, &playlists[i]))
@@ -915,7 +918,8 @@ func (s *State) GetPlaylists(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *State) GetPlaylist(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAuth(w, r) {
+	caller, ok := s.requireCaller(w, r)
+	if !ok {
 		return
 	}
 	id := queryFirst(r, "id")
@@ -923,7 +927,7 @@ func (s *State) GetPlaylist(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 10, "Required parameter is missing: id")
 		return
 	}
-	pl, err := repoFindPlaylist(r.Context(), s.Pool, id)
+	pl, err := repoFindPlaylist(r.Context(), s.Pool, caller.ID, id)
 	if err != nil {
 		log.Printf("getPlaylist: %v", err)
 		writeError(w, 0, "database error")
@@ -957,7 +961,8 @@ func (s *State) GetPlaylist(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *State) CreatePlaylist(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAuth(w, r) {
+	caller, ok := s.requireCaller(w, r)
+	if !ok {
 		return
 	}
 	ctx := r.Context()
@@ -972,9 +977,9 @@ func (s *State) CreatePlaylist(w http.ResponseWriter, r *http.Request) {
 	var id string
 	if existingID != "" {
 		id = existingID
-		pl, _ := repoFindPlaylist(ctx, s.Pool, id)
+		pl, _ := repoFindPlaylist(ctx, s.Pool, caller.ID, id)
 		if pl == nil {
-			if err := repoCreatePlaylist(ctx, s.Pool, id, name, now); err != nil {
+			if err := repoCreatePlaylist(ctx, s.Pool, caller.ID, id, name, now); err != nil {
 				log.Printf("createPlaylist: %v", err)
 				writeError(w, 0, "database error")
 				return
@@ -987,7 +992,7 @@ func (s *State) CreatePlaylist(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		id = newPlaylistID()
-		if err := repoCreatePlaylist(ctx, s.Pool, id, name, now); err != nil {
+		if err := repoCreatePlaylist(ctx, s.Pool, caller.ID, id, name, now); err != nil {
 			log.Printf("createPlaylist: %v", err)
 			writeError(w, 0, "database error")
 			return
@@ -997,7 +1002,7 @@ func (s *State) CreatePlaylist(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	pl, err := repoFindPlaylist(ctx, s.Pool, id)
+	pl, err := repoFindPlaylist(ctx, s.Pool, caller.ID, id)
 	if err != nil || pl == nil {
 		writeError(w, 0, "playlist persistence error")
 		return
@@ -1026,7 +1031,8 @@ func (s *State) CreatePlaylist(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *State) UpdatePlaylist(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAuth(w, r) {
+	caller, ok := s.requireCaller(w, r)
+	if !ok {
 		return
 	}
 	ctx := r.Context()
@@ -1035,7 +1041,7 @@ func (s *State) UpdatePlaylist(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 10, "Required parameter is missing: playlistId")
 		return
 	}
-	pl, _ := repoFindPlaylist(ctx, s.Pool, id)
+	pl, _ := repoFindPlaylist(ctx, s.Pool, caller.ID, id)
 	if pl == nil {
 		writeError(w, 70, "Playlist not found")
 		return
@@ -1082,7 +1088,8 @@ func singleParam(r *http.Request, key string) (string, bool) {
 }
 
 func (s *State) DeletePlaylist(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAuth(w, r) {
+	caller, ok := s.requireCaller(w, r)
+	if !ok {
 		return
 	}
 	id := queryFirst(r, "id")
@@ -1090,7 +1097,7 @@ func (s *State) DeletePlaylist(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 10, "Required parameter is missing: id")
 		return
 	}
-	if err := repoDeletePlaylist(r.Context(), s.Pool, id); err != nil {
+	if err := repoDeletePlaylist(r.Context(), s.Pool, caller.ID, id); err != nil {
 		log.Printf("deletePlaylist: %v", err)
 		writeError(w, 0, "database error")
 		return
