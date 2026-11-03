@@ -15,7 +15,7 @@ import (
 
 func repoAllArtists(ctx context.Context, db *sql.DB) ([]models.Artist, error) {
 	rows, err := db.QueryContext(ctx,
-		"SELECT id, name FROM artists ORDER BY name COLLATE NOCASE")
+		"SELECT id, name, mbid FROM artists ORDER BY name COLLATE NOCASE")
 	if err != nil {
 		return nil, err
 	}
@@ -23,7 +23,7 @@ func repoAllArtists(ctx context.Context, db *sql.DB) ([]models.Artist, error) {
 	var out []models.Artist
 	for rows.Next() {
 		var a models.Artist
-		if err := rows.Scan(&a.ID, &a.Name); err != nil {
+		if err := rows.Scan(&a.ID, &a.Name, &a.MBID); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
@@ -33,7 +33,7 @@ func repoAllArtists(ctx context.Context, db *sql.DB) ([]models.Artist, error) {
 
 func repoFindArtist(ctx context.Context, db *sql.DB, id string) (*models.Artist, error) {
 	var a models.Artist
-	err := db.QueryRowContext(ctx, "SELECT id, name FROM artists WHERE id = ?", id).Scan(&a.ID, &a.Name)
+	err := db.QueryRowContext(ctx, "SELECT id, name, mbid FROM artists WHERE id = ?", id).Scan(&a.ID, &a.Name, &a.MBID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -63,11 +63,11 @@ func repoAlbumCountsByArtist(ctx context.Context, db *sql.DB) (map[string]int64,
 
 // ── Albums ───────────────────────────────────────────────────────────────────
 
-const albumCols = "id, title, artist, artist_id, year, cover_art"
+const albumCols = "id, title, artist, artist_id, year, cover_art, mbid"
 
 func scanAlbum(s rowScanner) (models.Album, error) {
 	var a models.Album
-	err := s.Scan(&a.ID, &a.Title, &a.Artist, &a.ArtistID, &a.Year, &a.CoverArt)
+	err := s.Scan(&a.ID, &a.Title, &a.Artist, &a.ArtistID, &a.Year, &a.CoverArt, &a.MBID)
 	return a, err
 }
 
@@ -132,7 +132,7 @@ func repoAlbumsPaginated(ctx context.Context, db *sql.DB, listType string, size,
 // ── Songs ────────────────────────────────────────────────────────────────────
 
 const songCols = "id, path, title, artist, artist_id, album, album_id, genre, track_number, " +
-	"disc_number, year, duration_ms, bitrate, filesize, suffix, content_type, cover_art"
+	"disc_number, year, duration_ms, bitrate, filesize, suffix, content_type, cover_art, mbid"
 
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -143,7 +143,7 @@ func scanSong(s rowScanner) (models.Song, error) {
 	err := s.Scan(
 		&v.ID, &v.Path, &v.Title, &v.Artist, &v.ArtistID, &v.Album, &v.AlbumID,
 		&v.Genre, &v.TrackNumber, &v.DiscNumber, &v.Year,
-		&v.DurationMs, &v.Bitrate, &v.Filesize, &v.Suffix, &v.ContentType, &v.CoverArt,
+		&v.DurationMs, &v.Bitrate, &v.Filesize, &v.Suffix, &v.ContentType, &v.CoverArt, &v.MBID,
 	)
 	return v, err
 }
@@ -299,7 +299,7 @@ func repoSearchArtists(ctx context.Context, db *sql.DB, term string, limit, offs
 		var out []models.Artist
 		for rows.Next() {
 			var a models.Artist
-			if err := rows.Scan(&a.ID, &a.Name); err != nil {
+			if err := rows.Scan(&a.ID, &a.Name, &a.MBID); err != nil {
 				return nil, err
 			}
 			out = append(out, a)
@@ -307,7 +307,7 @@ func repoSearchArtists(ctx context.Context, db *sql.DB, term string, limit, offs
 		return out, rows.Err()
 	}
 	rows, err := db.QueryContext(ctx,
-		"SELECT a.id, a.name FROM artists_fts f INNER JOIN artists a ON a.id = f.id "+
+		"SELECT a.id, a.name, a.mbid FROM artists_fts f INNER JOIN artists a ON a.id = f.id "+
 			"WHERE f.artists_fts MATCH ? ORDER BY f.rank LIMIT ? OFFSET ?",
 		q, limit, offset)
 	if err != nil {
@@ -317,7 +317,7 @@ func repoSearchArtists(ctx context.Context, db *sql.DB, term string, limit, offs
 	var out []models.Artist
 	for rows.Next() {
 		var a models.Artist
-		if err := rows.Scan(&a.ID, &a.Name); err != nil {
+		if err := rows.Scan(&a.ID, &a.Name, &a.MBID); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
@@ -333,7 +333,7 @@ func repoSearchAlbums(ctx context.Context, db *sql.DB, term string, limit, offse
 			limit, offset)
 	}
 	return queryManyAlbums(ctx, db,
-		"SELECT a.id, a.title, a.artist, a.artist_id, a.year, a.cover_art "+
+		"SELECT a.id, a.title, a.artist, a.artist_id, a.year, a.cover_art, a.mbid "+
 			"FROM albums_fts f INNER JOIN albums a ON a.id = f.id "+
 			"WHERE f.albums_fts MATCH ? ORDER BY f.rank LIMIT ? OFFSET ?",
 		q, limit, offset)
@@ -366,7 +366,7 @@ func repoSearchSongs(ctx context.Context, db *sql.DB, term string, limit, offset
 	return queryManySongs(ctx, db,
 		"SELECT s.id, s.path, s.title, s.artist, s.artist_id, s.album, s.album_id, s.genre, "+
 			"s.track_number, s.disc_number, s.year, s.duration_ms, s.bitrate, s.filesize, "+
-			"s.suffix, s.content_type, s.cover_art "+
+			"s.suffix, s.content_type, s.cover_art, s.mbid "+
 			"FROM songs_fts f INNER JOIN songs s ON s.id = f.id "+
 			"WHERE f.songs_fts MATCH ? ORDER BY f.rank LIMIT ? OFFSET ?",
 		q, limit, offset)
@@ -585,7 +585,7 @@ func repoPlaylistSongs(ctx context.Context, db *sql.DB, playlistID string) ([]mo
 	return queryManySongs(ctx, db,
 		"SELECT s.id, s.path, s.title, s.artist, s.artist_id, s.album, s.album_id, s.genre, "+
 			"s.track_number, s.disc_number, s.year, s.duration_ms, s.bitrate, s.filesize, "+
-			"s.suffix, s.content_type, s.cover_art "+
+			"s.suffix, s.content_type, s.cover_art, s.mbid "+
 			"FROM playlist_songs ps INNER JOIN songs s ON s.id = ps.song_id "+
 			"WHERE ps.playlist_id = ? ORDER BY ps.position", playlistID)
 }

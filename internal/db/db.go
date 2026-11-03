@@ -56,6 +56,9 @@ func migrate(d *sql.DB) error {
 	if err := migrateAccounts(d); err != nil {
 		return fmt.Errorf("accounts: %w", err)
 	}
+	if err := migrateMBID(d); err != nil {
+		return fmt.Errorf("musicbrainz ids: %w", err)
+	}
 	return backfillFTS(d)
 }
 
@@ -105,7 +108,8 @@ const schema = `
 CREATE TABLE IF NOT EXISTS artists (
     id           TEXT PRIMARY KEY,
     name         TEXT NOT NULL,
-    name_lower   TEXT NOT NULL UNIQUE
+    name_lower   TEXT NOT NULL UNIQUE,
+    mbid         TEXT
 );
 
 CREATE TABLE IF NOT EXISTS albums (
@@ -115,6 +119,7 @@ CREATE TABLE IF NOT EXISTS albums (
     artist_id    TEXT NOT NULL,
     year         INTEGER NOT NULL DEFAULT 0,
     cover_art    TEXT,
+    mbid         TEXT,
     FOREIGN KEY (artist_id) REFERENCES artists(id)
 );
 
@@ -140,6 +145,7 @@ CREATE TABLE IF NOT EXISTS songs (
     content_type  TEXT NOT NULL,
     cover_art     TEXT,
     mtime         INTEGER NOT NULL DEFAULT 0,
+    mbid          TEXT,
     FOREIGN KEY (album_id) REFERENCES albums(id),
     FOREIGN KEY (artist_id) REFERENCES artists(id)
 );

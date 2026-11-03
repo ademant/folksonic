@@ -279,6 +279,7 @@ func (s *State) routes() *http.ServeMux {
 
 	// System
 	register("ping", s.Ping)
+	register("getOpenSubsonicExtensions", s.GetOpenSubsonicExtensions)
 	register("getUser", s.GetUser)
 	register("getMusicFolders", s.GetMusicFolders)
 	register("getScanStatus", s.GetScanStatus)

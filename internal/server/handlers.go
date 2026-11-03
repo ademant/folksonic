@@ -122,29 +122,39 @@ func niToAny(n sql.NullInt64) any {
 	return nil
 }
 
+// mbidValue is the MusicBrainz ID a client should see, or "" when the file has none.
+func mbidValue(n sql.NullString) string {
+	if n.Valid {
+		return n.String
+	}
+	return ""
+}
+
 func songToChild(s models.Song) J {
 	return J{
-		"id":          s.ID,
-		"parent":      s.AlbumID,
-		"isDir":       false,
-		"title":       s.Title,
-		"album":       s.Album,
-		"artist":      s.Artist,
-		"track":       niToAny(s.TrackNumber),
-		"year":        niToAny(s.Year),
-		"genre":       nsToAny(s.Genre),
-		"coverArt":    s.AlbumID,
-		"size":        s.Filesize,
-		"contentType": s.ContentType,
-		"suffix":      s.Suffix,
-		"duration":    s.DurationMs / 1000,
-		"bitRate":     s.Bitrate,
-		"path":        s.Path,
-		"isVideo":     false,
-		"discNumber":  niToAny(s.DiscNumber),
-		"albumId":     s.AlbumID,
-		"artistId":    s.ArtistID,
-		"type":        "music",
+		"id":            s.ID,
+		"musicBrainzId": mbidValue(s.MBID),
+		"mediaType":     "song",
+		"parent":        s.AlbumID,
+		"isDir":         false,
+		"title":         s.Title,
+		"album":         s.Album,
+		"artist":        s.Artist,
+		"track":         niToAny(s.TrackNumber),
+		"year":          niToAny(s.Year),
+		"genre":         nsToAny(s.Genre),
+		"coverArt":      s.AlbumID,
+		"size":          s.Filesize,
+		"contentType":   s.ContentType,
+		"suffix":        s.Suffix,
+		"duration":      s.DurationMs / 1000,
+		"bitRate":       s.Bitrate,
+		"path":          s.Path,
+		"isVideo":       false,
+		"discNumber":    niToAny(s.DiscNumber),
+		"albumId":       s.AlbumID,
+		"artistId":      s.ArtistID,
+		"type":          "music",
 	}
 }
 
@@ -154,25 +164,29 @@ func albumToChild(a models.Album, songCount, durationS int64) J {
 		year = a.Year
 	}
 	return J{
-		"id":        a.ID,
-		"name":      a.Title,
-		"title":     a.Title,
-		"artist":    a.Artist,
-		"artistId":  a.ArtistID,
-		"songCount": songCount,
-		"duration":  durationS,
-		"year":      year,
-		"coverArt":  a.ID,
-		"created":   "2020-01-01T00:00:00Z",
+		"id":            a.ID,
+		"musicBrainzId": mbidValue(a.MBID),
+		"mediaType":     "album",
+		"name":          a.Title,
+		"title":         a.Title,
+		"artist":        a.Artist,
+		"artistId":      a.ArtistID,
+		"songCount":     songCount,
+		"duration":      durationS,
+		"year":          year,
+		"coverArt":      a.ID,
+		"created":       "2020-01-01T00:00:00Z",
 	}
 }
 
 func artistToJSON(a models.Artist, albumCount int64) J {
 	return J{
-		"id":         a.ID,
-		"name":       a.Name,
-		"albumCount": albumCount,
-		"coverArt":   a.ID,
+		"id":            a.ID,
+		"musicBrainzId": mbidValue(a.MBID),
+		"mediaType":     "artist",
+		"name":          a.Name,
+		"albumCount":    albumCount,
+		"coverArt":      a.ID,
 	}
 }
 
@@ -391,11 +405,13 @@ func (s *State) GetArtist(w http.ResponseWriter, r *http.Request) {
 	}
 	writeOK(w, J{
 		"artist": J{
-			"id":         artist.ID,
-			"name":       artist.Name,
-			"albumCount": len(albumJSONs),
-			"coverArt":   artist.ID,
-			"album":      albumJSONs,
+			"id":            artist.ID,
+			"musicBrainzId": mbidValue(artist.MBID),
+			"mediaType":     "artist",
+			"name":          artist.Name,
+			"albumCount":    len(albumJSONs),
+			"coverArt":      artist.ID,
+			"album":         albumJSONs,
 		},
 	})
 }
@@ -433,16 +449,18 @@ func (s *State) GetAlbum(w http.ResponseWriter, r *http.Request) {
 	}
 	writeOK(w, J{
 		"album": J{
-			"id":        album.ID,
-			"name":      album.Title,
-			"title":     album.Title,
-			"artist":    album.Artist,
-			"artistId":  album.ArtistID,
-			"coverArt":  album.ID,
-			"songCount": len(songJSONs),
-			"duration":  totalDur,
-			"year":      year,
-			"song":      songJSONs,
+			"id":            album.ID,
+			"musicBrainzId": mbidValue(album.MBID),
+			"mediaType":     "album",
+			"name":          album.Title,
+			"title":         album.Title,
+			"artist":        album.Artist,
+			"artistId":      album.ArtistID,
+			"coverArt":      album.ID,
+			"songCount":     len(songJSONs),
+			"duration":      totalDur,
+			"year":          year,
+			"song":          songJSONs,
 		},
 	})
 }

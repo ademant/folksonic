@@ -5,6 +5,7 @@ import "database/sql"
 type Artist struct {
 	ID   string
 	Name string
+	MBID sql.NullString
 }
 
 type Album struct {
@@ -14,6 +15,7 @@ type Album struct {
 	ArtistID string
 	Year     int64
 	CoverArt sql.NullString
+	MBID     sql.NullString
 }
 
 type Song struct {
@@ -34,6 +36,7 @@ type Song struct {
 	Suffix      string
 	ContentType string
 	CoverArt    sql.NullString
+	MBID        sql.NullString
 }
 
 type Playlist struct {
