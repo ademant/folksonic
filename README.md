@@ -200,8 +200,10 @@ GET /rest/getScanStatus.view?u=…&t=…&s=…
 
 ## Supported endpoints
 
-Full navidrome-style endpoint coverage. Both `.view`-suffixed and plain paths
-are accepted, on both `GET` and `POST`. Responses are JSON with the Subsonic
+tinysonic implements 42 of the OpenSubsonic endpoints. The full list, and the
+endpoints that are not implemented, is in
+[`docs/opensubsonic-endpoints.md`](docs/opensubsonic-endpoints.md). Both
+`.view`-suffixed and plain paths are accepted, on both `GET` and `POST`. Responses are JSON with the Subsonic
 envelope (`{"subsonic-response": …}`).
 
 **System** — `ping`, `getUser`, `getMusicFolders`, `getScanStatus`, `startScan`
@@ -279,6 +281,8 @@ Passkey-only accounts have no password. They cannot use the password parameter
 or token auth, and an empty password never matches.
 
 ### Accounts and pairing
+
+The JSON endpoints below are described in [`docs/openapi.yaml`](docs/openapi.yaml).
 
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |

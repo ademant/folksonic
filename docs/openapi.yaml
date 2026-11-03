@@ -1,0 +1,855 @@
+openapi: 3.1.0
+info:
+  title: tinysonic JSON API
+  version: 1.0.0
+  summary: Accounts, API keys, device pairing, passkeys and single sign-on.
+  description: |
+    JSON endpoints under `/api`, used by the web account page and the Android
+    app. They are not part of the Subsonic API: the Subsonic endpoints under
+    `/rest` are listed in `docs/opensubsonic-endpoints.md`.
+
+    Errors use one shape, `{"error": "<message>"}`, with an HTTP status code.
+
+    Paths are relative to the server root. With `base_path` set, prefix every
+    path with it, for example `/folksonic/api/keys`.
+
+    `/login` and `/account` are HTML pages and are not described here.
+servers:
+  - url: /
+    description: Server root (or the base_path prefix, when set)
+security:
+  - bearerAuth: []
+  - apiKeyQuery: []
+tags:
+  - name: Accounts
+  - name: API keys
+  - name: Device pairing
+  - name: Passkeys
+  - name: Single sign-on
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: 'Session token from `/api/login`, a passkey sign-in, a registration, or `/api/oidc/exchange` (web). Sent as `Authorization: Bearer <token>`.'
+    apiKeyQuery:
+      type: apiKey
+      in: query
+      name: apiKey
+      description: Device API key (`tsk_…`), from `/api/keys`, pairing or single sign-on (app). Also accepted as a form field.
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+    Ceremony:
+      name: ceremony
+      in: query
+      required: true
+      description: Ceremony id returned by the matching `begin` call. Single-use, expires after 5 minutes.
+      schema:
+        type: string
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+    Session:
+      type: object
+      required: [token, username, role]
+      properties:
+        token:
+          type: string
+          description: Bearer session token, valid for 30 days.
+        username:
+          type: string
+        role:
+          type: string
+          enum: [librarian, user]
+    ApiKeyCreated:
+      type: object
+      required: [apiKey, label, expiresAt]
+      properties:
+        apiKey:
+          type: string
+          description: Shown once. It cannot be retrieved later.
+        label:
+          type: string
+        expiresAt:
+          type: [string, "null"]
+          format: date-time
+    ApiKeyInfo:
+      type: object
+      required: [id, label, prefix, createdAt]
+      properties:
+        id:
+          type: integer
+        label:
+          type: string
+        prefix:
+          type: string
+          description: First characters of the key, for recognition.
+        createdAt:
+          type: string
+        lastUsedAt:
+          type: [string, "null"]
+        expiresAt:
+          type: [string, "null"]
+    PairingStart:
+      type: object
+      required: [token, uri, expiresIn]
+      properties:
+        token:
+          type: string
+        uri:
+          type: string
+          description: '`tinysonic://pair?server=<base_url>&token=<token>`. This is what the QR code encodes.'
+        expiresIn:
+          type: integer
+          description: Seconds until the token expires (300).
+    Passkey:
+      type: object
+      required: [id, label, createdAt]
+      properties:
+        id:
+          type: integer
+        label:
+          type: string
+          description: Empty when the passkey was added without a name.
+        createdAt:
+          type: string
+    Identity:
+      type: object
+      required: [id, issuer, subject, createdAt]
+      properties:
+        id:
+          type: integer
+        issuer:
+          type: string
+        subject:
+          type: string
+          description: The provider's stable user identifier.
+        createdAt:
+          type: string
+    WebAuthnOptions:
+      type: object
+      required: [ceremony, options]
+      properties:
+        ceremony:
+          type: string
+        options:
+          type: object
+          description: WebAuthn `publicKey` creation or request options, passed to the browser unchanged.
+    WebAuthnCredential:
+      type: object
+      description: The credential returned by `navigator.credentials.create()` or `.get()`, serialised as JSON. Passed to the library unchanged.
+      additionalProperties: true
+  responses:
+    BadRequest:
+      description: Invalid JSON body or invalid value.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: No valid session or API key, or a sign-in that has expired.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: No such resource that belongs to the caller.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: The request would break an account rule, such as removing the last sign-in method or a username that is taken.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ServiceUnavailable:
+      description: The feature is not configured on this server (passkeys need `base_url`; single sign-on needs the `oidc` block) or the identity provider cannot be reached.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+paths:
+  /api/register:
+    post:
+      tags: [Accounts]
+      summary: Create an account with a password
+      description: |
+        With `invite`, the account is active at once and the response is a
+        session. Without `invite`, the account is pending and needs
+        `allow_registration` on the server; an administrator approves it with
+        `tinysonic user approve`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+                invite:
+                  type: string
+                  description: Invitation code. Optional.
+      responses:
+        '201':
+          description: Account created and signed in (invitation given).
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Session'
+                  - type: object
+                    properties:
+                      status:
+                        type: string
+                        enum: [active]
+        '202':
+          description: Account created and pending approval (no invitation).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [pending]
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          description: Registration is disabled, or the invitation is invalid, used, expired or bound to another username.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/login:
+    post:
+      tags: [Accounts]
+      summary: Sign in with username and password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+      responses:
+        '200':
+          description: Signed in.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/logout:
+    post:
+      tags: [Accounts]
+      summary: End the session behind the Bearer token
+      responses:
+        '200':
+          description: Session ended (or no token was sent).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: ['signed out']
+  /api/keys:
+    get:
+      tags: [API keys]
+      summary: List the caller's API keys
+      responses:
+        '200':
+          description: Keys, without their secrets.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ApiKeyInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [API keys]
+      summary: Create an API key
+      description: The key is returned once. The Android app and other clients use it as the `apiKey` parameter.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label:
+                  type: string
+                  description: Name for the key. Defaults to "api key".
+                expires_days:
+                  type: integer
+                  minimum: 0
+                  maximum: 3650
+                  description: Lifetime in days. Zero (default) means the key does not expire.
+      responses:
+        '201':
+          description: Key created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKeyCreated'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/keys/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    delete:
+      tags: [API keys]
+      summary: Revoke one of the caller's keys
+      responses:
+        '200':
+          description: Key revoked. The key stops working at once.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [revoked]
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/pair/start:
+    post:
+      tags: [Device pairing]
+      summary: Create a pairing token and its QR payload
+      description: The token is single-use and expires after 5 minutes. The app redeems it at `/api/pair/complete`.
+      responses:
+        '201':
+          description: Token created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PairingStart'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/pair/complete:
+    post:
+      tags: [Device pairing]
+      summary: Redeem a pairing token for a device API key
+      description: No authentication. The single-use token is the credential.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+                device:
+                  type: string
+                  description: Name for the key the app is given.
+      responses:
+        '200':
+          description: Key issued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [apiKey, username, server]
+                properties:
+                  apiKey:
+                    type: string
+                  username:
+                    type: string
+                  server:
+                    type: string
+                    description: The address the app should use, from `base_url` or the request host.
+        '401':
+          description: Token unknown, used or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/pair/qr:
+    post:
+      tags: [Device pairing]
+      summary: Create a pairing token and return its QR code
+      description: |
+        Creates the same token as `/api/pair/start` and returns it as a QR
+        code. SVG is the default. PNG is returned when the request has
+        `Accept: image/png` (and not `image/svg+xml`) or `?format=png`.
+        Responses are not cached.
+      responses:
+        '200':
+          description: QR code image.
+          content:
+            image/svg+xml:
+              schema:
+                type: string
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/passkeys:
+    get:
+      tags: [Passkeys]
+      summary: List the caller's passkeys
+      responses:
+        '200':
+          description: Passkeys, without key material.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  passkeys:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Passkey'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/passkeys/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    delete:
+      tags: [Passkeys]
+      summary: Remove one of the caller's passkeys
+      description: Refused when it would leave the account with no sign-in method (no password, no other passkey and no linked identity).
+      responses:
+        '200':
+          description: Passkey removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [removed]
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/passkey/register/begin:
+    post:
+      tags: [Passkeys]
+      summary: Start adding a passkey to the signed-in account
+      responses:
+        '200':
+          description: WebAuthn creation options.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebAuthnOptions'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/passkey/register/finish:
+    post:
+      tags: [Passkeys]
+      summary: Store the passkey created in the browser
+      parameters:
+        - $ref: '#/components/parameters/Ceremony'
+        - name: label
+          in: query
+          required: false
+          description: Name for the passkey. Up to 64 characters.
+          schema:
+            type: string
+            maxLength: 64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebAuthnCredential'
+      responses:
+        '201':
+          description: Passkey stored.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: ['passkey added']
+        '400':
+          description: Ceremony expired, belongs to another account, or the passkey was rejected.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/passkey/login/begin:
+    post:
+      tags: [Passkeys]
+      summary: Start a passkey sign-in
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username]
+              properties:
+                username:
+                  type: string
+      responses:
+        '200':
+          description: WebAuthn request options.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebAuthnOptions'
+        '401':
+          description: No active account with a passkey under that name.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/passkey/login/finish:
+    post:
+      tags: [Passkeys]
+      summary: Verify the signed challenge and issue a session
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/Ceremony'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebAuthnCredential'
+      responses:
+        '200':
+          description: Signed in.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/register/passkey/begin:
+    post:
+      tags: [Passkeys]
+      summary: Start sign-up with an invitation and a passkey, without a password
+      description: Checks the invitation and username, then returns options. Nothing is written until the passkey is verified, so an abandoned attempt uses no invitation.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, invite]
+              properties:
+                username:
+                  type: string
+                invite:
+                  type: string
+      responses:
+        '200':
+          description: WebAuthn creation options.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebAuthnOptions'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          description: The invitation is invalid, used, expired or bound to another username.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/register/passkey/finish:
+    post:
+      tags: [Passkeys]
+      summary: Verify the passkey, create the account and sign in
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/Ceremony'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebAuthnCredential'
+      responses:
+        '201':
+          description: Account created and signed in. The invitation is spent.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Session'
+                  - type: object
+                    properties:
+                      status:
+                        type: string
+                        enum: [active]
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          description: The invitation was used or became invalid while the passkey was being created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/oidc/status:
+    get:
+      tags: [Single sign-on]
+      summary: Whether single sign-on is configured
+      security: []
+      responses:
+        '200':
+          description: Status.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enabled]
+                properties:
+                  enabled:
+                    type: boolean
+  /api/oidc/begin:
+    post:
+      tags: [Single sign-on]
+      summary: Start a single sign-on
+      description: |
+        `mode` selects what the callback does:
+        - `signin` (default): sign in an account already linked to the identity.
+        - `link`: attach the identity to the signed-in account. Needs a session or API key.
+        - `invite`: create an account bound to `username`, spending `invite`.
+
+        The browser (or app) then opens the returned `url`. PKCE and a nonce are
+        used, and the state is single-use and expires after 10 minutes.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mode:
+                  type: string
+                  enum: [signin, link, invite]
+                  default: signin
+                client:
+                  type: string
+                  enum: [web, app]
+                  default: web
+                  description: '`web` returns to `/login` or `/account`. `app` returns to the `tinysonic://oidc` scheme.'
+                invite:
+                  type: string
+                  description: 'Required for `mode: invite`.'
+                username:
+                  type: string
+                  description: 'Required for `mode: invite`.'
+      responses:
+        '200':
+          description: Provider authorisation URL.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [url]
+                properties:
+                  url:
+                    type: string
+                    format: uri
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Invitation invalid (mode invite).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/oidc/callback:
+    get:
+      tags: [Single sign-on]
+      summary: Provider redirect target
+      description: |
+        Called by the provider, not by clients. It consumes the state, verifies
+        the ID token (issuer, audience, nonce), applies the flow's mode, and
+        redirects:
+        - web sign-in: to `<base_url>/login#oidc=<code>`
+        - web link: to `<base_url>/account?linked=1`
+        - app: to `tinysonic://oidc?code=<code>` (or `linked=1`)
+        - failure: to the same page with `oidc_error=<message>`
+
+        The code is valid for 60 seconds and is single-use.
+      security: []
+      parameters:
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: code
+          in: query
+          required: false
+          description: Authorisation code from the provider.
+          schema:
+            type: string
+        - name: error
+          in: query
+          required: false
+          description: Set by the provider when the user declines.
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirect to the client, as described above.
+        '400':
+          description: Unknown or already-used state. Plain text, not JSON.
+          content:
+            text/plain:
+              schema:
+                type: string
+  /api/oidc/exchange:
+    post:
+      tags: [Single sign-on]
+      summary: Trade the one-time code for a session or device key
+      description: Web clients get a session token. The app gets its own API key, as with pairing.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+                device:
+                  type: string
+                  description: Name for the app's key. Used only for the app. Defaults to "app", maximum 64 characters.
+      responses:
+        '200':
+          description: Session (web) or device key (app).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/Session'
+                  - type: object
+                    required: [apiKey, username, server]
+                    properties:
+                      apiKey:
+                        type: string
+                      username:
+                        type: string
+                      server:
+                        type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/oidc/identities:
+    get:
+      tags: [Single sign-on]
+      summary: List the identities linked to the caller
+      responses:
+        '200':
+          description: Linked identities.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  identities:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Identity'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/oidc/identities/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    delete:
+      tags: [Single sign-on]
+      summary: Unlink one of the caller's identities
+      description: Refused when it would leave the account with no sign-in method.
+      responses:
+        '200':
+          description: Identity unlinked.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [unlinked]
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
