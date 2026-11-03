@@ -97,7 +97,7 @@ func TestOpenAPIDocumentsEveryAPIRoute(t *testing.T) {
 // in docs/opensubsonic-endpoints.md is exactly the set of registered Subsonic
 // endpoints, and that the "Not implemented" list names none of them.
 func TestOpenSubsonicListMatchesRegistrations(t *testing.T) {
-	regRE := regexp.MustCompile(`register\("([A-Za-z0-9]+)"`)
+	regRE := regexp.MustCompile(`register(?:Raw)?\("([A-Za-z0-9]+)"`)
 	registered := map[string]bool{}
 	for _, m := range regRE.FindAllStringSubmatch(serverSource(t), -1) {
 		registered[m[1]] = true

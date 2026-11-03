@@ -156,8 +156,9 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 func corsMiddleware(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "*")
+		w.Header().Set("Access-Control-Expose-Headers", exposedHeaders)
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -185,7 +186,11 @@ func requestLogger(h http.Handler) http.Handler {
 		h.ServeHTTP(rw, r)
 		// Path only: the query string carries p=, t= and s= credentials and
 		// must never reach the log.
-		log.Printf("%s %s %d %dB %s", r.Method, r.URL.Path, rw.status, rw.bytes, time.Since(start))
+		mode := ""
+		if rw.Header().Get("Preference-Applied") != "" {
+			mode = " minimal"
+		}
+		log.Printf("%s %s %d %dB %s%s", r.Method, r.URL.Path, rw.status, rw.bytes, time.Since(start), mode)
 	})
 }
 
@@ -291,9 +296,14 @@ func (s *State) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
 
-	register := func(name string, h http.HandlerFunc) {
+	// register adds a JSON endpoint; registerRaw one that returns binary data
+	// (audio, images), which minimal mode and Vary: Prefer do not apply to.
+	registerRaw := func(name string, h http.HandlerFunc) {
 		mux.HandleFunc("/rest/"+name, h)
 		mux.HandleFunc("/rest/"+name+".view", h)
+	}
+	register := func(name string, h http.HandlerFunc) {
+		registerRaw(name, subsonicJSON(h))
 	}
 
 	// System
@@ -303,6 +313,7 @@ func (s *State) routes() *http.ServeMux {
 	register("getMusicFolders", s.GetMusicFolders)
 	register("getScanStatus", s.GetScanStatus)
 	register("startScan", s.StartScan)
+	register("tinysonicLibraryInfo", s.TinysonicLibraryInfo)
 
 	// Library — tag browsing
 	register("getArtists", s.GetArtists)
@@ -326,9 +337,9 @@ func (s *State) routes() *http.ServeMux {
 	register("getStarred2", s.GetStarred2)
 
 	// Playback
-	register("stream", s.Stream)
-	register("download", s.Stream)
-	register("getCoverArt", s.GetCoverArt)
+	registerRaw("stream", s.Stream)
+	registerRaw("download", s.Stream)
+	registerRaw("getCoverArt", s.GetCoverArt)
 	register("scrobble", s.Scrobble)
 	register("getNowPlaying", s.GetNowPlaying)
 	register("updateNowPlaying", s.UpdateNowPlaying)

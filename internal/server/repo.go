@@ -15,7 +15,7 @@ import (
 
 func repoAllArtists(ctx context.Context, db *sql.DB) ([]models.Artist, error) {
 	rows, err := db.QueryContext(ctx,
-		"SELECT id, name, mbid FROM artists ORDER BY name COLLATE NOCASE")
+		"SELECT id, name, mbid FROM artists ORDER BY name COLLATE NOCASE, id")
 	if err != nil {
 		return nil, err
 	}
@@ -626,4 +626,42 @@ func repoReplacePlaylistSongs(ctx context.Context, db *sql.DB, playlistID string
 		}
 	}
 	return tx.Commit()
+}
+
+// ── Counts (tinysonicPaging) ────────────────────────────────────────────────
+
+func repoCount(ctx context.Context, db *sql.DB, q string, args ...any) (int, error) {
+	var n int
+	err := db.QueryRowContext(ctx, q, args...).Scan(&n)
+	return n, err
+}
+
+// repoCountRandomSongs counts the songs getRandomSongs draws from.
+func repoCountRandomSongs(ctx context.Context, db *sql.DB, fromYear, toYear *int64, genre string) (int, error) {
+	q := "SELECT COUNT(*) FROM songs WHERE 1=1"
+	var args []any
+	if fromYear != nil {
+		q += " AND year >= ?"
+		args = append(args, *fromYear)
+	}
+	if toYear != nil {
+		q += " AND year <= ?"
+		args = append(args, *toYear)
+	}
+	if genre != "" {
+		q += " AND genre = ? COLLATE NOCASE"
+		args = append(args, genre)
+	}
+	return repoCount(ctx, db, q, args...)
+}
+
+// repoCountSearch counts the matches of a search term in table (artists,
+// albums or songs), the same set the repoSearch* functions page through.
+func repoCountSearch(ctx context.Context, db *sql.DB, table, term string) (int, error) {
+	q := fts5Match(term)
+	if q == "" {
+		return repoCount(ctx, db, "SELECT COUNT(*) FROM "+table)
+	}
+	fts := table + "_fts"
+	return repoCount(ctx, db, "SELECT COUNT(*) FROM "+fts+" WHERE "+fts+" MATCH ?", q)
 }
