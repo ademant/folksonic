@@ -19,6 +19,11 @@ music_dirs = ["/path/to/your/music"]
 # passkeys. Use HTTPS when clients reach it over the internet.
 # base_url = "https://music.example.com"
 
+# Serve under a URL prefix instead of the root, for example to share a domain
+# with other sites: https://example.com/folksonic. Set base_url to the full
+# public address (including the prefix) and base_path to the prefix.
+# base_path = "/folksonic"
+
 # Let anyone register. New accounts stay pending until an active user approves
 # them. Off by default.
 allow_registration = false
