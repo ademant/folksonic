@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -131,7 +132,7 @@ func mbidValue(n sql.NullString) string {
 }
 
 func songToChild(s models.Song) J {
-	return J{
+	out := J{
 		"id":            s.ID,
 		"musicBrainzId": mbidValue(s.MBID),
 		"mediaType":     "song",
@@ -156,6 +157,13 @@ func songToChild(s models.Song) J {
 		"artistId":      s.ArtistID,
 		"type":          "music",
 	}
+	if s.Tags.Valid {
+		var tags map[string][]string
+		if json.Unmarshal([]byte(s.Tags.String), &tags) == nil && len(tags) > 0 {
+			out["tinysonicTags"] = tags
+		}
+	}
+	return out
 }
 
 func albumToChild(a models.Album, songCount, durationS int64) J {
@@ -347,7 +355,7 @@ func (s *State) StartScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	go func() {
-		if _, err := scanner.Scan(s.Pool, s.MusicDirs, s.CoversDir, s.Progress); err != nil {
+		if _, err := scanner.Scan(s.Pool, s.MusicDirs, s.CoversDir, s.SongTags, s.Progress); err != nil {
 			log.Printf("scan: %v", err)
 		}
 	}()

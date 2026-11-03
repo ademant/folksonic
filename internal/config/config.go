@@ -29,6 +29,9 @@ type Config struct {
 	// both mean the root.
 	BasePath          string `toml:"base_path"`
 	AllowRegistration bool   `toml:"allow_registration"`
+	// SongTags lists the file tags exposed to clients (for example DANCE and
+	// USE). Normalised by Load to upper case, without duplicates.
+	SongTags []string `toml:"song_tags"`
 
 	// Warnings holds non-fatal problems found while loading, such as a config
 	// file readable by other users. Callers should log them.
@@ -75,6 +78,9 @@ func Load(path string) (*Config, error) {
 		return nil, errors.New("config: set both username and password, or neither")
 	}
 	if err := c.normaliseBasePath(); err != nil {
+		return nil, err
+	}
+	if err := c.normaliseSongTags(); err != nil {
 		return nil, err
 	}
 
@@ -159,4 +165,34 @@ func resolve(base, p string) string {
 		return p
 	}
 	return filepath.Join(base, p)
+}
+
+// maxSongTags bounds the allowlist; every song response carries these values.
+const maxSongTags = 32
+
+// normaliseSongTags upper-cases the tag names, rejects names that cannot be
+// Vorbis or ID3 field names, and removes duplicates.
+func (c *Config) normaliseSongTags() error {
+	seen := map[string]bool{}
+	var out []string
+	for _, raw := range c.SongTags {
+		name := strings.ToUpper(strings.TrimSpace(raw))
+		if name == "" {
+			return errors.New("config: song_tags must not contain empty names")
+		}
+		for _, r := range name {
+			if !(r == '_' || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')) {
+				return fmt.Errorf("config: song_tags name %q may only contain letters, digits and _", raw)
+			}
+		}
+		if !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	if len(out) > maxSongTags {
+		return fmt.Errorf("config: song_tags lists %d names; the limit is %d", len(out), maxSongTags)
+	}
+	c.SongTags = out
+	return nil
 }

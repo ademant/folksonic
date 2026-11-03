@@ -192,3 +192,29 @@ func TestBasePathMismatchWarns(t *testing.T) {
 		}
 	}
 }
+
+func TestSongTagsNormalised(t *testing.T) {
+	body := "music_dirs = [\"/m\"]\nsong_tags = [\" dance \", \"USE\", \"dance\", \"Mood_2\"]\n"
+	c, err := Load(writeConfig(t, t.TempDir(), body, 0o600))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"DANCE", "USE", "MOOD_2"}
+	if len(c.SongTags) != len(want) {
+		t.Fatalf("got %v, want %v", c.SongTags, want)
+	}
+	for i := range want {
+		if c.SongTags[i] != want[i] {
+			t.Fatalf("got %v, want %v", c.SongTags, want)
+		}
+	}
+}
+
+func TestSongTagsRejectsBadNames(t *testing.T) {
+	for _, bad := range []string{`"DANCE LABEL"`, `"a=b"`, `""`} {
+		body := "music_dirs = [\"/m\"]\nsong_tags = [" + bad + "]\n"
+		if _, err := Load(writeConfig(t, t.TempDir(), body, 0o600)); err == nil {
+			t.Errorf("accepted song_tags %s", bad)
+		}
+	}
+}

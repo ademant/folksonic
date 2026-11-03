@@ -57,7 +57,7 @@ const (
 // completely and its file was not seen. A root that cannot be read blocks
 // pruning for its own songs only, so one unavailable disk does not cost the
 // rest of the library its entries.
-func Scan(pool *sql.DB, roots []string, coversDir string, progress *Progress) (Stats, error) {
+func Scan(pool *sql.DB, roots []string, coversDir string, songTags []string, progress *Progress) (Stats, error) {
 	progress.running.Store(true)
 	progress.count.Store(0)
 	defer progress.running.Store(false)
@@ -75,7 +75,7 @@ func Scan(pool *sql.DB, roots []string, coversDir string, progress *Progress) (S
 			seen[path] = true
 			stats.Scanned++
 			progress.count.Store(int64(stats.Scanned))
-			switch res, perr := processFile(pool, path, coversDir); {
+			switch res, perr := processFile(pool, path, coversDir, songTags); {
 			case perr != nil:
 				log.Printf("scan %s: %v", path, perr)
 				stats.Skipped++
@@ -184,12 +184,13 @@ type extracted struct {
 	Suffix        string
 	ContentType   string
 	CoverFilename sql.NullString
+	Tags          sql.NullString
 	TrackMBID     sql.NullString
 	AlbumMBID     sql.NullString
 	ArtistMBID    sql.NullString
 }
 
-func processFile(pool *sql.DB, path, coversDir string) (processResult, error) {
+func processFile(pool *sql.DB, path, coversDir string, songTags []string) (processResult, error) {
 	meta, err := os.Stat(path)
 	if err != nil {
 		return 0, err
@@ -210,7 +211,7 @@ func processFile(pool *sql.DB, path, coversDir string) (processResult, error) {
 		return 0, err
 	}
 
-	ex, err := extractMetadata(path, filesize, coversDir)
+	ex, err := extractMetadata(path, filesize, coversDir, songTags)
 	if err != nil {
 		return 0, err
 	}
@@ -268,8 +269,8 @@ func processFile(pool *sql.DB, path, coversDir string) (processResult, error) {
 	if _, err := tx.Exec(
 		`INSERT INTO songs
 		   (id, path, title, artist, artist_id, album, album_id, genre, track_number,
-		    disc_number, year, duration_ms, bitrate, filesize, suffix, content_type, cover_art, mtime, mbid)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		    disc_number, year, duration_ms, bitrate, filesize, suffix, content_type, cover_art, mtime, mbid, tags)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(id) DO UPDATE SET
 		   path = excluded.path,
 		   title = excluded.title,
@@ -288,10 +289,11 @@ func processFile(pool *sql.DB, path, coversDir string) (processResult, error) {
 		   content_type = excluded.content_type,
 		   cover_art = COALESCE(excluded.cover_art, songs.cover_art),
 		   mtime = excluded.mtime,
-		   mbid = COALESCE(excluded.mbid, songs.mbid)`,
+		   mbid = COALESCE(excluded.mbid, songs.mbid),
+		   tags = excluded.tags`,
 		songID, path, ex.Title, ex.Artist, artistID, ex.Album, albumID,
 		ex.Genre, ex.Track, ex.Disc, yearOpt, ex.DurationMs, ex.Bitrate,
-		filesize, ex.Suffix, ex.ContentType, ex.CoverFilename, mtime, ex.TrackMBID,
+		filesize, ex.Suffix, ex.ContentType, ex.CoverFilename, mtime, ex.TrackMBID, ex.Tags,
 	); err != nil {
 		return 0, err
 	}
@@ -305,7 +307,7 @@ func processFile(pool *sql.DB, path, coversDir string) (processResult, error) {
 	return resultInserted, nil
 }
 
-func extractMetadata(path string, filesize int64, coversDir string) (extracted, error) {
+func extractMetadata(path string, filesize int64, coversDir string, songTags []string) (extracted, error) {
 	suffix := strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
 	ex := extracted{
 		Title:       fileStem(path),
@@ -351,6 +353,13 @@ func extractMetadata(path string, filesize int64, coversDir string) (extracted, 
 		ex.TrackMBID = readMBID(raw, trackMBID)
 		ex.AlbumMBID = readMBID(raw, albumMBID)
 		ex.ArtistMBID = readMBID(raw, artistMBID)
+	}
+	if len(songTags) > 0 {
+		var meta tag.Metadata
+		if terr == nil {
+			meta = m
+		}
+		ex.Tags = encodeSongTags(songTagValues(path, suffix, meta, allowMap(songTags)))
 	}
 
 	info := audioinfo.Probe(path, suffix, filesize)

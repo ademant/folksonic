@@ -22,7 +22,7 @@ const watchDebounce = 750 * time.Millisecond
 // Watch monitors every root recursively and keeps the library in sync with the
 // filesystem: new audio files are scanned and inserted, removed files are
 // purged from the database. It blocks until ctx is cancelled.
-func Watch(ctx context.Context, pool *sql.DB, roots []string, coversDir string, progress *Progress) error {
+func Watch(ctx context.Context, pool *sql.DB, roots []string, coversDir string, songTags []string, progress *Progress) error {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return err
@@ -50,12 +50,12 @@ func Watch(ctx context.Context, pool *sql.DB, roots []string, coversDir string, 
 			if !ok {
 				return nil
 			}
-			handleEvent(w, pool, coversDir, ev, d, progress)
+			handleEvent(w, pool, coversDir, songTags, ev, d, progress)
 		}
 	}
 }
 
-func handleEvent(w *fsnotify.Watcher, pool *sql.DB, coversDir string, ev fsnotify.Event, d *debouncer, progress *Progress) {
+func handleEvent(w *fsnotify.Watcher, pool *sql.DB, coversDir string, songTags []string, ev fsnotify.Event, d *debouncer, progress *Progress) {
 	switch {
 	case ev.Op&fsnotify.Create != 0:
 		info, err := os.Stat(ev.Name)
@@ -65,17 +65,17 @@ func handleEvent(w *fsnotify.Watcher, pool *sql.DB, coversDir string, ev fsnotif
 		if info.IsDir() {
 			progress.watchFailures.Add(int64(addRecursive(w, ev.Name)))
 			walkAudio(ev.Name, make(map[string]bool), func(p string) {
-				d.schedule(p, func() { runProcess(pool, coversDir, p) })
+				d.schedule(p, func() { runProcess(pool, coversDir, songTags, p) })
 			})
 			return
 		}
 		if hasAudioExt(ev.Name) {
-			d.schedule(ev.Name, func() { runProcess(pool, coversDir, ev.Name) })
+			d.schedule(ev.Name, func() { runProcess(pool, coversDir, songTags, ev.Name) })
 		}
 
 	case ev.Op&fsnotify.Write != 0:
 		if hasAudioExt(ev.Name) {
-			d.schedule(ev.Name, func() { runProcess(pool, coversDir, ev.Name) })
+			d.schedule(ev.Name, func() { runProcess(pool, coversDir, songTags, ev.Name) })
 		}
 
 	case ev.Op&(fsnotify.Remove|fsnotify.Rename) != 0:
@@ -97,12 +97,12 @@ func handleEvent(w *fsnotify.Watcher, pool *sql.DB, coversDir string, ev fsnotif
 	}
 }
 
-func runProcess(pool *sql.DB, coversDir, path string) {
+func runProcess(pool *sql.DB, coversDir string, songTags []string, path string) {
 	// File may have vanished between event and debounce fire.
 	if _, err := os.Stat(path); err != nil {
 		return
 	}
-	res, err := processFile(pool, path, coversDir)
+	res, err := processFile(pool, path, coversDir, songTags)
 	if err != nil {
 		log.Printf("watch process %s: %v", path, err)
 		return

@@ -37,6 +37,7 @@ type Song struct {
 	ContentType string
 	CoverArt    sql.NullString
 	MBID        sql.NullString
+	Tags        sql.NullString // JSON object of allowlisted file tags
 }
 
 type Playlist struct {
