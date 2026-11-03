@@ -120,6 +120,7 @@ Configuration is checked at startup:
 | `base_url`           | Public URL clients use. Embedded in pairing QR codes; host is the passkey RP ID. |
 | `base_path`         | URL prefix to serve under, such as `/folksonic`. Empty (default) serves from the root. See [Serving under a subpath](#serving-under-a-subpath). |
 | `allow_registration` | Enables `POST /api/register` without an invitation code. Default `false`. Invitation codes work either way. |
+| `song_tags`          | File tags exposed on songs, such as `["DANCE", "USE"]`. Only these names are read. Each song then carries `tinysonicTags`, and the `tinysonicSongTags` extension is advertised. Default empty. |
 
 ## Roles
 
@@ -215,7 +216,14 @@ without a manual rescan.
 
 **OpenSubsonic** — responses carry `"openSubsonic": true`.
 `getOpenSubsonicExtensions` lists the extensions the server implements:
-`apiKeyAuthentication` and `formPost`. It needs no sign-in.
+`apiKeyAuthentication` and `formPost`, plus `tinysonicSongTags` when `song_tags`
+is set. It needs no sign-in.
+
+**Song tags (vendor extension `tinysonicSongTags`)** — with `song_tags` set,
+each song carries `tinysonicTags`, an object mapping each configured name to all
+of its values in file order, for example `{"DANCE": ["Waltz", "Mazurka"]}`. Names
+are case-insensitive in the file and upper-cased in the response. Only the listed
+names are read, and they are read-only: the server never writes tags.
 
 **Library (ID3 tag browsing)** — `getArtists`, `getArtist`, `getAlbum`,
 `getSong`, `getAlbumList2`, `getAlbumList` (alias)

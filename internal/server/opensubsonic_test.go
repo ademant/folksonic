@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/tsirysndr/tinysonic/internal/models"
@@ -54,5 +56,30 @@ func TestMusicBrainzIDInResponses(t *testing.T) {
 	artist := artistToJSON(models.Artist{ID: "ar-1"}, 0)
 	if artist["musicBrainzId"] != "" || artist["mediaType"] != "artist" {
 		t.Fatalf("artist without id must be empty: %v", artist)
+	}
+}
+
+func TestSongTagsExposedOnlyWhenConfigured(t *testing.T) {
+	song := songToChild(models.Song{ID: "so-1", Tags: sql.NullString{String: `{"DANCE":["Waltz","Mazurka"]}`, Valid: true}})
+	tags, ok := song["tinysonicTags"].(map[string][]string)
+	if !ok || !reflect.DeepEqual(tags["DANCE"], []string{"Waltz", "Mazurka"}) {
+		t.Fatalf("tinysonicTags: %v", song["tinysonicTags"])
+	}
+	if _, ok := songToChild(models.Song{ID: "so-2"})["tinysonicTags"]; ok {
+		t.Fatal("tinysonicTags present without tags")
+	}
+
+	s := newTestState(t)
+	s.SongTags = []string{"DANCE"}
+	rec := httptest.NewRecorder()
+	s.routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/rest/getOpenSubsonicExtensions", nil))
+	if !strings.Contains(rec.Body.String(), `"name":"tinysonicSongTags"`) {
+		t.Fatalf("vendor extension not advertised when song_tags is set: %s", rec.Body.String())
+	}
+	s.SongTags = nil
+	rec = httptest.NewRecorder()
+	s.routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/rest/getOpenSubsonicExtensions", nil))
+	if strings.Contains(rec.Body.String(), "tinysonicSongTags") {
+		t.Fatalf("vendor extension advertised without song_tags: %s", rec.Body.String())
 	}
 }

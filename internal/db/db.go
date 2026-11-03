@@ -59,6 +59,9 @@ func migrate(d *sql.DB) error {
 	if err := migrateMBID(d); err != nil {
 		return fmt.Errorf("musicbrainz ids: %w", err)
 	}
+	if err := migrateSongTagsColumn(d); err != nil {
+		return fmt.Errorf("song tags: %w", err)
+	}
 	return backfillFTS(d)
 }
 
@@ -146,6 +149,7 @@ CREATE TABLE IF NOT EXISTS songs (
     cover_art     TEXT,
     mtime         INTEGER NOT NULL DEFAULT 0,
     mbid          TEXT,
+    tags          TEXT,
     FOREIGN KEY (album_id) REFERENCES albums(id),
     FOREIGN KEY (artist_id) REFERENCES artists(id)
 );
@@ -154,6 +158,11 @@ CREATE INDEX IF NOT EXISTS idx_songs_album_id ON songs(album_id);
 CREATE INDEX IF NOT EXISTS idx_songs_artist_id ON songs(artist_id);
 CREATE INDEX IF NOT EXISTS idx_songs_title ON songs(title);
 CREATE INDEX IF NOT EXISTS idx_songs_genre ON songs(genre);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS starred (
     user_id     INTEGER REFERENCES users(id) ON DELETE CASCADE,

@@ -61,6 +61,11 @@ func main() {
 	if err := users.AdoptLegacyData(context.Background(), pool); err != nil {
 		log.Fatalf("users: adopting existing playlists and stars: %v", err)
 	}
+	if changed, err := db.SyncSongTags(context.Background(), pool, cfg.SongTags); err != nil {
+		log.Fatalf("db: song_tags: %v", err)
+	} else if changed {
+		log.Printf("song_tags changed; every file will be re-read by the next scan")
+	}
 	if n, _ := users.Count(context.Background(), pool); n == 0 {
 		log.Printf("warning: no user accounts exist; create one with: tinysonic user add <name>")
 	}
@@ -73,7 +78,7 @@ func main() {
 	if !args.NoScan {
 		go func() {
 			log.Printf("starting library scan of %s", strings.Join(cfg.MusicDirs, ", "))
-			if _, err := scanner.Scan(pool, cfg.MusicDirs, cfg.CoversDir, progress); err != nil {
+			if _, err := scanner.Scan(pool, cfg.MusicDirs, cfg.CoversDir, cfg.SongTags, progress); err != nil {
 				log.Printf("scan failed: %v", err)
 			}
 		}()
@@ -81,7 +86,7 @@ func main() {
 
 	if !args.NoWatch {
 		go func() {
-			if err := scanner.Watch(ctx, pool, cfg.MusicDirs, cfg.CoversDir, progress); err != nil {
+			if err := scanner.Watch(ctx, pool, cfg.MusicDirs, cfg.CoversDir, cfg.SongTags, progress); err != nil {
 				log.Printf("watch: %v", err)
 			}
 		}()

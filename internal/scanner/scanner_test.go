@@ -49,7 +49,7 @@ func TestScanPrunesFilesDeletedWhileOffline(t *testing.T) {
 		t.Fatal(err)
 	}
 	var p Progress
-	if _, err := Scan(pool, []string{music}, covers, &p); err != nil {
+	if _, err := Scan(pool, []string{music}, covers, nil, &p); err != nil {
 		t.Fatal(err)
 	}
 	pool.Close()
@@ -65,7 +65,7 @@ func TestScanPrunesFilesDeletedWhileOffline(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	stats, err := Scan(pool, []string{music}, covers, &p)
+	stats, err := Scan(pool, []string{music}, covers, nil, &p)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestScanKeepsSongsInUnreadableDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	var p Progress
-	if _, err := Scan(pool, []string{music}, t.TempDir(), &p); err != nil {
+	if _, err := Scan(pool, []string{music}, t.TempDir(), nil, &p); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chmod(sub, 0o000); err != nil {
@@ -107,7 +107,7 @@ func TestScanKeepsSongsInUnreadableDirectory(t *testing.T) {
 	}
 	defer os.Chmod(sub, 0o755)
 
-	stats, err := Scan(pool, []string{music}, t.TempDir(), &p)
+	stats, err := Scan(pool, []string{music}, t.TempDir(), nil, &p)
 	pool.Close()
 	if err != nil {
 		t.Fatal(err)
@@ -145,7 +145,7 @@ func TestScanMultipleRootsWithSubdirs(t *testing.T) {
 	defer pool.Close()
 	var p Progress
 	// b is also listed as a child of a, so its files are reached twice.
-	stats, err := Scan(pool, []string{a, b, filepath.Join(a, "x")}, t.TempDir(), &p)
+	stats, err := Scan(pool, []string{a, b, filepath.Join(a, "x")}, t.TempDir(), nil, &p)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestUnavailableRootOnlyBlocksItsOwnPruning(t *testing.T) {
 	}
 	defer pool.Close()
 	var p Progress
-	if _, err := Scan(pool, []string{good}, t.TempDir(), &p); err != nil {
+	if _, err := Scan(pool, []string{good}, t.TempDir(), nil, &p); err != nil {
 		t.Fatal(err)
 	}
 	// Seed a song under the unavailable root, as if it had been scanned earlier.
@@ -188,7 +188,7 @@ func TestUnavailableRootOnlyBlocksItsOwnPruning(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stats, err := Scan(pool, []string{good, gone}, t.TempDir(), &p)
+	stats, err := Scan(pool, []string{good, gone}, t.TempDir(), nil, &p)
 	if err != nil {
 		t.Fatal(err)
 	}

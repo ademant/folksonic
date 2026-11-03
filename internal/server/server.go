@@ -23,6 +23,8 @@ import (
 type State struct {
 	Pool      *sql.DB
 	MusicDirs []string
+	// SongTags is the allowlist of file tags exposed on songs (song_tags).
+	SongTags  []string
 	CoversDir string
 	Progress  *scanner.Progress
 
@@ -91,6 +93,7 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 		BaseURL:           cfg.BaseURL,
 		AllowRegistration: cfg.AllowRegistration,
 		MusicDirs:         cfg.MusicDirs,
+		SongTags:          cfg.SongTags,
 		CoversDir:         cfg.CoversDir,
 		Progress:          progress,
 	}

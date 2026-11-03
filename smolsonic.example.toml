@@ -28,6 +28,12 @@ music_dirs = ["/path/to/your/music"]
 # them. Off by default.
 allow_registration = false
 
+# File tags to expose on songs, read from each file (FLAC, Ogg/Opus, MP3, M4A).
+# Only the names listed here are read. They are returned on each song as
+# "tinysonicTags" and advertised as the tinysonicSongTags extension. Changing
+# the list makes the next scan re-read every file.
+# song_tags = ["DANCE", "USE"]
+
 # Optional, defaults shown
 port = 4533
 host = "0.0.0.0"

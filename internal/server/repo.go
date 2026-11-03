@@ -132,7 +132,7 @@ func repoAlbumsPaginated(ctx context.Context, db *sql.DB, listType string, size,
 // ── Songs ────────────────────────────────────────────────────────────────────
 
 const songCols = "id, path, title, artist, artist_id, album, album_id, genre, track_number, " +
-	"disc_number, year, duration_ms, bitrate, filesize, suffix, content_type, cover_art, mbid"
+	"disc_number, year, duration_ms, bitrate, filesize, suffix, content_type, cover_art, mbid, tags"
 
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -143,7 +143,7 @@ func scanSong(s rowScanner) (models.Song, error) {
 	err := s.Scan(
 		&v.ID, &v.Path, &v.Title, &v.Artist, &v.ArtistID, &v.Album, &v.AlbumID,
 		&v.Genre, &v.TrackNumber, &v.DiscNumber, &v.Year,
-		&v.DurationMs, &v.Bitrate, &v.Filesize, &v.Suffix, &v.ContentType, &v.CoverArt, &v.MBID,
+		&v.DurationMs, &v.Bitrate, &v.Filesize, &v.Suffix, &v.ContentType, &v.CoverArt, &v.MBID, &v.Tags,
 	)
 	return v, err
 }
@@ -366,7 +366,7 @@ func repoSearchSongs(ctx context.Context, db *sql.DB, term string, limit, offset
 	return queryManySongs(ctx, db,
 		"SELECT s.id, s.path, s.title, s.artist, s.artist_id, s.album, s.album_id, s.genre, "+
 			"s.track_number, s.disc_number, s.year, s.duration_ms, s.bitrate, s.filesize, "+
-			"s.suffix, s.content_type, s.cover_art, s.mbid "+
+			"s.suffix, s.content_type, s.cover_art, s.mbid, s.tags "+
 			"FROM songs_fts f INNER JOIN songs s ON s.id = f.id "+
 			"WHERE f.songs_fts MATCH ? ORDER BY f.rank LIMIT ? OFFSET ?",
 		q, limit, offset)
@@ -585,7 +585,7 @@ func repoPlaylistSongs(ctx context.Context, db *sql.DB, playlistID string) ([]mo
 	return queryManySongs(ctx, db,
 		"SELECT s.id, s.path, s.title, s.artist, s.artist_id, s.album, s.album_id, s.genre, "+
 			"s.track_number, s.disc_number, s.year, s.duration_ms, s.bitrate, s.filesize, "+
-			"s.suffix, s.content_type, s.cover_art, s.mbid "+
+			"s.suffix, s.content_type, s.cover_art, s.mbid, s.tags "+
 			"FROM playlist_songs ps INNER JOIN songs s ON s.id = ps.song_id "+
 			"WHERE ps.playlist_id = ? ORDER BY ps.position", playlistID)
 }
