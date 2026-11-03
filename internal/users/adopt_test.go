@@ -16,7 +16,7 @@ func TestAdoptLegacyDataAssignsFirstAdmin(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	admin, err := Create(ctx, pool, "admin", "pw", RoleAdmin, StatusActive)
+	admin, err := Create(ctx, pool, "admin", "pw", RoleLibrarian, StatusActive)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -24,7 +24,7 @@ func newTestState(t *testing.T) *State {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { pool.Close() })
-	if _, err := users.Create(context.Background(), pool, "admin", "s3cret", users.RoleAdmin, users.StatusActive); err != nil {
+	if _, err := users.Create(context.Background(), pool, "admin", "s3cret", users.RoleLibrarian, users.StatusActive); err != nil {
 		t.Fatal(err)
 	}
 	return &State{Pool: pool}

@@ -26,7 +26,7 @@ func TestMigrationMakesPasswordNullable(t *testing.T) {
 		`CREATE TABLE invites (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			code_hash TEXT NOT NULL UNIQUE,
-			role TEXT NOT NULL DEFAULT 'user',
+			role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
 			note TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL,
 			expires_at TEXT NOT NULL,
@@ -40,6 +40,7 @@ func TestMigrationMakesPasswordNullable(t *testing.T) {
 			created_at TEXT NOT NULL)`,
 		`INSERT INTO users (username, password, role, status, created_at) VALUES ('admin', 'pw', 'admin', 'active', '2026-01-01T00:00:00Z')`,
 		`INSERT INTO webauthn_credentials (user_id, credential, created_at) VALUES (1, '{}', '2026-01-01T00:00:00Z')`,
+		`INSERT INTO invites (code_hash, role, created_at, expires_at) VALUES ('old', 'admin', '2026-01-01T00:00:00Z', '2026-01-08T00:00:00Z')`,
 	}
 	for _, q := range legacy {
 		if _, err := raw.Exec(q); err != nil {
@@ -54,6 +55,16 @@ func TestMigrationMakesPasswordNullable(t *testing.T) {
 	}
 	defer d.Close()
 
+	var role string
+	if err := d.QueryRow("SELECT role FROM users WHERE username = 'admin'").Scan(&role); err != nil || role != "librarian" {
+		t.Fatalf("admin role not renamed: %v %q", err, role)
+	}
+	if err := d.QueryRow("SELECT role FROM invites WHERE code_hash = 'old'").Scan(&role); err != nil || role != "librarian" {
+		t.Fatalf("invite role not renamed: %v %q", err, role)
+	}
+	if _, err := d.Exec("INSERT INTO users (username, password, role, status, created_at) VALUES ('eve', 'x', 'admin', 'active', '2026-01-02T00:00:00Z')"); err == nil {
+		t.Fatal("old role name still accepted after migration")
+	}
 	var n int
 	if err := d.QueryRow("SELECT COUNT(*) FROM users WHERE username = 'admin' AND password = 'pw'").Scan(&n); err != nil || n != 1 {
 		t.Fatalf("existing user not preserved: %v %d", err, n)

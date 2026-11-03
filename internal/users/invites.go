@@ -90,7 +90,7 @@ func normaliseInvite(code string) (string, bool) {
 // an admin provisions a passkey-only account. It returns the plaintext code and
 // the stored invite.
 func CreateInvite(ctx context.Context, db *sql.DB, role, username, note string, ttl time.Duration) (string, Invite, error) {
-	if role != RoleUser && role != RoleAdmin {
+	if role != RoleUser && role != RoleLibrarian {
 		return "", Invite{}, fmt.Errorf("%w: unknown role %q", ErrInvalid, role)
 	}
 	if username != "" {

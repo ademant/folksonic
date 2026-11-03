@@ -53,15 +53,15 @@ func migrate(d *sql.DB) error {
 	if err := migrateUserScope(d); err != nil {
 		return fmt.Errorf("user-scoped tables: %w", err)
 	}
-	if err := migratePasswordless(d); err != nil {
-		return fmt.Errorf("passwordless accounts: %w", err)
+	if err := migrateAccounts(d); err != nil {
+		return fmt.Errorf("accounts: %w", err)
 	}
 	return backfillFTS(d)
 }
 
 // migrateUserScope brings starred and playlists to the per-user layout. It is
 // idempotent. Rows created before accounts existed have a NULL owner; the
-// users package assigns them to the first admin once the bootstrap has run.
+// users package assigns them to the first librarian once the bootstrap has run.
 func migrateUserScope(d *sql.DB) error {
 	var n int
 	if err := d.QueryRow("SELECT COUNT(*) FROM pragma_table_info('starred') WHERE name = 'user_id'").Scan(&n); err != nil {
@@ -235,7 +235,7 @@ CREATE TABLE IF NOT EXISTS users (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     username    TEXT NOT NULL UNIQUE COLLATE NOCASE,
     password    TEXT,                        -- NULL for passkey-only accounts
-    role        TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
+    role        TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('librarian', 'user')),
     status      TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'disabled')),
     approved_by INTEGER,
     created_at  TEXT NOT NULL,
@@ -272,7 +272,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS invites (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     code_hash  TEXT NOT NULL UNIQUE,
-    role       TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
+    role       TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('librarian', 'user')),
     note       TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,

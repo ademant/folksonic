@@ -92,7 +92,7 @@ func TestInviteRegistersActiveAccountOnce(t *testing.T) {
 func TestAdminInvite(t *testing.T) {
 	ctx := context.Background()
 	pool := testDB(t)
-	code, _, err := CreateInvite(ctx, pool, RoleAdmin, "", "", time.Hour)
+	code, _, err := CreateInvite(ctx, pool, RoleLibrarian, "", "", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestAdminInvite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u.Role != RoleAdmin {
+	if u.Role != RoleLibrarian {
 		t.Fatalf("role %q, want admin", u.Role)
 	}
 }

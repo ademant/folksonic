@@ -54,7 +54,7 @@ func UpdatePasskey(ctx context.Context, db *sql.DB, id int64, credentialJSON str
 func AdoptLegacyData(ctx context.Context, db *sql.DB) error {
 	var owner sql.NullInt64
 	err := db.QueryRowContext(ctx,
-		"SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1").Scan(&owner)
+		"SELECT id FROM users WHERE role = 'librarian' ORDER BY id LIMIT 1").Scan(&owner)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
