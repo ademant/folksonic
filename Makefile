@@ -11,6 +11,13 @@ HOST   ?=
 GOOS   ?= linux
 GOARCH ?= amd64
 
+# Compiling the SQLite package (go-sqlite3-wasm) with Go's defaults needs well
+# over 1 GB of RAM and gets OOM-killed on small servers. One package at a
+# time, a single-threaded compiler backend and a lower GC target keep the peak
+# near 750 MB. On a bigger machine, build at full speed with: make build GOFLAGS= GOGC=
+export GOGC    ?= 20
+export GOFLAGS ?= -p=1 -gcflags=all=-c=1
+
 NAME  := tinysonic
 DIST  := dist/$(NAME)
 STAGE := $(NAME)-deploy

@@ -376,6 +376,12 @@ make deploy HOST=me@cloud.ademant.de   # every release
 Set `GOARCH=arm64` for an ARM server. The reverse proxy is never changed by
 `make`. The server-side steps are in `deploy/remote.sh`.
 
+The Makefile builds with `GOGC=20 GOFLAGS='-p=1 -gcflags=all=-c=1'`, which
+keeps the compiler under about 750 MB of RAM. With Go's defaults, compiling the
+SQLite package needs well over 1 GB and is killed on small servers. Settings
+from the environment take precedence; `make build GOFLAGS= GOGC=` builds at
+full speed on a bigger machine.
+
 ## Format coverage
 
 Tag extraction (title, artist, album, genre, year, track, disc, embedded art)
