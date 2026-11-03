@@ -15,6 +15,9 @@ const (
 type J = map[string]any
 
 func writeOK(w http.ResponseWriter, payload J) {
+	if _, ok := w.(*minimalWriter); ok {
+		minimise(payload)
+	}
 	body := J{
 		"status":       "ok",
 		"version":      apiVersion,

@@ -300,6 +300,9 @@ func processFile(pool *sql.DB, path, coversDir string, songTags []string) (proce
 	); err != nil {
 		return 0, err
 	}
+	if err := markModified(tx); err != nil {
+		return 0, err
+	}
 
 	if err := tx.Commit(); err != nil {
 		return 0, err

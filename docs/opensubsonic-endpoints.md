@@ -13,7 +13,7 @@ Song `path` is relative to its music directory, `created` is when a file was
 first added, and `getAlbumList2?type=newest` sorts by that date. See the
 README's "Response conventions".
 
-## Implemented (42)
+## Implemented (43)
 
 Endpoints marked *stub* return the expected shape with minimal content. They
 make no Last.fm or other external lookups.
@@ -54,6 +54,9 @@ make no Last.fm or other external lookups.
 
 **Starring**
 - `star`, `unstar`
+
+**tinysonic vendor extensions** (see below)
+- `tinysonicLibraryInfo`
 
 **Artist and album information** (stubs)
 - `getArtistInfo`, `getArtistInfo2`
@@ -125,3 +128,14 @@ Media Annotation, Media Library Scanning, Media Retrieval, Playlists, Podcast,
 Searching, Sharing, System, Transcoding, User Management); this file does not
 reproduce those groupings. The implemented list is checked against the code by
 `go test`: a registered name that is not in the list is reported.
+
+## Vendor extensions
+
+Advertised by `getOpenSubsonicExtensions`; details in the README.
+
+| Extension | What it adds |
+|---|---|
+| `tinysonicPaging` v1 | `size` (max 500) / `offset` on every list endpoint and nested list; aliases on `getSongsByGenre`, `search2/3`, `getStarred(2)` (standard parameters win); `X-Total-Count` or `X-Total-Count-Artist`/`-Album`/`-Song` on every response; `HEAD` returns the headers only; stable order with id as tie-breaker. |
+| `tinysonicLibraryInfo` v1 | Endpoint `tinysonicLibraryInfo`: `artists`, `albums`, `songs`, `duration`, `lastModified` (last library change). |
+| `tinysonicMinimal` v1 | `Prefer: tinysonic-minimal` removes optional derivable fields. Song: `parent` (kept in folder browsing), `isVideo`, `type`, `coverArt`, `path`, `suffix`. Album: `title`, `coverArt`. Artist: `coverArt`. Response header `Preference-Applied: tinysonic-minimal`; `Vary: Prefer` on all JSON responses. |
+| `tinysonicSongTags` v1 | `tinysonicTags` on songs, when `song_tags` is configured. |

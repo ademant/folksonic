@@ -41,6 +41,7 @@ Supported endpoints
     GET  /rest/getMusicFolders  one folder
     GET  /rest/getScanStatus    library scan progress
     GET  /rest/startScan        trigger a library rescan
+    GET  /rest/tinysonicLibraryInfo  library totals and last change (vendor)
 
   Library — ID3 tag browsing
     GET  /rest/getArtists       alphabetical artist index
@@ -100,6 +101,8 @@ Auth (all /rest/* endpoints)
   Token:     u=<user>&t=md5(password+salt)&s=<salt>
   Plaintext: u=<user>&p=<password>      or  p=enc:<hex>
 
+List endpoints accept size/offset and send X-Total-Count headers; HEAD
+returns only the headers. Prefer: tinysonic-minimal trims derivable fields.
 Every endpoint also accepts the `+"`"+`.view`+"`"+` suffix and POST.
 Responses are JSON with the Subsonic envelope: { "subsonic-response": … }
 `, cli.Version)
@@ -201,45 +204,58 @@ func artistToJSON(a models.Artist, albumCount int64) J {
 	}
 }
 
-// buildArtistIndex groups artists by the first letter of their name without
-// a leading article ("Les Frères Morvan" under F) and sorts them the same
-// way. The names themselves are not changed.
-func buildArtistIndex(artists []models.Artist, counts map[string]int64, articles []string) []J {
-	type entry struct {
-		key string
-		a   models.Artist
-	}
-	entries := make([]entry, 0, len(artists))
+// indexedArtist is an artist with its index letter and sort key, the name
+// without a leading article ("Les Frères Morvan" under F).
+type indexedArtist struct {
+	letter, key string
+	artist      models.Artist
+}
+
+// sortArtistsForIndex orders artists by index letter, then name without
+// article, then id, so the flat order is the order of the grouped index and
+// paging through it is stable. The names themselves are not changed.
+func sortArtistsForIndex(artists []models.Artist, articles []string) []indexedArtist {
+	out := make([]indexedArtist, 0, len(artists))
 	for _, a := range artists {
-		entries = append(entries, entry{strings.ToLower(stripArticle(a.Name, articles)), a})
-	}
-	sort.SliceStable(entries, func(i, j int) bool {
-		if entries[i].key != entries[j].key {
-			return entries[i].key < entries[j].key
-		}
-		return entries[i].a.ID < entries[j].a.ID
-	})
-	groups := map[string][]J{}
-	for _, e := range entries {
+		key := strings.ToLower(stripArticle(a.Name, articles))
 		letter := "#"
-		for _, r := range e.key {
+		for _, r := range key {
 			if unicode.IsLetter(r) {
 				letter = string(unicode.ToUpper(r))
 			}
 			break
 		}
-		groups[letter] = append(groups[letter], artistToJSON(e.a, counts[e.a.ID]))
+		out = append(out, indexedArtist{letter, key, a})
 	}
-	keys := make([]string, 0, len(groups))
-	for k := range groups {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	out := make([]J, 0, len(keys))
-	for _, k := range keys {
-		out = append(out, J{"name": k, "artist": groups[k]})
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if a.letter != b.letter {
+			return a.letter < b.letter
+		}
+		if a.key != b.key {
+			return a.key < b.key
+		}
+		return a.artist.ID < b.artist.ID
+	})
+	return out
+}
+
+// groupArtistIndex groups sorted artists by letter.
+func groupArtistIndex(sorted []indexedArtist, counts map[string]int64) []J {
+	out := []J{}
+	var cur []J
+	for i, e := range sorted {
+		cur = append(cur, artistToJSON(e.artist, counts[e.artist.ID]))
+		if i == len(sorted)-1 || sorted[i+1].letter != e.letter {
+			out = append(out, J{"name": e.letter, "artist": cur})
+			cur = nil
+		}
 	}
 	return out
+}
+
+func buildArtistIndex(artists []models.Artist, counts map[string]int64, articles []string) []J {
+	return groupArtistIndex(sortArtistsForIndex(artists, articles), counts)
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -395,11 +411,16 @@ func (s *State) GetArtists(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 0, "database error")
 		return
 	}
+	setTotal(w, len(artists))
+	if headDone(w, r) {
+		return
+	}
 	counts, _ := repoAlbumCountsByArtist(ctx, s.Pool)
+	sorted := pageSlice(sortArtistsForIndex(artists, s.ignoredArticles()), pageParams(r))
 	writeOK(w, J{
 		"artists": J{
 			"ignoredArticles": strings.Join(s.ignoredArticles(), " "),
-			"index":           buildArtistIndex(artists, counts, s.ignoredArticles()),
+			"index":           groupArtistIndex(sorted, counts),
 		},
 	})
 }
@@ -425,8 +446,13 @@ func (s *State) GetArtist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	albums, _ := repoAlbumsByArtist(ctx, s.Pool, id)
-	albumJSONs := make([]J, 0, len(albums))
-	for _, a := range albums {
+	setTotal(w, len(albums))
+	if headDone(w, r) {
+		return
+	}
+	paged := pageSlice(albums, pageParams(r))
+	albumJSONs := make([]J, 0, len(paged))
+	for _, a := range paged {
 		albumJSONs = append(albumJSONs, albumToChild(a))
 	}
 	writeOK(w, J{
@@ -435,7 +461,7 @@ func (s *State) GetArtist(w http.ResponseWriter, r *http.Request) {
 			"musicBrainzId": mbidValue(artist.MBID),
 			"mediaType":     "artist",
 			"name":          artist.Name,
-			"albumCount":    len(albumJSONs),
+			"albumCount":    len(albums),
 			"coverArt":      artist.ID,
 			"album":         albumJSONs,
 		},
@@ -463,6 +489,11 @@ func (s *State) GetAlbum(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	songs, _ := repoSongsByAlbum(ctx, s.Pool, id)
+	setTotal(w, len(songs))
+	if headDone(w, r) {
+		return
+	}
+	songs = pageSlice(songs, pageParams(r))
 	songJSONs := make([]J, 0, len(songs))
 	for _, sg := range songs {
 		songJSONs = append(songJSONs, s.songToChild(sg))
@@ -513,6 +544,12 @@ func (s *State) albumList(w http.ResponseWriter, r *http.Request, wrap string) {
 	size := clamp(intParam(r, "size", 10), 1, 500)
 	offset := max0(intParam(r, "offset", 0))
 	ctx := r.Context()
+	if total, err := repoCount(ctx, s.Pool, "SELECT COUNT(*) FROM albums"); err == nil {
+		setTotal(w, total)
+	}
+	if headDone(w, r) {
+		return
+	}
 	albums, _ := repoAlbumsPaginated(ctx, s.Pool, listType, size, offset)
 	out := make([]J, 0, len(albums))
 	for _, a := range albums {
@@ -529,12 +566,17 @@ func (s *State) GetIndexes(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	artists, _ := repoAllArtists(ctx, s.Pool)
+	setTotal(w, len(artists))
+	if headDone(w, r) {
+		return
+	}
 	counts, _ := repoAlbumCountsByArtist(ctx, s.Pool)
+	sorted := pageSlice(sortArtistsForIndex(artists, s.ignoredArticles()), pageParams(r))
 	writeOK(w, J{
 		"indexes": J{
 			"lastModified":    0,
 			"ignoredArticles": strings.Join(s.ignoredArticles(), " "),
-			"index":           buildArtistIndex(artists, counts, s.ignoredArticles()),
+			"index":           groupArtistIndex(sorted, counts),
 		},
 	})
 }
@@ -564,6 +606,11 @@ func (s *State) GetMusicDirectory(w http.ResponseWriter, r *http.Request) {
 				"coverArt": a.ID,
 			})
 		}
+		setTotal(w, len(children))
+		if headDone(w, r) {
+			return
+		}
+		children = pageSlice(children, pageParams(r))
 		writeOK(w, J{
 			"directory": J{
 				"id":    "1",
@@ -593,6 +640,11 @@ func (s *State) GetMusicDirectory(w http.ResponseWriter, r *http.Request) {
 				"coverArt": a.ID,
 			})
 		}
+		setTotal(w, len(children))
+		if headDone(w, r) {
+			return
+		}
+		children = pageSlice(children, pageParams(r))
 		writeOK(w, J{
 			"directory": J{
 				"id":    artist.ID,
@@ -609,6 +661,11 @@ func (s *State) GetMusicDirectory(w http.ResponseWriter, r *http.Request) {
 		for _, sg := range songs {
 			children = append(children, s.songToChild(sg))
 		}
+		setTotal(w, len(children))
+		if headDone(w, r) {
+			return
+		}
+		children = pageSlice(children, pageParams(r))
 		writeOK(w, J{
 			"directory": J{
 				"id":    album.ID,
@@ -629,6 +686,11 @@ func (s *State) GetGenres(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, _ := repoDistinctGenres(r.Context(), s.Pool)
+	setTotal(w, len(rows))
+	if headDone(w, r) {
+		return
+	}
+	rows = pageSlice(rows, pageParams(r))
 	genres := make([]J, 0, len(rows))
 	for _, g := range rows {
 		genres = append(genres, J{"value": g.Name, "songCount": g.SongCount, "albumCount": g.AlbumCount})
@@ -645,8 +707,14 @@ func (s *State) GetSongsByGenre(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 10, "Required parameter is missing: genre")
 		return
 	}
-	count := clamp(intParam(r, "count", 10), 1, 500)
+	count := clamp(countParam(r, "count", 10), 1, 500)
 	offset := max0(intParam(r, "offset", 0))
+	if total, err := repoCount(r.Context(), s.Pool, "SELECT COUNT(*) FROM songs WHERE genre = ? COLLATE NOCASE", genre); err == nil {
+		setTotal(w, total)
+	}
+	if headDone(w, r) {
+		return
+	}
 	songs, _ := repoSongsByGenre(r.Context(), s.Pool, genre, count, offset)
 	children := make([]J, 0, len(songs))
 	for _, sg := range songs {
@@ -665,6 +733,12 @@ func (s *State) GetRandomSongs(w http.ResponseWriter, r *http.Request) {
 	from := intParamPtr(r, "fromYear")
 	to := intParamPtr(r, "toYear")
 	genre := queryFirst(r, "genre")
+	if total, err := repoCountRandomSongs(r.Context(), s.Pool, from, to, genre); err == nil {
+		setTotal(w, total)
+	}
+	if headDone(w, r) {
+		return
+	}
 	songs, _ := repoRandomSongs(r.Context(), s.Pool, size, from, to, genre)
 	children := make([]J, 0, len(songs))
 	for _, sg := range songs {
@@ -687,6 +761,12 @@ func (s *State) GetStarred2(w http.ResponseWriter, r *http.Request) {
 	songs, _ := repoStarredSongs(ctx, s.Pool, caller.ID)
 	albums, _ := repoStarredAlbums(ctx, s.Pool, caller.ID)
 	artists, _ := repoStarredArtists(ctx, s.Pool, caller.ID)
+	setTotals(w, len(artists), len(albums), len(songs))
+	if headDone(w, r) {
+		return
+	}
+	p := pageParams(r)
+	songs, albums, artists = pageSlice(songs, p), pageSlice(albums, p), pageSlice(artists, p)
 
 	songJSONs := make([]J, 0, len(songs))
 	for _, p := range songs {
@@ -875,12 +955,22 @@ func (s *State) searchN(w http.ResponseWriter, r *http.Request, wrap string) {
 	}
 	ctx := r.Context()
 	term := queryFirst(r, "query")
-	artistLimit := intParam(r, "artistCount", 20)
-	albumLimit := intParam(r, "albumCount", 20)
-	songLimit := intParam(r, "songCount", 20)
-	artistOffset := intParam(r, "artistOffset", 0)
-	albumOffset := intParam(r, "albumOffset", 0)
-	songOffset := intParam(r, "songOffset", 0)
+	// The standard parameters win; size/offset (tinysonicPaging) apply to
+	// every list that has no parameter of its own.
+	artistLimit := countParam(r, "artistCount", 20)
+	albumLimit := countParam(r, "albumCount", 20)
+	songLimit := countParam(r, "songCount", 20)
+	artistOffset := offsetParam(r, "artistOffset")
+	albumOffset := offsetParam(r, "albumOffset")
+	songOffset := offsetParam(r, "songOffset")
+
+	na, _ := repoCountSearch(ctx, s.Pool, "artists", term)
+	nb, _ := repoCountSearch(ctx, s.Pool, "albums", term)
+	nc, _ := repoCountSearch(ctx, s.Pool, "songs", term)
+	setTotals(w, na, nb, nc)
+	if headDone(w, r) {
+		return
+	}
 
 	artists, _ := repoSearchArtists(ctx, s.Pool, term, artistLimit, artistOffset)
 	albums, _ := repoSearchAlbums(ctx, s.Pool, term, albumLimit, albumOffset)
@@ -934,6 +1024,11 @@ func (s *State) GetPlaylists(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	playlists, _ := repoAllPlaylists(r.Context(), s.Pool, caller.ID)
+	setTotal(w, len(playlists))
+	if headDone(w, r) {
+		return
+	}
+	playlists = pageSlice(playlists, pageParams(r))
 	out := make([]J, 0, len(playlists))
 	for i := range playlists {
 		out = append(out, s.playlistJSON(r, &playlists[i]))
@@ -962,10 +1057,17 @@ func (s *State) GetPlaylist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	songs, _ := repoPlaylistSongs(r.Context(), s.Pool, id)
+	setTotal(w, len(songs))
+	if headDone(w, r) {
+		return
+	}
 	var durMs int64
-	entry := make([]J, 0, len(songs))
 	for _, sg := range songs {
 		durMs += sg.DurationMs
+	}
+	paged := pageSlice(songs, pageParams(r))
+	entry := make([]J, 0, len(paged))
+	for _, sg := range paged {
 		entry = append(entry, s.songToChild(sg))
 	}
 	writeOK(w, J{
@@ -973,7 +1075,7 @@ func (s *State) GetPlaylist(w http.ResponseWriter, r *http.Request) {
 			"id":        pl.ID,
 			"name":      pl.Name,
 			"comment":   nsToAny(pl.Comment),
-			"songCount": len(entry),
+			"songCount": len(songs),
 			"duration":  durMs / 1000,
 			"public":    pl.Public != 0,
 			"created":   pl.CreatedAt,

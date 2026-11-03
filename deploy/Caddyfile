@@ -7,6 +7,8 @@
 #   systemctl reload caddy
 
 music.example.com {
+    # Compresses JSON responses (a full song list shrinks about 4x). Audio
+    # and images are already compressed; Caddy skips those types itself.
     encode zstd gzip
 
     # Caps request bodies at 1 MiB, matching tinysonic.
@@ -25,9 +27,6 @@ music.example.com {
     #         flush_interval -1
     #         header_up X-Forwarded-Proto {scheme}
     #     }
-    # }
-
-    reverse_proxy 127.0.0.1:4534 { flush_interval -1 }
     # }
 
     reverse_proxy 127.0.0.1:4534 {

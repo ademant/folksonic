@@ -177,6 +177,9 @@ func DeletePath(pool *sql.DB, path string) error {
 	if err := pruneArtist(tx, artistID); err != nil {
 		return err
 	}
+	if err := markModified(tx); err != nil {
+		return err
+	}
 
 	if err := tx.Commit(); err != nil {
 		return err

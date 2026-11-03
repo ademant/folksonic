@@ -230,14 +230,50 @@ without a manual rescan.
 
 **OpenSubsonic** — responses carry `"openSubsonic": true`.
 `getOpenSubsonicExtensions` lists the extensions the server implements:
-`apiKeyAuthentication` and `formPost`, plus `tinysonicSongTags` when `song_tags`
-is set. It needs no sign-in.
+`apiKeyAuthentication`, `formPost`, the vendor extensions `tinysonicPaging`,
+`tinysonicLibraryInfo` and `tinysonicMinimal` (below), plus `tinysonicSongTags`
+when `song_tags` is set. It needs no sign-in.
 
 **Song tags (vendor extension `tinysonicSongTags`)** — with `song_tags` set,
 each song carries `tinysonicTags`, an object mapping each configured name to all
 of its values in file order, for example `{"DANCE": ["Waltz", "Mazurka"]}`. Names
 are case-insensitive in the file and upper-cased in the response. Only the listed
 names are read, and they are read-only: the server never writes tags.
+
+**Paging and totals (vendor extension `tinysonicPaging`)** — every list
+endpoint accepts `size` (1–500) and `offset`: `getArtists`, `getIndexes`,
+`getGenres`, `getStarred(2)`, `getPlaylists`, and the nested lists of
+`getArtist` (albums), `getAlbum` (songs), `getPlaylist` (entries) and
+`getMusicDirectory` (children). On `getSongsByGenre`, `size` is an alias for
+`count`; on `search2/3` and `getStarred(2)`, `size`/`offset` apply to each list
+that has no parameter of its own (`songCount`, `songOffset`, … win). Without
+`size` and `offset` responses are unchanged. Totals are sent as headers on every
+call: `X-Total-Count`, or `X-Total-Count-Artist`/`-Album`/`-Song` for the
+search and starred endpoints. `HEAD` returns only these headers. Every list has
+a stable order (id as last tie-breaker), so paging neither skips nor repeats
+items; `getArtists`/`getIndexes` page over the article-free sorted list and
+group each page by letter. Random lists ignore `offset` but report the number
+of candidates. The standard `songCount`/`albumCount`/`artistCount` are not
+capped, so existing clients that fetch everything at once keep working.
+
+**Library info (vendor extension `tinysonicLibraryInfo`)** —
+`GET /rest/tinysonicLibraryInfo` returns `artists`, `albums`, `songs`, total
+`duration` in seconds and `lastModified`, the time of the last change a scan or
+the watcher made. A client can compare it with its last sync and skip
+unchanged libraries with one small request.
+
+**Minimal responses (vendor extension `tinysonicMinimal`)** — with the request
+header `Prefer: tinysonic-minimal` (RFC 7240), objects omit optional fields that
+are constant, duplicated or derivable: songs drop `parent`, `isVideo`, `type`,
+`coverArt`, `path` and `suffix`; albums drop `title` (same as `name`) and
+`coverArt`; artists drop `coverArt`. Cover art ids follow a fixed rule: an
+album's or artist's is its `id`, a song's is its `albumId`. Required fields
+(`id`, `isDir`, `title` on songs, `albumCount`, …), `mediaType` and all data
+fields (`tinysonicTags`, …) always stay, and folder browsing keeps `parent`.
+The response then carries `Preference-Applied: tinysonic-minimal`; all JSON
+responses send `Vary: Prefer`. Other `Prefer` values are ignored. It applies to
+every endpoint and combines with paging. On a 5,453-song library the full
+song list shrinks from 2,954 to 2,163 KiB (688 to 559 KiB with gzip).
 
 **Response conventions** — optional fields without a value are omitted, never
 sent as `null`. A song's `path` is relative to the music directory that holds
@@ -397,7 +433,8 @@ base_path = "/folksonic"
 
 tinysonic then answers at `/folksonic/rest/…`, `/folksonic/api/…` and
 `/folksonic/login`. The reverse proxy must pass the prefix through unchanged
-(see `deploy/nginx-subpath.conf` and `deploy/Caddyfile`); it does not need to
+(see `deploy/nginx-subpath.conf`, `deploy/apache-subpath.conf` and
+`deploy/Caddyfile`); it does not need to
 strip it.
 Subsonic clients take the full address as the server URL. Passkeys are not
 affected, since the RP ID is the hostname only.
@@ -424,7 +461,11 @@ Example files are in [`deploy/`](deploy/):
   (`base_path`, `host = "127.0.0.1"`, `port = 4534`, state under
   `/var/lib/tinysonic`).
 - `nginx-subpath.conf`: nginx locations to `include` in an existing site's
-  `server` block, for `/folksonic` next to other services.
+  `server` block, for `/folksonic` next to other services, with gzip for
+  JSON responses.
+- `apache-subpath.conf`: the same for Apache, including gzip for JSON (a
+  `<Location>` type list replaces the global one, so it lists the text types
+  too).
 - `nginx.conf`: TLS reverse proxy for a domain of its own, with streaming
   enabled and the same 1 MiB body limit as tinysonic.
 - `Caddyfile`: the same proxy with automatic certificates, plus the subpath
