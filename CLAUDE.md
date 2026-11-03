@@ -69,8 +69,8 @@ Copy `smolsonic.example.toml` to `smolsonic.toml` for local testing. Don't commi
 | `internal/server/api_users.go` | JSON endpoints for accounts, API keys and pairing |
 | `internal/server/webauthn.go` | Passkey (WebAuthn) registration and sign-in |
 | `internal/server/login.go` | Password sign-in and the `/login` page (`static/login.html`) |
-| `internal/users/` | Accounts, API keys, pairing tokens, sessions, passkey storage |
-| `cmd/tinysonic/admin.go` | `tinysonic user …` and `tinysonic pair` commands |
+| `internal/users/` | Accounts, API keys, invitation codes, pairing tokens, sessions, passkey storage |
+| `cmd/tinysonic/admin.go` | `tinysonic user …`, `tinysonic invite …` and `tinysonic pair` commands |
 | `internal/server/handlers.go` | Subsonic endpoint handlers |
 | `internal/server/repo.go` | `database/sql` queries |
 | `internal/server/response.go` | Subsonic JSON envelope helpers |

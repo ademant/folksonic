@@ -265,6 +265,18 @@ CREATE TABLE IF NOT EXISTS sessions (
     expires_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS invites (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    code_hash  TEXT NOT NULL UNIQUE,
+    role       TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
+    note       TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at    TEXT,
+    used_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    revoked_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS webauthn_credentials (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

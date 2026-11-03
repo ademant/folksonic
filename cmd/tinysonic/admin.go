@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	qrcode "github.com/skip2/go-qrcode"
 	"golang.org/x/term"
@@ -19,13 +21,16 @@ import (
 	"github.com/tsirysndr/tinysonic/internal/users"
 )
 
-// runAdmin handles `tinysonic user …` and `tinysonic pair …`. These run against
+// runAdmin handles `tinysonic user …`, `tinysonic invite …` and
+// `tinysonic pair …`. These run against
 // the database directly, so they need access to the server's data directory,
 // not to the running HTTP server.
 func runAdmin(args []string) error {
 	switch args[0] {
 	case "user":
 		return runUser(args[1:])
+	case "invite":
+		return runInvite(args[1:])
 	case "pair":
 		return runPair(args[1:])
 	}
@@ -148,6 +153,108 @@ func runUser(args []string) error {
 	return nil
 }
 
+func runInvite(args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: tinysonic invite create|list|revoke")
+	}
+	sub, rest := args[0], args[1:]
+
+	fs := flag.NewFlagSet("invite "+sub, flag.ContinueOnError)
+	cfgPath := fs.String("c", "smolsonic.toml", "path to the TOML config file")
+	admin := fs.Bool("admin", false, "with create: the invitee becomes an administrator")
+	expires := fs.String("expires", "7d", "with create: validity, in days (7d) or a Go duration (12h)")
+	note := fs.String("note", "", "with create: who the invite is for, shown by list")
+	if err := fs.Parse(reorderFlags(rest)); err != nil {
+		return err
+	}
+	pos := fs.Args()
+
+	cfg, pool, err := openDB(*cfgPath)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	ctx := context.Background()
+
+	switch sub {
+	case "create":
+		if len(pos) != 0 {
+			return usage(fs, "invite create [-c config] [--expires 7d] [--admin] [--note text]")
+		}
+		ttl, err := parseExpiry(*expires)
+		if err != nil {
+			return err
+		}
+		role := users.RoleUser
+		if *admin {
+			role = users.RoleAdmin
+		}
+		code, inv, err := users.CreateInvite(ctx, pool, role, *note, ttl)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("invite %d (%s), valid until %s, single use\n", inv.ID, inv.Role, inv.ExpiresAt)
+		fmt.Println(code)
+		if cfg.BaseURL != "" {
+			fmt.Println(strings.TrimRight(cfg.BaseURL, "/") + "/login?invite=" + code)
+		} else {
+			fmt.Fprintln(os.Stderr, "note: set base_url in the config to print a registration link")
+		}
+		fmt.Fprintln(os.Stderr, "The code is shown only now.")
+
+	case "list":
+		all, err := users.ListInvites(ctx, pool)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%-4s %-6s %-8s %-21s %-12s %s\n", "ID", "ROLE", "STATE", "EXPIRES", "USED BY", "NOTE")
+		for _, i := range all {
+			fmt.Printf("%-4d %-6s %-8s %-21s %-12s %s\n", i.ID, i.Role, i.State(), i.ExpiresAt, i.UsedBy.String, i.Note)
+		}
+
+	case "revoke":
+		if len(pos) != 1 {
+			return usage(fs, "invite revoke [-c config] <id>")
+		}
+		id, err := strconv.ParseInt(pos[0], 10, 64)
+		if err != nil {
+			return fmt.Errorf("invite id %q: not a number", pos[0])
+		}
+		if err := users.RevokeInvite(ctx, pool, id); err != nil {
+			if errors.Is(err, users.ErrNotFound) {
+				return fmt.Errorf("invite %d: no such unused invite", id)
+			}
+			return err
+		}
+		fmt.Printf("invite %d revoked\n", id)
+
+	default:
+		return fmt.Errorf("unknown invite command %q", sub)
+	}
+	return nil
+}
+
+// parseExpiry accepts a number of days ("7d") or a Go duration ("12h").
+func parseExpiry(s string) (time.Duration, error) {
+	var d time.Duration
+	if days, ok := strings.CutSuffix(s, "d"); ok {
+		n, err := strconv.Atoi(days)
+		if err != nil {
+			return 0, fmt.Errorf("expires %q: want days like 7d or a duration like 12h", s)
+		}
+		d = time.Duration(n) * 24 * time.Hour
+	} else {
+		var err error
+		if d, err = time.ParseDuration(s); err != nil {
+			return 0, fmt.Errorf("expires %q: want days like 7d or a duration like 12h", s)
+		}
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("expires %q: must be positive", s)
+	}
+	return d, nil
+}
+
 func runPair(args []string) error {
 	fs := flag.NewFlagSet("pair", flag.ContinueOnError)
 	cfgPath := fs.String("c", "smolsonic.toml", "path to the TOML config file")
@@ -241,13 +348,13 @@ func readPassword(prompt string, confirm bool) (string, error) {
 // them, so `tinysonic user add alice -c cfg.toml` parses like the flags came
 // first. Go's flag package stops at the first positional argument otherwise.
 func reorderFlags(args []string) []string {
+	valueFlags := map[string]bool{"c": true, "user": true, "expires": true, "note": true}
 	var flags, pos []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if strings.HasPrefix(a, "-") && a != "-" {
 			flags = append(flags, a)
-			// value-taking flags: -c and -user
-			if (a == "-c" || a == "-user" || a == "--user") && i+1 < len(args) && !strings.Contains(a, "=") {
+			if valueFlags[strings.TrimLeft(a, "-")] && i+1 < len(args) && !strings.Contains(a, "=") {
 				i++
 				flags = append(flags, args[i])
 			}

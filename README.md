@@ -119,7 +119,7 @@ Configuration is checked at startup:
 | `covers_dir`         | Where extracted album art is cached.                                 |
 | `base_url`           | Public URL clients use. Embedded in pairing QR codes; host is the passkey RP ID. |
 | `base_path`         | URL prefix to serve under, such as `/folksonic`. Empty (default) serves from the root. See [Serving under a subpath](#serving-under-a-subpath). |
-| `allow_registration` | Enables `POST /api/register`. Default `false`.                       |
+| `allow_registration` | Enables `POST /api/register` without an invitation code. Default `false`. Invitation codes work either way. |
 
 ## CLI
 
@@ -133,11 +133,35 @@ tinysonic user disable|enable [-c FILE] <username>
 tinysonic user set-password [-c FILE] <username>
 tinysonic user remove [-c FILE] <username>
 
+tinysonic invite create [-c FILE] [--expires 7d] [--admin] [--note TEXT]
+                                                      print a single-use invitation code
+tinysonic invite list [-c FILE]                       list invites and their state (never the codes)
+tinysonic invite revoke [-c FILE] <id>                withdraw an unused invite
+
 tinysonic pair [-c FILE] --user <username>            print a pairing QR code (valid 5 min, single use)
 ```
 
 Account commands work directly on the database, so run them on the server
 host. When stdin is not a terminal, the password is read from one line of stdin.
+
+### Invitations
+
+An invitation code lets one person create their own account, without
+`allow_registration` and without approval:
+
+```
+$ tinysonic invite create --note "for Anna" -c /etc/tinysonic/tinysonic.toml
+invite 3 (user), valid until 2026-11-10T09:00:00Z, single use
+inv-7KQ2-M9XD-4TPA-HR3C
+https://cloud.ademant.de/folksonic/login?invite=inv-7KQ2-M9XD-4TPA-HR3C
+```
+
+The link opens the sign-in page with the registration form filled in. The
+account is active as soon as it is created, with the invite's role (`--admin`
+for an administrator). Codes are single use, expire after 7 days unless
+`--expires` says otherwise (`3d`, `12h`), and are stored hashed, so a lost code
+cannot be shown again: revoke it and create a new one. Case and dashes do not
+matter when typing a code.
 
 Trigger a rescan from a running server with the standard Subsonic endpoint:
 
@@ -207,7 +231,7 @@ passkeys for the web UI.
 
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |
-| POST | `/api/register` | none | Create a pending account (needs `allow_registration`) |
+| POST | `/api/register` | none | Create an account. With `invite`: active and signed in (returns a session `token`). Without: pending, needs `allow_registration` |
 | GET | `/api/users` | user | List accounts |
 | POST | `/api/users/{id}/approve` | user | Activate a pending account |
 | POST | `/api/users/{id}/reject` | user | Delete a pending account |

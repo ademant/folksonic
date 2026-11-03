@@ -69,17 +69,23 @@ func userJSON(u users.User) J {
 	}
 }
 
-// APIRegister creates a pending account. Disabled unless allow_registration is set.
+// APIRegister creates an account. With an invitation code it is active right
+// away and signed in; without one it is pending and needs allow_registration.
 func (s *State) APIRegister(w http.ResponseWriter, r *http.Request) {
-	if !s.AllowRegistration {
-		writeAPIError(w, http.StatusForbidden, "registration is disabled")
-		return
-	}
 	var in struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
+		Invite   string `json:"invite"`
 	}
 	if !decodeBody(w, r, &in) {
+		return
+	}
+	if in.Invite != "" {
+		s.registerWithInvite(w, r, in.Username, in.Password, in.Invite)
+		return
+	}
+	if !s.AllowRegistration {
+		writeAPIError(w, http.StatusForbidden, "registration is disabled")
 		return
 	}
 	_, err := users.Create(r.Context(), s.Pool, in.Username, in.Password, users.RoleUser, users.StatusPending)
@@ -93,6 +99,33 @@ func (s *State) APIRegister(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, http.StatusAccepted, J{"status": users.StatusPending, "message": "awaiting approval"})
 	}
+}
+
+// registerWithInvite works regardless of allow_registration: the code is the
+// permission. The new account gets a session, like a password sign-in.
+func (s *State) registerWithInvite(w http.ResponseWriter, r *http.Request, username, password, code string) {
+	u, err := users.RegisterWithInvite(r.Context(), s.Pool, code, username, password)
+	switch {
+	case errors.Is(err, users.ErrInviteInvalid):
+		time.Sleep(200 * time.Millisecond) // slow down online guessing
+		writeAPIError(w, http.StatusForbidden, err.Error())
+		return
+	case errors.Is(err, users.ErrExists):
+		writeAPIError(w, http.StatusConflict, err.Error())
+		return
+	case errors.Is(err, users.ErrInvalid):
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	case err != nil:
+		writeAPIError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	token, err := users.CreateSession(r.Context(), s.Pool, u.ID)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	writeJSON(w, http.StatusCreated, J{"status": u.Status, "token": token, "username": u.Username, "role": u.Role})
 }
 
 func (s *State) APIListUsers(w http.ResponseWriter, r *http.Request) {
