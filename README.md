@@ -133,8 +133,9 @@ There are two roles:
   account.
 
 Account administration is CLI-only, because it needs shell access to the
-server: creating, approving, disabling and removing accounts, setting
-passwords, issuing invites and pairing. Pending registrations are approved
+server: creating, approving, disabling, renaming and removing accounts,
+changing roles, setting passwords, revoking a user's API keys, issuing invites
+and pairing. Pending registrations are approved
 with `tinysonic user approve` and rejected with `tinysonic user remove`. The
 API has no endpoint for either. Subsonic `getUser` reports `adminRole` as
 false for everyone.
@@ -145,10 +146,19 @@ false for everyone.
 tinysonic [--config FILE] [--no-scan] [--no-watch]    run the server
 
 tinysonic user add [-c FILE] [--librarian] <username>  create an active account (prompts for password)
-tinysonic user list [-c FILE]                         list accounts and their status
+tinysonic user list [-c FILE]                         list accounts: role, status and sign-in methods
+                                                      (password yes/no, passkeys, OIDC identities,
+                                                      active API keys)
 tinysonic user approve [-c FILE] <username>           activate a pending account
 tinysonic user disable|enable [-c FILE] <username>
 tinysonic user set-password [-c FILE] <username>
+tinysonic user set-role [-c FILE] <username> user|librarian
+                                                      change the role; applies to the next request
+tinysonic user rename [-c FILE] <old> <new>           rename an account; playlists, stars, keys and
+                                                      passkeys stay. Apps that sign in with the old
+                                                      username must be updated
+tinysonic user keys [-c FILE] <username>              list the account's API keys, revoked ones included
+tinysonic user revoke-key [-c FILE] <username> <id>   revoke one of them (e.g. after a lost phone)
 tinysonic user remove [-c FILE] <username>
 
 tinysonic invite create [-c FILE] [--expires 7d] [--librarian] [--note TEXT] [--username NAME]
