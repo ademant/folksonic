@@ -200,3 +200,33 @@ func TestRegisterPasskeyRequiresCredential(t *testing.T) {
 		t.Fatalf("invite consumed by a rejected request: %v", err)
 	}
 }
+
+// A passkey-only account has a NULL password. Its API keys, including those
+// from device pairing, must still authenticate.
+func TestAPIKeyForPasswordlessAccount(t *testing.T) {
+	ctx := context.Background()
+	pool := testDB(t)
+	code, _, err := CreateInvite(ctx, pool, RoleUser, "", "", InviteTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := RegisterPasskey(ctx, pool, code, "bob", []byte("handle"), `{"id":"x"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := CreatePairingToken(ctx, pool, u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, _, err := RedeemPairingToken(ctx, pool, token, "phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := LookupAPIKey(ctx, pool, key)
+	if err != nil {
+		t.Fatalf("LookupAPIKey for passwordless account: %v", err)
+	}
+	if got.ID != u.ID || got.Password != "" || string(got.WebAuthnHandle) != "handle" {
+		t.Fatalf("LookupAPIKey returned %+v", got)
+	}
+}
