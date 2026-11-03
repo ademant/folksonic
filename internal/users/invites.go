@@ -30,6 +30,7 @@ type Invite struct {
 	UsedAt    sql.NullString
 	UsedBy    sql.NullString // username of the account it created
 	RevokedAt sql.NullString
+	Username  sql.NullString // when set, the only username the code can create
 }
 
 // State describes the invite for listings: open, used, revoked or expired.
@@ -85,10 +86,17 @@ func normaliseInvite(code string) (string, bool) {
 }
 
 // CreateInvite issues a single-use invitation code for an account with the
-// given role. It returns the plaintext code and the stored invite.
-func CreateInvite(ctx context.Context, db *sql.DB, role, note string, ttl time.Duration) (string, Invite, error) {
+// given role. A non-empty username binds the code to that name, which is how
+// an admin provisions a passkey-only account. It returns the plaintext code and
+// the stored invite.
+func CreateInvite(ctx context.Context, db *sql.DB, role, username, note string, ttl time.Duration) (string, Invite, error) {
 	if role != RoleUser && role != RoleAdmin {
 		return "", Invite{}, fmt.Errorf("%w: unknown role %q", ErrInvalid, role)
+	}
+	if username != "" {
+		if err := ValidUsername(username); err != nil {
+			return "", Invite{}, err
+		}
 	}
 	if ttl <= 0 {
 		return "", Invite{}, fmt.Errorf("%w: expiry must be positive", ErrInvalid)
@@ -99,8 +107,8 @@ func CreateInvite(ctx context.Context, db *sql.DB, role, note string, ttl time.D
 	}
 	body, _ := normaliseInvite(code)
 	res, err := db.ExecContext(ctx,
-		"INSERT INTO invites (code_hash, role, note, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
-		hashToken(body), role, note, Now(), ts(time.Now().Add(ttl)))
+		"INSERT INTO invites (code_hash, role, note, created_at, expires_at, username) VALUES (?, ?, ?, ?, ?, ?)",
+		hashToken(body), role, note, Now(), ts(time.Now().Add(ttl)), sql.NullString{String: username, Valid: username != ""})
 	if err != nil {
 		return "", Invite{}, err
 	}
@@ -112,12 +120,12 @@ func CreateInvite(ctx context.Context, db *sql.DB, role, note string, ttl time.D
 	return code, inv, err
 }
 
-const inviteCols = `i.id, i.role, i.note, i.created_at, i.expires_at, i.used_at, u.username, i.revoked_at
+const inviteCols = `i.id, i.role, i.note, i.created_at, i.expires_at, i.used_at, u.username, i.revoked_at, i.username
 	FROM invites i LEFT JOIN users u ON u.id = i.used_by`
 
 func scanInvite(s interface{ Scan(...any) error }) (Invite, error) {
 	var i Invite
-	err := s.Scan(&i.ID, &i.Role, &i.Note, &i.CreatedAt, &i.ExpiresAt, &i.UsedAt, &i.UsedBy, &i.RevokedAt)
+	err := s.Scan(&i.ID, &i.Role, &i.Note, &i.CreatedAt, &i.ExpiresAt, &i.UsedAt, &i.UsedBy, &i.RevokedAt, &i.Username)
 	return i, err
 }
 
@@ -187,8 +195,9 @@ func RegisterWithInvite(ctx context.Context, db *sql.DB, code, username, passwor
 	err = tx.QueryRowContext(ctx,
 		`UPDATE invites SET used_at = ?
 		 WHERE code_hash = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?
+		   AND (username IS NULL OR username = ? COLLATE NOCASE)
 		 RETURNING id, role`,
-		now, hashToken(body), now).Scan(&inviteID, &role)
+		now, hashToken(body), now, username).Scan(&inviteID, &role)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, ErrInviteInvalid
 	}

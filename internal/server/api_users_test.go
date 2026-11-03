@@ -121,7 +121,7 @@ func itoa(n int64) string { return strconv.FormatInt(n, 10) }
 func TestRegistrationWithInvite(t *testing.T) {
 	s := newTestState(t)
 	ctx := context.Background()
-	code, _, err := users.CreateInvite(ctx, s.Pool, users.RoleUser, "", users.InviteTTL)
+	code, _, err := users.CreateInvite(ctx, s.Pool, users.RoleUser, "", "", users.InviteTTL)
 	if err != nil {
 		t.Fatal(err)
 	}

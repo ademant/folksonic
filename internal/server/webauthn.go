@@ -30,6 +30,11 @@ type ceremony struct {
 	session webauthn.SessionData
 	userID  int64
 	expires time.Time
+	// Set only for passkey sign-up with an invitation. No account exists yet,
+	// so it is created when the passkey has been verified.
+	invite   string
+	username string
+	handle   []byte
 }
 
 // ceremonyStore holds pending challenges in memory. They are short-lived, so a
@@ -68,6 +73,9 @@ type waUser struct {
 }
 
 func (w waUser) WebAuthnID() []byte {
+	if len(w.u.WebAuthnHandle) > 0 {
+		return w.u.WebAuthnHandle
+	}
 	var b [8]byte
 	binary.BigEndian.PutUint64(b[:], uint64(w.u.ID))
 	return b[:]

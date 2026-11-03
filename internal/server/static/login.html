@@ -35,11 +35,12 @@
     <input id="ri" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="inv-XXXX-XXXX-XXXX-XXXX">
     <label for="ru">Username</label>
     <input id="ru" autocomplete="username" autocapitalize="none">
-    <label for="rp">Password</label>
+    <button id="registerPasskey">Create account with a passkey</button>
+    <label for="rp">Password (optional, instead of a passkey)</label>
     <input id="rp" type="password" autocomplete="new-password">
     <label for="rp2">Repeat password</label>
     <input id="rp2" type="password" autocomplete="new-password">
-    <button id="register">Create account</button>
+    <button id="register" class="secondary">Create account with a password</button>
   </details>
   <div id="msg" role="status"></div>
 </main>
@@ -110,10 +111,42 @@
     var code = document.getElementById("ri").value.trim();
     var name = document.getElementById("ru").value.trim();
     var pw = document.getElementById("rp").value;
-    if (!code || !name || !pw) { say("Enter the invitation code, a username and a password."); return; }
+    if (!code || !name || !pw) { say("Enter the invitation code, a username and a password, or use a passkey instead."); return; }
     if (pw !== document.getElementById("rp2").value) { say("The passwords do not match."); return; }
     try {
       var j = await post("api/register", { username: name, password: pw, invite: code });
+      finish(j.token, j.username);
+    } catch (e) { say(e.message || String(e)); }
+  });
+  // Passkey sign-up: the account is created only after the passkey is verified.
+  function prepareCreation(o) {
+    o.challenge = b64uToBuf(o.challenge);
+    o.user.id = b64uToBuf(o.user.id);
+    (o.excludeCredentials || []).forEach(function (c) { c.id = b64uToBuf(c.id); });
+    return o;
+  }
+  document.getElementById("registerPasskey").addEventListener("click", async function () {
+    var code = document.getElementById("ri").value.trim();
+    var name = document.getElementById("ru").value.trim();
+    if (!code || !name) { say("Enter the invitation code and a username first."); return; }
+    try {
+      say("Create your passkey…");
+      var begin = await post("api/register/passkey/begin", { username: name, invite: code });
+      var cred = await navigator.credentials.create({ publicKey: prepareCreation(begin.options.publicKey) });
+      var resp = {
+        id: bufToB64u(cred.rawId), rawId: bufToB64u(cred.rawId), type: cred.type,
+        response: {
+          attestationObject: bufToB64u(cred.response.attestationObject),
+          clientDataJSON: bufToB64u(cred.response.clientDataJSON)
+        },
+        clientExtensionResults: {}
+      };
+      if (cred.response.getTransports) resp.response.transports = cred.response.getTransports();
+      var done = await fetch("api/register/passkey/finish?ceremony=" + encodeURIComponent(begin.ceremony), {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(resp)
+      });
+      var j = await done.json();
+      if (!done.ok) throw new Error(j.error || "registration failed");
       finish(j.token, j.username);
     } catch (e) { say(e.message || String(e)); }
   });

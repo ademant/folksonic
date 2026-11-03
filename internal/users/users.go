@@ -30,7 +30,8 @@ var (
 )
 
 // User is one account. Password is stored as given because Subsonic token
-// auth (md5(password+salt)) requires the server to know it.
+// auth (md5(password+salt)) requires the server to know it. It is empty for
+// passkey-only accounts, which can never match a password.
 type User struct {
 	ID        int64
 	Username  string
@@ -38,6 +39,9 @@ type User struct {
 	Role      string
 	Status    string
 	CreatedAt string
+	// WebAuthnHandle is the passkey user handle of a passkey-only account.
+	// Nil means the handle is derived from ID (older accounts).
+	WebAuthnHandle []byte
 }
 
 // querier is satisfied by *sql.DB and *sql.Tx, so token redemption can run
@@ -91,11 +95,13 @@ func Create(ctx context.Context, db *sql.DB, username, password, role, status st
 	return ByID(ctx, db, id)
 }
 
-const userCols = "id, username, password, role, status, created_at"
+const userCols = "id, username, password, role, status, created_at, webauthn_handle"
 
 func scanUser(s interface{ Scan(...any) error }) (User, error) {
 	var u User
-	err := s.Scan(&u.ID, &u.Username, &u.Password, &u.Role, &u.Status, &u.CreatedAt)
+	var pw sql.NullString
+	err := s.Scan(&u.ID, &u.Username, &pw, &u.Role, &u.Status, &u.CreatedAt, &u.WebAuthnHandle)
+	u.Password = pw.String
 	return u, err
 }
 

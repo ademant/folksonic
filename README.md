@@ -133,8 +133,9 @@ tinysonic user disable|enable [-c FILE] <username>
 tinysonic user set-password [-c FILE] <username>
 tinysonic user remove [-c FILE] <username>
 
-tinysonic invite create [-c FILE] [--expires 7d] [--admin] [--note TEXT]
-                                                      print a single-use invitation code
+tinysonic invite create [-c FILE] [--expires 7d] [--admin] [--note TEXT] [--username NAME]
+                                                      print a single-use invitation code; --username
+                                                      binds it to one name, for a passkey-only account
 tinysonic invite list [-c FILE]                       list invites and their state (never the codes)
 tinysonic invite revoke [-c FILE] <id>                withdraw an unused invite
 
@@ -158,7 +159,16 @@ https://cloud.ademant.de/folksonic/login?invite=inv-7KQ2-M9XD-4TPA-HR3C
 
 The link opens the sign-in page with the registration form filled in. The
 account is active as soon as it is created, with the invite's role (`--admin`
-for an administrator). Codes are single use, expire after 7 days unless
+for an administrator).
+
+An invite can be redeemed in two ways. With a password, the account keeps that
+password. Without one, the user creates a passkey, and the account is created
+only once the passkey is verified; it has no password, so it signs in with the
+passkey alone and reaches Subsonic apps through an API key from QR pairing.
+`--username NAME` binds the invite to one username, which is how an admin
+provisions a passkey-only account. An account without a password always has a
+passkey (or, later, another strong method); there is no way to create one
+without. Codes are single use, expire after 7 days unless
 `--expires` says otherwise (`3d`, `12h`), and are stored hashed, so a lost code
 cannot be shown again: revoke it and create a new one. Case and dashes do not
 matter when typing a code.
@@ -227,11 +237,14 @@ Passwords are stored so that token auth can verify them, so anyone with read
 access to the database file can read them. Protect the database file, and use
 passkeys for the web UI.
 
+Passkey-only accounts have no password. They cannot use the password parameter
+or token auth, and an empty password never matches.
+
 ### Accounts and pairing
 
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |
-| POST | `/api/register` | none | Create an account. With `invite`: active and signed in (returns a session `token`). Without: pending, needs `allow_registration` |
+| POST | `/api/register` | none | Create an account. With `invite` and `password`: active and signed in (returns a session `token`). Without an invite: pending, needs `allow_registration`, and needs a password |
 | GET | `/api/users` | user | List accounts |
 | POST | `/api/users/{id}/approve` | user | Activate a pending account |
 | POST | `/api/users/{id}/reject` | user | Delete a pending account |
@@ -242,6 +255,7 @@ passkeys for the web UI.
 | POST | `/api/pair/complete` | token | App redeems a pairing token for an API key |
 | POST | `/api/passkey/register/begin` · `/finish` | user | Enrol a passkey |
 | POST | `/api/passkey/login/begin` · `/finish` | none | Sign in with a passkey |
+| POST | `/api/register/passkey/begin` · `/finish` | none | Sign up with an invite and a passkey, no password. The account is created only after the passkey is verified |
 | POST | `/api/login` | none | Sign in with username and password |
 | POST | `/api/logout` | Bearer | End a session |
 
