@@ -34,6 +34,10 @@ allow_registration = false
 # the list makes the next scan re-read every file.
 # song_tags = ["DANCE", "USE"]
 
+# Leading words skipped when grouping and sorting artists (getArtists,
+# getIndexes). L' matches without a following space. "" disables it.
+# ignored_articles = "The El La Las Le Les Los Il L' An A Die Das Ein"
+
 # Optional, defaults shown
 port = 4533
 host = "0.0.0.0"

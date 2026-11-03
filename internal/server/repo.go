@@ -63,17 +63,24 @@ func repoAlbumCountsByArtist(ctx context.Context, db *sql.DB) (map[string]int64,
 
 // ── Albums ───────────────────────────────────────────────────────────────────
 
-const albumCols = "id, title, artist, artist_id, year, cover_art, mbid"
+// albumCols selects an album (aliased a) with the figures derived from its
+// songs, so every endpoint reports the same song count, duration and created
+// date. Duration is summed in milliseconds and divided once by the caller.
+const albumCols = "a.id, a.title, a.artist, a.artist_id, a.year, a.cover_art, a.mbid, " +
+	"(SELECT COUNT(*) FROM songs WHERE album_id = a.id), " +
+	"(SELECT COALESCE(SUM(duration_ms), 0) FROM songs WHERE album_id = a.id), " +
+	"(SELECT MIN(created_at) FROM songs WHERE album_id = a.id) AS a_created"
 
 func scanAlbum(s rowScanner) (models.Album, error) {
 	var a models.Album
-	err := s.Scan(&a.ID, &a.Title, &a.Artist, &a.ArtistID, &a.Year, &a.CoverArt, &a.MBID)
+	err := s.Scan(&a.ID, &a.Title, &a.Artist, &a.ArtistID, &a.Year, &a.CoverArt, &a.MBID,
+		&a.SongCount, &a.DurationMs, &a.Created)
 	return a, err
 }
 
 func repoAlbumsByArtist(ctx context.Context, db *sql.DB, artistID string) ([]models.Album, error) {
 	rows, err := db.QueryContext(ctx,
-		"SELECT "+albumCols+" FROM albums WHERE artist_id = ? ORDER BY year, title COLLATE NOCASE",
+		"SELECT "+albumCols+" FROM albums a WHERE a.artist_id = ? ORDER BY a.year, a.title COLLATE NOCASE, a.id",
 		artistID)
 	if err != nil {
 		return nil, err
@@ -92,7 +99,7 @@ func repoAlbumsByArtist(ctx context.Context, db *sql.DB, artistID string) ([]mod
 
 func repoFindAlbum(ctx context.Context, db *sql.DB, id string) (*models.Album, error) {
 	a, err := scanAlbum(db.QueryRowContext(ctx,
-		"SELECT "+albumCols+" FROM albums WHERE id = ?", id))
+		"SELECT "+albumCols+" FROM albums a WHERE a.id = ?", id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -103,16 +110,18 @@ func repoFindAlbum(ctx context.Context, db *sql.DB, id string) (*models.Album, e
 }
 
 func repoAlbumsPaginated(ctx context.Context, db *sql.DB, listType string, size, offset int64) ([]models.Album, error) {
-	order := "ORDER BY title COLLATE NOCASE"
+	// The album id breaks ties, so paging through a list is stable.
+	order := "ORDER BY a.title COLLATE NOCASE, a.id"
 	switch listType {
 	case "alphabeticalByArtist":
-		order = "ORDER BY artist COLLATE NOCASE, title COLLATE NOCASE"
+		order = "ORDER BY a.artist COLLATE NOCASE, a.title COLLATE NOCASE, a.id"
 	case "newest":
-		order = "ORDER BY year DESC, title COLLATE NOCASE"
+		// Subsonic "newest" means recently added, not release year.
+		order = "ORDER BY a_created DESC, a.id"
 	case "random":
 		order = "ORDER BY RANDOM()"
 	}
-	q := fmt.Sprintf("SELECT %s FROM albums %s LIMIT ? OFFSET ?", albumCols, order)
+	q := fmt.Sprintf("SELECT %s FROM albums a %s LIMIT ? OFFSET ?", albumCols, order)
 	rows, err := db.QueryContext(ctx, q, size, offset)
 	if err != nil {
 		return nil, err
@@ -131,8 +140,9 @@ func repoAlbumsPaginated(ctx context.Context, db *sql.DB, listType string, size,
 
 // ── Songs ────────────────────────────────────────────────────────────────────
 
-const songCols = "id, path, title, artist, artist_id, album, album_id, genre, track_number, " +
-	"disc_number, year, duration_ms, bitrate, filesize, suffix, content_type, cover_art, mbid, tags"
+// songCols selects a song aliased s.
+const songCols = "s.id, s.path, s.title, s.artist, s.artist_id, s.album, s.album_id, s.genre, s.track_number, " +
+	"s.disc_number, s.year, s.duration_ms, s.bitrate, s.filesize, s.suffix, s.content_type, s.cover_art, s.mbid, s.tags, s.created_at"
 
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -143,15 +153,15 @@ func scanSong(s rowScanner) (models.Song, error) {
 	err := s.Scan(
 		&v.ID, &v.Path, &v.Title, &v.Artist, &v.ArtistID, &v.Album, &v.AlbumID,
 		&v.Genre, &v.TrackNumber, &v.DiscNumber, &v.Year,
-		&v.DurationMs, &v.Bitrate, &v.Filesize, &v.Suffix, &v.ContentType, &v.CoverArt, &v.MBID, &v.Tags,
+		&v.DurationMs, &v.Bitrate, &v.Filesize, &v.Suffix, &v.ContentType, &v.CoverArt, &v.MBID, &v.Tags, &v.Created,
 	)
 	return v, err
 }
 
 func repoSongsByAlbum(ctx context.Context, db *sql.DB, albumID string) ([]models.Song, error) {
 	rows, err := db.QueryContext(ctx,
-		"SELECT "+songCols+" FROM songs WHERE album_id = ? "+
-			"ORDER BY disc_number, track_number, title COLLATE NOCASE",
+		"SELECT "+songCols+" FROM songs s WHERE s.album_id = ? "+
+			"ORDER BY s.disc_number, s.track_number, s.title COLLATE NOCASE, s.id",
 		albumID)
 	if err != nil {
 		return nil, err
@@ -170,7 +180,7 @@ func repoSongsByAlbum(ctx context.Context, db *sql.DB, albumID string) ([]models
 
 func repoFindSong(ctx context.Context, db *sql.DB, id string) (*models.Song, error) {
 	s, err := scanSong(db.QueryRowContext(ctx,
-		"SELECT "+songCols+" FROM songs WHERE id = ?", id))
+		"SELECT "+songCols+" FROM songs s WHERE s.id = ?", id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -180,21 +190,8 @@ func repoFindSong(ctx context.Context, db *sql.DB, id string) (*models.Song, err
 	return &s, nil
 }
 
-func repoSongCountForAlbum(ctx context.Context, db *sql.DB, albumID string) (int64, error) {
-	var n int64
-	err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM songs WHERE album_id = ?", albumID).Scan(&n)
-	return n, err
-}
-
-func repoSongDurationForAlbum(ctx context.Context, db *sql.DB, albumID string) (int64, error) {
-	var total int64
-	err := db.QueryRowContext(ctx,
-		"SELECT COALESCE(SUM(duration_ms), 0) FROM songs WHERE album_id = ?", albumID).Scan(&total)
-	return total / 1000, err
-}
-
 func repoRandomSongs(ctx context.Context, db *sql.DB, size int64, fromYear, toYear *int64, genre string) ([]models.Song, error) {
-	q := "SELECT " + songCols + " FROM songs WHERE 1=1"
+	q := "SELECT " + songCols + " FROM songs s WHERE 1=1"
 	var args []any
 	if fromYear != nil {
 		q += " AND year >= ?"
@@ -242,8 +239,8 @@ type genreRow struct {
 
 func repoSongsByGenre(ctx context.Context, db *sql.DB, genre string, count, offset int64) ([]models.Song, error) {
 	return queryManySongs(ctx, db,
-		"SELECT "+songCols+" FROM songs WHERE genre = ? COLLATE NOCASE "+
-			"ORDER BY artist COLLATE NOCASE, album COLLATE NOCASE, track_number "+
+		"SELECT "+songCols+" FROM songs s WHERE s.genre = ? COLLATE NOCASE "+
+			"ORDER BY s.artist COLLATE NOCASE, s.album COLLATE NOCASE, s.track_number, s.id "+
 			"LIMIT ? OFFSET ?", genre, count, offset)
 }
 
@@ -290,7 +287,7 @@ func repoSearchArtists(ctx context.Context, db *sql.DB, term string, limit, offs
 	q := fts5Match(term)
 	if q == "" {
 		rows, err := db.QueryContext(ctx,
-			"SELECT id, name FROM artists ORDER BY name COLLATE NOCASE LIMIT ? OFFSET ?",
+			"SELECT id, name, mbid FROM artists ORDER BY name COLLATE NOCASE, id LIMIT ? OFFSET ?",
 			limit, offset)
 		if err != nil {
 			return nil, err
@@ -329,11 +326,11 @@ func repoSearchAlbums(ctx context.Context, db *sql.DB, term string, limit, offse
 	q := fts5Match(term)
 	if q == "" {
 		return queryManyAlbums(ctx, db,
-			"SELECT "+albumCols+" FROM albums ORDER BY title COLLATE NOCASE LIMIT ? OFFSET ?",
+			"SELECT "+albumCols+" FROM albums a ORDER BY a.title COLLATE NOCASE, a.id LIMIT ? OFFSET ?",
 			limit, offset)
 	}
 	return queryManyAlbums(ctx, db,
-		"SELECT a.id, a.title, a.artist, a.artist_id, a.year, a.cover_art, a.mbid "+
+		"SELECT "+albumCols+" "+
 			"FROM albums_fts f INNER JOIN albums a ON a.id = f.id "+
 			"WHERE f.albums_fts MATCH ? ORDER BY f.rank LIMIT ? OFFSET ?",
 		q, limit, offset)
@@ -360,13 +357,11 @@ func repoSearchSongs(ctx context.Context, db *sql.DB, term string, limit, offset
 	q := fts5Match(term)
 	if q == "" {
 		return queryManySongs(ctx, db,
-			"SELECT "+songCols+" FROM songs ORDER BY title COLLATE NOCASE LIMIT ? OFFSET ?",
+			"SELECT "+songCols+" FROM songs s ORDER BY s.title COLLATE NOCASE, s.id LIMIT ? OFFSET ?",
 			limit, offset)
 	}
 	return queryManySongs(ctx, db,
-		"SELECT s.id, s.path, s.title, s.artist, s.artist_id, s.album, s.album_id, s.genre, "+
-			"s.track_number, s.disc_number, s.year, s.duration_ms, s.bitrate, s.filesize, "+
-			"s.suffix, s.content_type, s.cover_art, s.mbid, s.tags "+
+		"SELECT "+songCols+" "+
 			"FROM songs_fts f INNER JOIN songs s ON s.id = f.id "+
 			"WHERE f.songs_fts MATCH ? ORDER BY f.rank LIMIT ? OFFSET ?",
 		q, limit, offset)
@@ -583,9 +578,7 @@ func repoPlaylistSongIDs(ctx context.Context, db *sql.DB, playlistID string) ([]
 
 func repoPlaylistSongs(ctx context.Context, db *sql.DB, playlistID string) ([]models.Song, error) {
 	return queryManySongs(ctx, db,
-		"SELECT s.id, s.path, s.title, s.artist, s.artist_id, s.album, s.album_id, s.genre, "+
-			"s.track_number, s.disc_number, s.year, s.duration_ms, s.bitrate, s.filesize, "+
-			"s.suffix, s.content_type, s.cover_art, s.mbid, s.tags "+
+		"SELECT "+songCols+" "+
 			"FROM playlist_songs ps INNER JOIN songs s ON s.id = ps.song_id "+
 			"WHERE ps.playlist_id = ? ORDER BY ps.position", playlistID)
 }

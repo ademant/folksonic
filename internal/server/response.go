@@ -22,6 +22,7 @@ func writeOK(w http.ResponseWriter, payload J) {
 		"openSubsonic": true,
 	}
 	maps.Copy(body, payload)
+	pruneNulls(body)
 	writeJSON(w, http.StatusOK, J{"subsonic-response": body})
 }
 

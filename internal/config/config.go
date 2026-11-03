@@ -32,6 +32,10 @@ type Config struct {
 	// SongTags lists the file tags exposed to clients (for example DANCE and
 	// USE). Normalised by Load to upper case, without duplicates.
 	SongTags []string `toml:"song_tags"`
+	// IgnoredArticles are leading words skipped when indexing and sorting
+	// artists, separated by spaces. An article ending in an apostrophe (L')
+	// matches without a following space. Load sets the default.
+	IgnoredArticles string `toml:"ignored_articles"`
 	// OIDC enables sign-in through an external identity provider. It is off
 	// unless Issuer is set; see OIDC for the rules.
 	OIDC OIDC `toml:"oidc"`
@@ -54,6 +58,8 @@ func Load(path string) (*Config, error) {
 		Host:         "0.0.0.0",
 		DatabasePath: "smolsonic.db",
 		CoversDir:    "covers",
+		// Same list as server.DefaultIgnoredArticles.
+		IgnoredArticles: "The El La Las Le Les Los Il L' An A Die Das Ein",
 	}
 	md, err := toml.DecodeFile(path, c)
 	if err != nil {

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/dhowden/tag"
 
@@ -269,8 +270,8 @@ func processFile(pool *sql.DB, path, coversDir string, songTags []string) (proce
 	if _, err := tx.Exec(
 		`INSERT INTO songs
 		   (id, path, title, artist, artist_id, album, album_id, genre, track_number,
-		    disc_number, year, duration_ms, bitrate, filesize, suffix, content_type, cover_art, mtime, mbid, tags)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		    disc_number, year, duration_ms, bitrate, filesize, suffix, content_type, cover_art, mtime, mbid, tags, created_at)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(id) DO UPDATE SET
 		   path = excluded.path,
 		   title = excluded.title,
@@ -290,10 +291,12 @@ func processFile(pool *sql.DB, path, coversDir string, songTags []string) (proce
 		   cover_art = COALESCE(excluded.cover_art, songs.cover_art),
 		   mtime = excluded.mtime,
 		   mbid = COALESCE(excluded.mbid, songs.mbid),
-		   tags = excluded.tags`,
+		   tags = excluded.tags,
+		   created_at = COALESCE(songs.created_at, excluded.created_at)`,
 		songID, path, ex.Title, ex.Artist, artistID, ex.Album, albumID,
 		ex.Genre, ex.Track, ex.Disc, yearOpt, ex.DurationMs, ex.Bitrate,
 		filesize, ex.Suffix, ex.ContentType, ex.CoverFilename, mtime, ex.TrackMBID, ex.Tags,
+		time.Now().UTC().Format("2006-01-02T15:04:05Z"),
 	); err != nil {
 		return 0, err
 	}

@@ -65,6 +65,9 @@ func migrate(d *sql.DB) error {
 	if err := migratePasskeyLabel(d); err != nil {
 		return fmt.Errorf("passkey labels: %w", err)
 	}
+	if err := migrateSongCreated(d); err != nil {
+		return fmt.Errorf("song created_at: %w", err)
+	}
 	return backfillFTS(d)
 }
 
@@ -153,6 +156,7 @@ CREATE TABLE IF NOT EXISTS songs (
     mtime         INTEGER NOT NULL DEFAULT 0,
     mbid          TEXT,
     tags          TEXT,
+    created_at    TEXT,                       -- when the file was first added; kept by rescans
     FOREIGN KEY (album_id) REFERENCES albums(id),
     FOREIGN KEY (artist_id) REFERENCES artists(id)
 );
@@ -216,7 +220,7 @@ CREATE TRIGGER IF NOT EXISTS songs_ad AFTER DELETE ON songs BEGIN
     DELETE FROM songs_fts WHERE id = OLD.id;
 END;
 
-CREATE TRIGGER IF NOT EXISTS songs_au AFTER UPDATE ON songs BEGIN
+CREATE TRIGGER IF NOT EXISTS songs_au AFTER UPDATE OF ` + songsFTSColumns + ` ON songs BEGIN
     DELETE FROM songs_fts WHERE id = OLD.id;
     INSERT INTO songs_fts (id, title, artist, album, genre)
     VALUES (NEW.id, NEW.title, NEW.artist, NEW.album, COALESCE(NEW.genre, ''));
