@@ -61,7 +61,7 @@
     if (!name) { say("Enter your username first."); return; }
     try {
       say("Waiting for your passkey…");
-      var begin = await post("/api/passkey/login/begin", { username: name });
+      var begin = await post("api/passkey/login/begin", { username: name });
       var o = begin.options.publicKey;
       o.challenge = b64uToBuf(o.challenge);
       (o.allowCredentials || []).forEach(function (c) { c.id = b64uToBuf(c.id); });
@@ -76,7 +76,7 @@
         },
         clientExtensionResults: {}
       };
-      var done = await fetch("/api/passkey/login/finish?ceremony=" + encodeURIComponent(begin.ceremony), {
+      var done = await fetch("api/passkey/login/finish?ceremony=" + encodeURIComponent(begin.ceremony), {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(resp)
       });
       var j = await done.json();
@@ -88,7 +88,7 @@
     var name = document.getElementById("u").value.trim();
     var pw = document.getElementById("p").value;
     try {
-      var j = await post("/api/login", { username: name, password: pw });
+      var j = await post("api/login", { username: name, password: pw });
       finish(j.token, j.username);
     } catch (e) { say(e.message || String(e)); }
   });

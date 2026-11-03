@@ -106,97 +106,12 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 	s.webAuthn = wa
 	s.ceremonies = &ceremonyStore{m: map[string]ceremony{}}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", s.handleIndex)
-
-	register := func(name string, h http.HandlerFunc) {
-		mux.HandleFunc("/rest/"+name, h)
-		mux.HandleFunc("/rest/"+name+".view", h)
-	}
-
-	// System
-	register("ping", s.Ping)
-	register("getUser", s.GetUser)
-	register("getMusicFolders", s.GetMusicFolders)
-	register("getScanStatus", s.GetScanStatus)
-	register("startScan", s.StartScan)
-
-	// Library — tag browsing
-	register("getArtists", s.GetArtists)
-	register("getArtist", s.GetArtist)
-	register("getAlbum", s.GetAlbum)
-	register("getSong", s.GetSong)
-	register("getAlbumList2", s.GetAlbumList2)
-	register("getAlbumList", s.GetAlbumList)
-
-	// Folder browsing
-	register("getIndexes", s.GetIndexes)
-	register("getMusicDirectory", s.GetMusicDirectory)
-
-	// Genres
-	register("getGenres", s.GetGenres)
-	register("getSongsByGenre", s.GetSongsByGenre)
-
-	// Lists
-	register("getRandomSongs", s.GetRandomSongs)
-	register("getStarred", s.GetStarred)
-	register("getStarred2", s.GetStarred2)
-
-	// Playback
-	register("stream", s.Stream)
-	register("download", s.Stream)
-	register("getCoverArt", s.GetCoverArt)
-	register("scrobble", s.Scrobble)
-	register("getNowPlaying", s.GetNowPlaying)
-	register("updateNowPlaying", s.UpdateNowPlaying)
-
-	// Search
-	register("search3", s.Search3)
-	register("search2", s.Search2)
-
-	// Playlists
-	register("getPlaylists", s.GetPlaylists)
-	register("getPlaylist", s.GetPlaylist)
-	register("createPlaylist", s.CreatePlaylist)
-	register("updatePlaylist", s.UpdatePlaylist)
-	register("deletePlaylist", s.DeletePlaylist)
-
-	// Starring
-	register("star", s.Star)
-	register("unstar", s.Unstar)
-
-	// Artist / album info stubs
-	register("getArtistInfo", s.GetArtistInfo)
-	register("getArtistInfo2", s.GetArtistInfo2)
-	register("getAlbumInfo", s.GetAlbumInfo)
-	register("getAlbumInfo2", s.GetAlbumInfo)
-	register("getSimilarSongs", s.GetSimilarSongs)
-	register("getSimilarSongs2", s.GetSimilarSongs2)
-	register("getTopSongs", s.GetTopSongs)
-	register("getLyrics", s.GetLyrics)
-
-	// Account and device management (JSON, not Subsonic)
-	mux.HandleFunc("POST /api/register", s.APIRegister)
-	mux.HandleFunc("GET /api/users", s.APIListUsers)
-	mux.HandleFunc("POST /api/users/{id}/approve", s.APIApprove)
-	mux.HandleFunc("POST /api/users/{id}/reject", s.APIReject)
-	mux.HandleFunc("POST /api/keys", s.APICreateKey)
-	mux.HandleFunc("GET /api/keys", s.APIListKeys)
-	mux.HandleFunc("DELETE /api/keys/{id}", s.APIRevokeKey)
-	mux.HandleFunc("POST /api/pair/start", s.APIPairStart)
-	mux.HandleFunc("POST /api/pair/complete", s.APIPairComplete)
-	mux.HandleFunc("POST /api/passkey/register/begin", s.APIPasskeyRegisterBegin)
-	mux.HandleFunc("POST /api/passkey/register/finish", s.APIPasskeyRegisterFinish)
-	mux.HandleFunc("POST /api/passkey/login/begin", s.APIPasskeyLoginBegin)
-	mux.HandleFunc("POST /api/passkey/login/finish", s.APIPasskeyLoginFinish)
-	mux.HandleFunc("POST /api/login", s.APILogin)
-	mux.HandleFunc("POST /api/logout", s.APILogout)
-	mux.HandleFunc("GET /login", s.ServeLoginPage)
+	handler := mountAt(cfg.BasePath, s.routes())
 
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           requestLogger(corsMiddleware(limitBody(mux))),
+		Handler:           requestLogger(corsMiddleware(limitBody(handler))),
 		ReadHeaderTimeout: 15 * time.Second,
 	}
 
@@ -349,4 +264,110 @@ func queryAll(r *http.Request, key string) []string {
 func params(r *http.Request) url.Values {
 	_ = r.ParseForm() // on error, r.Form still holds the query-string values
 	return r.Form
+}
+
+// routes registers every endpoint at its root-relative path. Start mounts the
+// result under base_path when one is set.
+func (s *State) routes() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", s.handleIndex)
+
+	register := func(name string, h http.HandlerFunc) {
+		mux.HandleFunc("/rest/"+name, h)
+		mux.HandleFunc("/rest/"+name+".view", h)
+	}
+
+	// System
+	register("ping", s.Ping)
+	register("getUser", s.GetUser)
+	register("getMusicFolders", s.GetMusicFolders)
+	register("getScanStatus", s.GetScanStatus)
+	register("startScan", s.StartScan)
+
+	// Library — tag browsing
+	register("getArtists", s.GetArtists)
+	register("getArtist", s.GetArtist)
+	register("getAlbum", s.GetAlbum)
+	register("getSong", s.GetSong)
+	register("getAlbumList2", s.GetAlbumList2)
+	register("getAlbumList", s.GetAlbumList)
+
+	// Folder browsing
+	register("getIndexes", s.GetIndexes)
+	register("getMusicDirectory", s.GetMusicDirectory)
+
+	// Genres
+	register("getGenres", s.GetGenres)
+	register("getSongsByGenre", s.GetSongsByGenre)
+
+	// Lists
+	register("getRandomSongs", s.GetRandomSongs)
+	register("getStarred", s.GetStarred)
+	register("getStarred2", s.GetStarred2)
+
+	// Playback
+	register("stream", s.Stream)
+	register("download", s.Stream)
+	register("getCoverArt", s.GetCoverArt)
+	register("scrobble", s.Scrobble)
+	register("getNowPlaying", s.GetNowPlaying)
+	register("updateNowPlaying", s.UpdateNowPlaying)
+
+	// Search
+	register("search3", s.Search3)
+	register("search2", s.Search2)
+
+	// Playlists
+	register("getPlaylists", s.GetPlaylists)
+	register("getPlaylist", s.GetPlaylist)
+	register("createPlaylist", s.CreatePlaylist)
+	register("updatePlaylist", s.UpdatePlaylist)
+	register("deletePlaylist", s.DeletePlaylist)
+
+	// Starring
+	register("star", s.Star)
+	register("unstar", s.Unstar)
+
+	// Artist / album info stubs
+	register("getArtistInfo", s.GetArtistInfo)
+	register("getArtistInfo2", s.GetArtistInfo2)
+	register("getAlbumInfo", s.GetAlbumInfo)
+	register("getAlbumInfo2", s.GetAlbumInfo)
+	register("getSimilarSongs", s.GetSimilarSongs)
+	register("getSimilarSongs2", s.GetSimilarSongs2)
+	register("getTopSongs", s.GetTopSongs)
+	register("getLyrics", s.GetLyrics)
+
+	// Account and device management (JSON, not Subsonic)
+	mux.HandleFunc("POST /api/register", s.APIRegister)
+	mux.HandleFunc("GET /api/users", s.APIListUsers)
+	mux.HandleFunc("POST /api/users/{id}/approve", s.APIApprove)
+	mux.HandleFunc("POST /api/users/{id}/reject", s.APIReject)
+	mux.HandleFunc("POST /api/keys", s.APICreateKey)
+	mux.HandleFunc("GET /api/keys", s.APIListKeys)
+	mux.HandleFunc("DELETE /api/keys/{id}", s.APIRevokeKey)
+	mux.HandleFunc("POST /api/pair/start", s.APIPairStart)
+	mux.HandleFunc("POST /api/pair/complete", s.APIPairComplete)
+	mux.HandleFunc("POST /api/passkey/register/begin", s.APIPasskeyRegisterBegin)
+	mux.HandleFunc("POST /api/passkey/register/finish", s.APIPasskeyRegisterFinish)
+	mux.HandleFunc("POST /api/passkey/login/begin", s.APIPasskeyLoginBegin)
+	mux.HandleFunc("POST /api/passkey/login/finish", s.APIPasskeyLoginFinish)
+	mux.HandleFunc("POST /api/login", s.APILogin)
+	mux.HandleFunc("POST /api/logout", s.APILogout)
+	mux.HandleFunc("GET /login", s.ServeLoginPage)
+	return mux
+}
+
+// mountAt serves h under prefix, so /rest/ping becomes prefix+"/rest/ping". The
+// bare prefix redirects to prefix+"/". An empty prefix returns h unchanged.
+func mountAt(prefix string, h http.Handler) http.Handler {
+	if prefix == "" {
+		return h
+	}
+	outer := http.NewServeMux()
+	outer.Handle(prefix+"/", http.StripPrefix(prefix, h))
+	outer.HandleFunc(prefix, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, prefix+"/", http.StatusMovedPermanently)
+	})
+	return outer
 }

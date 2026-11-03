@@ -144,3 +144,51 @@ func TestMissingMusicDirWarns(t *testing.T) {
 		t.Fatalf("want a warning naming the missing directory, got %v", cfg.Warnings)
 	}
 }
+
+func TestBasePathNormalised(t *testing.T) {
+	dir := t.TempDir()
+	cases := map[string]string{
+		"/folksonic":  "/folksonic",
+		"/folksonic/": "/folksonic",
+		"/":           "",
+		"":            "",
+	}
+	for in, want := range cases {
+		path := writeConfig(t, dir, "music_dirs = [\"/m\"]\nbase_path = \""+in+"\"\n", 0o600)
+		c, err := Load(path)
+		if err != nil {
+			t.Fatalf("base_path %q: %v", in, err)
+		}
+		if c.BasePath != want {
+			t.Fatalf("base_path %q normalised to %q, want %q", in, c.BasePath, want)
+		}
+	}
+}
+
+func TestBasePathWithoutLeadingSlashRejected(t *testing.T) {
+	path := writeConfig(t, t.TempDir(), "music_dirs = [\"/m\"]\nbase_path = \"folksonic\"\n", 0o600)
+	if _, err := Load(path); err == nil {
+		t.Fatal("base_path without leading slash was accepted")
+	}
+}
+
+func TestBasePathMismatchWarns(t *testing.T) {
+	body := "music_dirs = [\"/m\"]\nbase_path = \"/folksonic\"\nbase_url = \"https://music.example.com\"\n"
+	c, err := Load(writeConfig(t, t.TempDir(), body, 0o600))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Warnings) == 0 {
+		t.Fatal("no warning when base_url does not end with base_path")
+	}
+	body = "music_dirs = [\"/m\"]\nbase_path = \"/folksonic\"\nbase_url = \"https://music.example.com/folksonic/\"\n"
+	c, err = Load(writeConfig(t, t.TempDir(), body, 0o600))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range c.Warnings {
+		if strings.Contains(w, "base_path") {
+			t.Fatalf("unexpected base_path warning: %s", w)
+		}
+	}
+}

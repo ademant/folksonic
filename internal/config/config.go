@@ -15,14 +15,18 @@ type Config struct {
 	MusicDirs []string `toml:"music_dirs"`
 	// MusicDir is the older single-directory key. It is kept as an alias and
 	// folded into MusicDirs by Load; setting both keys is an error.
-	MusicDir          string `toml:"music_dir"`
-	Username          string `toml:"username"`
-	Password          string `toml:"password"`
-	Port              int    `toml:"port"`
-	Host              string `toml:"host"`
-	DatabasePath      string `toml:"database_path"`
-	CoversDir         string `toml:"covers_dir"`
-	BaseURL           string `toml:"base_url"`
+	MusicDir     string `toml:"music_dir"`
+	Username     string `toml:"username"`
+	Password     string `toml:"password"`
+	Port         int    `toml:"port"`
+	Host         string `toml:"host"`
+	DatabasePath string `toml:"database_path"`
+	CoversDir    string `toml:"covers_dir"`
+	BaseURL      string `toml:"base_url"`
+	// BasePath serves tinysonic under a URL prefix, such as /folksonic. It is
+	// normalised by Load to a leading slash with no trailing slash; "/" and ""
+	// both mean the root.
+	BasePath          string `toml:"base_path"`
 	AllowRegistration bool   `toml:"allow_registration"`
 
 	// Warnings holds non-fatal problems found while loading, such as a config
@@ -69,6 +73,9 @@ func Load(path string) (*Config, error) {
 	if (c.Username == "") != (c.Password == "") {
 		return nil, errors.New("config: set both username and password, or neither")
 	}
+	if err := c.normaliseBasePath(); err != nil {
+		return nil, err
+	}
 
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -92,6 +99,29 @@ func Load(path string) (*Config, error) {
 			path, info.Mode().Perm(), path))
 	}
 	return c, nil
+}
+
+// normaliseBasePath checks base_path and strips a trailing slash. It also warns
+// when base_url does not end with the prefix, because QR codes and clients
+// would then point at the wrong place.
+func (c *Config) normaliseBasePath() error {
+	p := strings.TrimRight(c.BasePath, "/")
+	if p == "" {
+		c.BasePath = ""
+		return nil
+	}
+	if !strings.HasPrefix(p, "/") {
+		return fmt.Errorf("config: base_path %q must start with /", c.BasePath)
+	}
+	if strings.ContainsAny(p, "?# \t") {
+		return fmt.Errorf("config: base_path %q must be a plain path", c.BasePath)
+	}
+	c.BasePath = p
+	if c.BaseURL != "" && !strings.HasSuffix(strings.TrimRight(c.BaseURL, "/"), p) {
+		c.Warnings = append(c.Warnings, fmt.Sprintf(
+			"base_url %q does not end with base_path %q; pairing and clients need the full public address", c.BaseURL, p))
+	}
+	return nil
 }
 
 func resolveAll(base string, ps []string) []string {

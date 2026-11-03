@@ -118,6 +118,7 @@ Configuration is checked at startup:
 | `database_path`      | Path to the SQLite file. Created if missing. Holds users and keys.   |
 | `covers_dir`         | Where extracted album art is cached.                                 |
 | `base_url`           | Public URL clients use. Embedded in pairing QR codes; host is the passkey RP ID. |
+| `base_path`         | URL prefix to serve under, such as `/folksonic`. Empty (default) serves from the root. See [Serving under a subpath](#serving-under-a-subpath). |
 | `allow_registration` | Enables `POST /api/register`. Default `false`.                       |
 
 ## CLI
@@ -225,6 +226,22 @@ posts the token to `/api/pair/complete` and stores the returned key.
 
 Passkeys need HTTPS (or `localhost`) and `base_url`. Without `base_url` the
 passkey endpoints return 503, and every other method keeps working.
+
+## Serving under a subpath
+
+Set `base_path` to serve tinysonic under a prefix of an existing site, for
+example `https://example.com/folksonic`:
+
+```toml
+base_url  = "https://example.com/folksonic"
+base_path = "/folksonic"
+```
+
+tinysonic then answers at `/folksonic/rest/…`, `/folksonic/api/…` and
+`/folksonic/login`. The reverse proxy must pass the prefix through unchanged
+(see `deploy/nginx.conf` and `deploy/Caddyfile`); it does not need to strip it.
+Subsonic clients take the full address as the server URL. Passkeys are not
+affected, since the RP ID is the hostname only.
 
 ## Running over HTTPS
 
