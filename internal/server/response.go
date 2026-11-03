@@ -16,9 +16,10 @@ type J = map[string]any
 
 func writeOK(w http.ResponseWriter, payload J) {
 	body := J{
-		"status":  "ok",
-		"version": apiVersion,
-		"type":    serverType,
+		"status":       "ok",
+		"version":      apiVersion,
+		"type":         serverType,
+		"openSubsonic": true,
 	}
 	maps.Copy(body, payload)
 	writeJSON(w, http.StatusOK, J{"subsonic-response": body})
@@ -26,10 +27,11 @@ func writeOK(w http.ResponseWriter, payload J) {
 
 func writeError(w http.ResponseWriter, code int, message string) {
 	body := J{
-		"status":  "failed",
-		"version": apiVersion,
-		"type":    serverType,
-		"error":   J{"code": code, "message": message},
+		"status":       "failed",
+		"version":      apiVersion,
+		"type":         serverType,
+		"openSubsonic": true,
+		"error":        J{"code": code, "message": message},
 	}
 	writeJSON(w, http.StatusOK, J{"subsonic-response": body})
 }

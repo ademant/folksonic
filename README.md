@@ -203,6 +203,19 @@ are accepted, on both `GET` and `POST`. Responses are JSON with the Subsonic
 envelope (`{"subsonic-response": …}`).
 
 **System** — `ping`, `getUser`, `getMusicFolders`, `getScanStatus`, `startScan`
+(librarians only), `getOpenSubsonicExtensions`
+
+**MusicBrainz IDs** — songs, albums and artists carry `musicBrainzId` and
+`mediaType` (`song`, `album` or `artist`), read from the files'
+`MUSICBRAINZ_TRACKID`, `MUSICBRAINZ_ALBUMID` and `MUSICBRAINZ_ARTISTID` tags
+(or the `MusicBrainz Track Id` style fields in MP3 and M4A). The value is empty
+when the file has none, and only well-formed UUIDs are kept. Upgrading an
+existing library rescans every file once at the next start, so the IDs fill in
+without a manual rescan.
+
+**OpenSubsonic** — responses carry `"openSubsonic": true`.
+`getOpenSubsonicExtensions` lists the extensions the server implements:
+`apiKeyAuthentication` and `formPost`. It needs no sign-in.
 
 **Library (ID3 tag browsing)** — `getArtists`, `getArtist`, `getAlbum`,
 `getSong`, `getAlbumList2`, `getAlbumList` (alias)

@@ -184,6 +184,9 @@ type extracted struct {
 	Suffix        string
 	ContentType   string
 	CoverFilename sql.NullString
+	TrackMBID     sql.NullString
+	AlbumMBID     sql.NullString
+	ArtistMBID    sql.NullString
 }
 
 func processFile(pool *sql.DB, path, coversDir string) (processResult, error) {
@@ -227,23 +230,26 @@ func processFile(pool *sql.DB, path, coversDir string) (processResult, error) {
 	defer tx.Rollback()
 
 	if _, err := tx.Exec(
-		`INSERT INTO artists (id, name, name_lower) VALUES (?, ?, ?)
-		 ON CONFLICT(name_lower) DO UPDATE SET name = excluded.name`,
-		artistID, displayArtist, strings.ToLower(displayArtist),
+		`INSERT INTO artists (id, name, name_lower, mbid) VALUES (?, ?, ?, ?)
+		 ON CONFLICT(name_lower) DO UPDATE SET
+		   name = excluded.name,
+		   mbid = COALESCE(excluded.mbid, artists.mbid)`,
+		artistID, displayArtist, strings.ToLower(displayArtist), ex.ArtistMBID,
 	); err != nil {
 		return 0, err
 	}
 
 	if _, err := tx.Exec(
-		`INSERT INTO albums (id, title, artist, artist_id, year, cover_art)
-		 VALUES (?, ?, ?, ?, ?, ?)
+		`INSERT INTO albums (id, title, artist, artist_id, year, cover_art, mbid)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET
 		   title = excluded.title,
 		   artist = excluded.artist,
 		   artist_id = excluded.artist_id,
 		   year = excluded.year,
-		   cover_art = COALESCE(excluded.cover_art, albums.cover_art)`,
-		albumID, ex.Album, displayArtist, artistID, ex.Year, ex.CoverFilename,
+		   cover_art = COALESCE(excluded.cover_art, albums.cover_art),
+		   mbid = COALESCE(excluded.mbid, albums.mbid)`,
+		albumID, ex.Album, displayArtist, artistID, ex.Year, ex.CoverFilename, ex.AlbumMBID,
 	); err != nil {
 		return 0, err
 	}
@@ -262,8 +268,8 @@ func processFile(pool *sql.DB, path, coversDir string) (processResult, error) {
 	if _, err := tx.Exec(
 		`INSERT INTO songs
 		   (id, path, title, artist, artist_id, album, album_id, genre, track_number,
-		    disc_number, year, duration_ms, bitrate, filesize, suffix, content_type, cover_art, mtime)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		    disc_number, year, duration_ms, bitrate, filesize, suffix, content_type, cover_art, mtime, mbid)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(id) DO UPDATE SET
 		   path = excluded.path,
 		   title = excluded.title,
@@ -281,10 +287,11 @@ func processFile(pool *sql.DB, path, coversDir string) (processResult, error) {
 		   suffix = excluded.suffix,
 		   content_type = excluded.content_type,
 		   cover_art = COALESCE(excluded.cover_art, songs.cover_art),
-		   mtime = excluded.mtime`,
+		   mtime = excluded.mtime,
+		   mbid = COALESCE(excluded.mbid, songs.mbid)`,
 		songID, path, ex.Title, ex.Artist, artistID, ex.Album, albumID,
 		ex.Genre, ex.Track, ex.Disc, yearOpt, ex.DurationMs, ex.Bitrate,
-		filesize, ex.Suffix, ex.ContentType, ex.CoverFilename, mtime,
+		filesize, ex.Suffix, ex.ContentType, ex.CoverFilename, mtime, ex.TrackMBID,
 	); err != nil {
 		return 0, err
 	}
@@ -340,6 +347,10 @@ func extractMetadata(path string, filesize int64, coversDir string) (extracted, 
 		if dn, _ := m.Disc(); dn > 0 {
 			ex.Disc = sql.NullInt64{Int64: int64(dn), Valid: true}
 		}
+		raw := m.Raw()
+		ex.TrackMBID = readMBID(raw, trackMBID)
+		ex.AlbumMBID = readMBID(raw, albumMBID)
+		ex.ArtistMBID = readMBID(raw, artistMBID)
 	}
 
 	info := audioinfo.Probe(path, suffix, filesize)
