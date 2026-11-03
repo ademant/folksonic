@@ -115,3 +115,44 @@ func TestPairingTokenRedeemsOnce(t *testing.T) {
 }
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
+
+// An invitation code registers an active, signed-in account even with
+// allow_registration off, and only once.
+func TestRegistrationWithInvite(t *testing.T) {
+	s := newTestState(t)
+	ctx := context.Background()
+	code, _, err := users.CreateInvite(ctx, s.Pool, users.RoleUser, "", users.InviteTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	register := func(body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		s.APIRegister(rec, httptest.NewRequest(http.MethodPost, "/api/register", strings.NewReader(body)))
+		return rec
+	}
+
+	rec := register(`{"username":"bob","password":"pw","invite":"` + code + `"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("register status %d: %s", rec.Code, rec.Body.String())
+	}
+	var out struct{ Status, Token, Username string }
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != users.StatusActive || out.Username != "bob" || out.Token == "" {
+		t.Fatalf("register response %+v", out)
+	}
+	if u, err := users.LookupSession(ctx, s.Pool, out.Token); err != nil || u.Username != "bob" {
+		t.Fatalf("session from registration: %v, %v", u, err)
+	}
+	if _, ok := s.authenticate(httptest.NewRequest(http.MethodGet, "/rest/ping?u=bob&p=pw", nil)); !ok {
+		t.Fatal("invited user cannot sign in")
+	}
+
+	if rec := register(`{"username":"carol","password":"pw","invite":"` + code + `"}`); rec.Code != http.StatusForbidden {
+		t.Fatalf("reused invite status %d, want 403", rec.Code)
+	}
+	if rec := register(`{"username":"carol","password":"pw","invite":"inv-AAAA-AAAA-AAAA-AAAA"}`); rec.Code != http.StatusForbidden {
+		t.Fatalf("unknown invite status %d, want 403", rec.Code)
+	}
+}

@@ -16,6 +16,8 @@
   button { width:100%; margin-top:.8rem; padding:.7rem; font:inherit; color:#fff; background:var(--accent); border:0; border-radius:6px; cursor:pointer; }
   button.secondary { background:transparent; color:var(--accent); border:1px solid var(--accent); }
   #msg { min-height:1.4em; margin-top:.8rem; color:var(--muted); }
+  details { margin-top:1.6rem; padding-top:1rem; border-top:1px solid var(--line); }
+  summary { cursor:pointer; color:var(--accent); }
 </style>
 </head>
 <body>
@@ -27,6 +29,18 @@
   <label for="p">Password</label>
   <input id="p" type="password" autocomplete="current-password">
   <button id="pw" class="secondary">Sign in with password</button>
+  <details id="reg">
+    <summary>Register with an invitation code</summary>
+    <label for="ri">Invitation code</label>
+    <input id="ri" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="inv-XXXX-XXXX-XXXX-XXXX">
+    <label for="ru">Username</label>
+    <input id="ru" autocomplete="username" autocapitalize="none">
+    <label for="rp">Password</label>
+    <input id="rp" type="password" autocomplete="new-password">
+    <label for="rp2">Repeat password</label>
+    <input id="rp2" type="password" autocomplete="new-password">
+    <button id="register">Create account</button>
+  </details>
   <div id="msg" role="status"></div>
 </main>
 <script>
@@ -81,6 +95,25 @@
       });
       var j = await done.json();
       if (!done.ok) throw new Error(j.error || "sign-in failed");
+      finish(j.token, j.username);
+    } catch (e) { say(e.message || String(e)); }
+  });
+  // A registration link carries the code as ?invite=. Move it into the form
+  // and drop it from the address bar so it does not linger in history.
+  var invite = new URLSearchParams(location.search).get("invite");
+  if (invite) {
+    document.getElementById("ri").value = invite;
+    document.getElementById("reg").open = true;
+    try { history.replaceState(null, "", location.pathname); } catch (e) {}
+  }
+  document.getElementById("register").addEventListener("click", async function () {
+    var code = document.getElementById("ri").value.trim();
+    var name = document.getElementById("ru").value.trim();
+    var pw = document.getElementById("rp").value;
+    if (!code || !name || !pw) { say("Enter the invitation code, a username and a password."); return; }
+    if (pw !== document.getElementById("rp2").value) { say("The passwords do not match."); return; }
+    try {
+      var j = await post("api/register", { username: name, password: pw, invite: code });
       finish(j.token, j.username);
     } catch (e) { say(e.message || String(e)); }
   });
