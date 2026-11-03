@@ -29,6 +29,7 @@
   <label for="p">Password</label>
   <input id="p" type="password" autocomplete="current-password">
   <button id="pw" class="secondary">Sign in with password</button>
+  <button id="sso" class="secondary" hidden>Sign in with single sign-on</button>
   <details id="reg">
     <summary>Register with an invitation code</summary>
     <label for="ri">Invitation code</label>
@@ -41,6 +42,7 @@
     <label for="rp2">Repeat password</label>
     <input id="rp2" type="password" autocomplete="new-password">
     <button id="register" class="secondary">Create account with a password</button>
+    <button id="registerSSO" class="secondary" hidden>Create account with single sign-on</button>
   </details>
   <div id="msg" role="status"></div>
 </main>
@@ -67,10 +69,49 @@
     if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
     return j;
   }
+  // finish stores the session and opens the account page.
   function finish(token, username) {
     try { sessionStorage.setItem("tinysonic.token", token); sessionStorage.setItem("tinysonic.user", username); } catch (e) {}
     say("Signed in as " + username + ".");
+    location.href = "account";
   }
+  // Single sign-on: begin asks the server for the provider's URL and the browser
+  // follows it. The mode and any invitation are kept on the server.
+  async function startSSO(body) {
+    var j = await post("api/oidc/begin", body);
+    location.href = j.url;
+  }
+  // The identity provider's round trip ends here, with a one-time code in the
+  // fragment (never sent to the server) or an error in the query string.
+  (function handleSSOReturn() {
+    var q = new URLSearchParams(location.search);
+    var err = q.get("oidc_error");
+    if (err) say(err);
+    var hash = new URLSearchParams(location.hash.replace(/^#/, ""));
+    var code = hash.get("oidc");
+    if (!code) return;
+    try { history.replaceState(null, "", location.pathname); } catch (e) {}
+    say("Completing sign-in…");
+    post("api/oidc/exchange", { code: code, device: "web" })
+      .then(function (j) { finish(j.token, j.username); })
+      .catch(function (e) { say(e.message || String(e)); });
+  })();
+  fetch("api/oidc/status").then(function (r) { return r.json(); }).then(function (j) {
+    if (!j.enabled) return;
+    document.getElementById("sso").hidden = false;
+    document.getElementById("registerSSO").hidden = false;
+  }).catch(function () {});
+  document.getElementById("sso").addEventListener("click", async function () {
+    try { say("Redirecting to your identity provider…"); await startSSO({ mode: "signin", client: "web" }); }
+    catch (e) { say(e.message || String(e)); }
+  });
+  document.getElementById("registerSSO").addEventListener("click", async function () {
+    var code = document.getElementById("ri").value.trim();
+    var name = document.getElementById("ru").value.trim();
+    if (!code || !name) { say("Enter the invitation code and a username first."); return; }
+    try { say("Redirecting to your identity provider…"); await startSSO({ mode: "invite", client: "web", invite: code, username: name }); }
+    catch (e) { say(e.message || String(e)); }
+  });
   document.getElementById("passkey").addEventListener("click", async function () {
     var name = document.getElementById("u").value.trim();
     if (!name) { say("Enter your username first."); return; }
@@ -100,13 +141,14 @@
     } catch (e) { say(e.message || String(e)); }
   });
   // A registration link carries the code as ?invite=. Move it into the form
-  // and drop it from the address bar so it does not linger in history.
+  // and drop the query from the address bar so it does not linger in history.
+  // This runs after the error message above has read its parameter.
   var invite = new URLSearchParams(location.search).get("invite");
   if (invite) {
     document.getElementById("ri").value = invite;
     document.getElementById("reg").open = true;
-    try { history.replaceState(null, "", location.pathname); } catch (e) {}
   }
+  if (location.search) { try { history.replaceState(null, "", location.pathname); } catch (e) {} }
   document.getElementById("register").addEventListener("click", async function () {
     var code = document.getElementById("ri").value.trim();
     var name = document.getElementById("ru").value.trim();

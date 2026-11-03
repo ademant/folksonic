@@ -37,6 +37,8 @@ type State struct {
 
 	webAuthn   *webauthn.WebAuthn
 	ceremonies *ceremonyStore
+	// sso is nil unless the oidc block is configured.
+	sso *oidcService
 
 	// songCache maps a song id to its (path, content_type). Populated lazily
 	// on cache miss and warmed in the background at startup. Bypassing the DB
@@ -108,6 +110,9 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 	}
 	s.webAuthn = wa
 	s.ceremonies = &ceremonyStore{m: map[string]ceremony{}}
+	if cfg.OIDC.Enabled() {
+		s.sso = newOIDCService(cfg.OIDC, cfg.BaseURL)
+	}
 
 	handler := mountAt(cfg.BasePath, s.routes())
 
@@ -357,7 +362,17 @@ func (s *State) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/passkey/login/finish", s.APIPasskeyLoginFinish)
 	mux.HandleFunc("POST /api/login", s.APILogin)
 	mux.HandleFunc("POST /api/logout", s.APILogout)
+	mux.HandleFunc("POST /api/pair/qr", s.APIPairQR)
+	mux.HandleFunc("GET /api/passkeys", s.APIListPasskeys)
+	mux.HandleFunc("DELETE /api/passkeys/{id}", s.APIRemovePasskey)
+	mux.HandleFunc("GET /api/oidc/status", s.APIOIDCStatus)
+	mux.HandleFunc("POST /api/oidc/begin", s.APIOIDCBegin)
+	mux.HandleFunc("GET /api/oidc/callback", s.APIOIDCCallback)
+	mux.HandleFunc("POST /api/oidc/exchange", s.APIOIDCExchange)
+	mux.HandleFunc("GET /api/oidc/identities", s.APIListIdentities)
+	mux.HandleFunc("DELETE /api/oidc/identities/{id}", s.APIUnlinkIdentity)
 	mux.HandleFunc("GET /login", s.ServeLoginPage)
+	mux.HandleFunc("GET /account", s.ServeAccountPage)
 	return mux
 }
 

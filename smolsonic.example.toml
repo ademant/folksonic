@@ -39,3 +39,10 @@ port = 4533
 host = "0.0.0.0"
 database_path = "smolsonic.db"
 covers_dir = "covers"
+
+# Single sign-on through an OpenID Connect provider (optional). Needs base_url.
+# Register <base_url>/api/oidc/callback as the redirect URI with the provider.
+# [oidc]
+# issuer        = "https://auth.example.com/realms/main"
+# client_id     = "tinysonic"
+# client_secret = ""   # optional for public clients
