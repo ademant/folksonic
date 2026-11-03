@@ -131,7 +131,7 @@ func mbidValue(n sql.NullString) string {
 	return ""
 }
 
-func songToChild(s models.Song) J {
+func (st *State) songToChild(s models.Song) J {
 	out := J{
 		"id":            s.ID,
 		"musicBrainzId": mbidValue(s.MBID),
@@ -150,12 +150,13 @@ func songToChild(s models.Song) J {
 		"suffix":        s.Suffix,
 		"duration":      s.DurationMs / 1000,
 		"bitRate":       s.Bitrate,
-		"path":          s.Path,
+		"path":          relativePath(st.MusicDirs, s.Path),
 		"isVideo":       false,
 		"discNumber":    niToAny(s.DiscNumber),
 		"albumId":       s.AlbumID,
 		"artistId":      s.ArtistID,
 		"type":          "music",
+		"created":       nsToAny(s.Created),
 	}
 	if s.Tags.Valid {
 		var tags map[string][]string
@@ -166,7 +167,9 @@ func songToChild(s models.Song) J {
 	return out
 }
 
-func albumToChild(a models.Album, songCount, durationS int64) J {
+// albumToChild is the album object shared by every endpoint, including
+// getAlbum, so song count, duration and created agree everywhere.
+func albumToChild(a models.Album) J {
 	var year any
 	if a.Year > 0 {
 		year = a.Year
@@ -179,11 +182,11 @@ func albumToChild(a models.Album, songCount, durationS int64) J {
 		"title":         a.Title,
 		"artist":        a.Artist,
 		"artistId":      a.ArtistID,
-		"songCount":     songCount,
-		"duration":      durationS,
+		"songCount":     a.SongCount,
+		"duration":      a.DurationMs / 1000,
 		"year":          year,
 		"coverArt":      a.ID,
-		"created":       "2020-01-01T00:00:00Z",
+		"created":       nsToAny(a.Created),
 	}
 }
 
@@ -198,17 +201,34 @@ func artistToJSON(a models.Artist, albumCount int64) J {
 	}
 }
 
-func buildArtistIndex(artists []models.Artist, counts map[string]int64) []J {
-	groups := map[string][]J{}
+// buildArtistIndex groups artists by the first letter of their name without
+// a leading article ("Les Frères Morvan" under F) and sorts them the same
+// way. The names themselves are not changed.
+func buildArtistIndex(artists []models.Artist, counts map[string]int64, articles []string) []J {
+	type entry struct {
+		key string
+		a   models.Artist
+	}
+	entries := make([]entry, 0, len(artists))
 	for _, a := range artists {
-		key := "#"
-		for _, r := range a.Name {
+		entries = append(entries, entry{strings.ToLower(stripArticle(a.Name, articles)), a})
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].key != entries[j].key {
+			return entries[i].key < entries[j].key
+		}
+		return entries[i].a.ID < entries[j].a.ID
+	})
+	groups := map[string][]J{}
+	for _, e := range entries {
+		letter := "#"
+		for _, r := range e.key {
 			if unicode.IsLetter(r) {
-				key = string(unicode.ToUpper(r))
+				letter = string(unicode.ToUpper(r))
 			}
 			break
 		}
-		groups[key] = append(groups[key], artistToJSON(a, counts[a.ID]))
+		groups[letter] = append(groups[letter], artistToJSON(e.a, counts[e.a.ID]))
 	}
 	keys := make([]string, 0, len(groups))
 	for k := range groups {
@@ -378,8 +398,8 @@ func (s *State) GetArtists(w http.ResponseWriter, r *http.Request) {
 	counts, _ := repoAlbumCountsByArtist(ctx, s.Pool)
 	writeOK(w, J{
 		"artists": J{
-			"ignoredArticles": "The An A Die Das Ein",
-			"index":           buildArtistIndex(artists, counts),
+			"ignoredArticles": strings.Join(s.ignoredArticles(), " "),
+			"index":           buildArtistIndex(artists, counts, s.ignoredArticles()),
 		},
 	})
 }
@@ -407,9 +427,7 @@ func (s *State) GetArtist(w http.ResponseWriter, r *http.Request) {
 	albums, _ := repoAlbumsByArtist(ctx, s.Pool, id)
 	albumJSONs := make([]J, 0, len(albums))
 	for _, a := range albums {
-		count, _ := repoSongCountForAlbum(ctx, s.Pool, a.ID)
-		dur, _ := repoSongDurationForAlbum(ctx, s.Pool, a.ID)
-		albumJSONs = append(albumJSONs, albumToChild(a, count, dur))
+		albumJSONs = append(albumJSONs, albumToChild(a))
 	}
 	writeOK(w, J{
 		"artist": J{
@@ -445,32 +463,13 @@ func (s *State) GetAlbum(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	songs, _ := repoSongsByAlbum(ctx, s.Pool, id)
-	var totalDur int64
 	songJSONs := make([]J, 0, len(songs))
 	for _, sg := range songs {
-		totalDur += sg.DurationMs / 1000
-		songJSONs = append(songJSONs, songToChild(sg))
+		songJSONs = append(songJSONs, s.songToChild(sg))
 	}
-	var year any
-	if album.Year > 0 {
-		year = album.Year
-	}
-	writeOK(w, J{
-		"album": J{
-			"id":            album.ID,
-			"musicBrainzId": mbidValue(album.MBID),
-			"mediaType":     "album",
-			"name":          album.Title,
-			"title":         album.Title,
-			"artist":        album.Artist,
-			"artistId":      album.ArtistID,
-			"coverArt":      album.ID,
-			"songCount":     len(songJSONs),
-			"duration":      totalDur,
-			"year":          year,
-			"song":          songJSONs,
-		},
-	})
+	out := albumToChild(*album)
+	out["song"] = songJSONs
+	writeOK(w, J{"album": out})
 }
 
 func (s *State) GetSong(w http.ResponseWriter, r *http.Request) {
@@ -492,7 +491,7 @@ func (s *State) GetSong(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 70, "Song not found")
 		return
 	}
-	writeOK(w, J{"song": songToChild(*song)})
+	writeOK(w, J{"song": s.songToChild(*song)})
 }
 
 func (s *State) GetAlbumList2(w http.ResponseWriter, r *http.Request) {
@@ -517,9 +516,7 @@ func (s *State) albumList(w http.ResponseWriter, r *http.Request, wrap string) {
 	albums, _ := repoAlbumsPaginated(ctx, s.Pool, listType, size, offset)
 	out := make([]J, 0, len(albums))
 	for _, a := range albums {
-		count, _ := repoSongCountForAlbum(ctx, s.Pool, a.ID)
-		dur, _ := repoSongDurationForAlbum(ctx, s.Pool, a.ID)
-		out = append(out, albumToChild(a, count, dur))
+		out = append(out, albumToChild(a))
 	}
 	writeOK(w, J{wrap: J{"album": out}})
 }
@@ -536,8 +533,8 @@ func (s *State) GetIndexes(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, J{
 		"indexes": J{
 			"lastModified":    0,
-			"ignoredArticles": "The An A Die Das Ein",
-			"index":           buildArtistIndex(artists, counts),
+			"ignoredArticles": strings.Join(s.ignoredArticles(), " "),
+			"index":           buildArtistIndex(artists, counts, s.ignoredArticles()),
 		},
 	})
 }
@@ -610,7 +607,7 @@ func (s *State) GetMusicDirectory(w http.ResponseWriter, r *http.Request) {
 		songs, _ := repoSongsByAlbum(ctx, s.Pool, id)
 		children := make([]J, 0, len(songs))
 		for _, sg := range songs {
-			children = append(children, songToChild(sg))
+			children = append(children, s.songToChild(sg))
 		}
 		writeOK(w, J{
 			"directory": J{
@@ -653,7 +650,7 @@ func (s *State) GetSongsByGenre(w http.ResponseWriter, r *http.Request) {
 	songs, _ := repoSongsByGenre(r.Context(), s.Pool, genre, count, offset)
 	children := make([]J, 0, len(songs))
 	for _, sg := range songs {
-		children = append(children, songToChild(sg))
+		children = append(children, s.songToChild(sg))
 	}
 	writeOK(w, J{"songsByGenre": J{"song": children}})
 }
@@ -671,7 +668,7 @@ func (s *State) GetRandomSongs(w http.ResponseWriter, r *http.Request) {
 	songs, _ := repoRandomSongs(r.Context(), s.Pool, size, from, to, genre)
 	children := make([]J, 0, len(songs))
 	for _, sg := range songs {
-		children = append(children, songToChild(sg))
+		children = append(children, s.songToChild(sg))
 	}
 	writeOK(w, J{"randomSongs": J{"song": children}})
 }
@@ -693,15 +690,13 @@ func (s *State) GetStarred2(w http.ResponseWriter, r *http.Request) {
 
 	songJSONs := make([]J, 0, len(songs))
 	for _, p := range songs {
-		v := songToChild(p.Song)
+		v := s.songToChild(p.Song)
 		v["starred"] = p.When
 		songJSONs = append(songJSONs, v)
 	}
 	albumJSONs := make([]J, 0, len(albums))
 	for _, p := range albums {
-		count, _ := repoSongCountForAlbum(ctx, s.Pool, p.Album.ID)
-		dur, _ := repoSongDurationForAlbum(ctx, s.Pool, p.Album.ID)
-		v := albumToChild(p.Album, count, dur)
+		v := albumToChild(p.Album)
 		v["starred"] = p.When
 		albumJSONs = append(albumJSONs, v)
 	}
@@ -897,13 +892,11 @@ func (s *State) searchN(w http.ResponseWriter, r *http.Request, wrap string) {
 	}
 	albumJSONs := make([]J, 0, len(albums))
 	for _, a := range albums {
-		count, _ := repoSongCountForAlbum(ctx, s.Pool, a.ID)
-		dur, _ := repoSongDurationForAlbum(ctx, s.Pool, a.ID)
-		albumJSONs = append(albumJSONs, albumToChild(a, count, dur))
+		albumJSONs = append(albumJSONs, albumToChild(a))
 	}
 	songJSONs := make([]J, 0, len(songs))
 	for _, sg := range songs {
-		songJSONs = append(songJSONs, songToChild(sg))
+		songJSONs = append(songJSONs, s.songToChild(sg))
 	}
 	writeOK(w, J{
 		wrap: J{
@@ -918,16 +911,16 @@ func (s *State) searchN(w http.ResponseWriter, r *http.Request, wrap string) {
 
 func (s *State) playlistJSON(r *http.Request, pl *models.Playlist) J {
 	songs, _ := repoPlaylistSongs(r.Context(), s.Pool, pl.ID)
-	var dur int64
+	var durMs int64
 	for _, sg := range songs {
-		dur += sg.DurationMs / 1000
+		durMs += sg.DurationMs
 	}
 	return J{
 		"id":        pl.ID,
 		"name":      pl.Name,
 		"comment":   nsToAny(pl.Comment),
 		"songCount": len(songs),
-		"duration":  dur,
+		"duration":  durMs / 1000,
 		"public":    pl.Public != 0,
 		"created":   pl.CreatedAt,
 		"changed":   pl.UpdatedAt,
@@ -969,11 +962,11 @@ func (s *State) GetPlaylist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	songs, _ := repoPlaylistSongs(r.Context(), s.Pool, id)
-	var dur int64
+	var durMs int64
 	entry := make([]J, 0, len(songs))
 	for _, sg := range songs {
-		dur += sg.DurationMs / 1000
-		entry = append(entry, songToChild(sg))
+		durMs += sg.DurationMs
+		entry = append(entry, s.songToChild(sg))
 	}
 	writeOK(w, J{
 		"playlist": J{
@@ -981,7 +974,7 @@ func (s *State) GetPlaylist(w http.ResponseWriter, r *http.Request) {
 			"name":      pl.Name,
 			"comment":   nsToAny(pl.Comment),
 			"songCount": len(entry),
-			"duration":  dur,
+			"duration":  durMs / 1000,
 			"public":    pl.Public != 0,
 			"created":   pl.CreatedAt,
 			"changed":   pl.UpdatedAt,
@@ -1039,11 +1032,11 @@ func (s *State) CreatePlaylist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	songs, _ := repoPlaylistSongs(ctx, s.Pool, id)
-	var dur int64
+	var durMs int64
 	entry := make([]J, 0, len(songs))
 	for _, sg := range songs {
-		dur += sg.DurationMs / 1000
-		entry = append(entry, songToChild(sg))
+		durMs += sg.DurationMs
+		entry = append(entry, s.songToChild(sg))
 	}
 	writeOK(w, J{
 		"playlist": J{
@@ -1051,7 +1044,7 @@ func (s *State) CreatePlaylist(w http.ResponseWriter, r *http.Request) {
 			"name":      pl.Name,
 			"comment":   nsToAny(pl.Comment),
 			"songCount": len(entry),
-			"duration":  dur,
+			"duration":  durMs / 1000,
 			"public":    pl.Public != 0,
 			"created":   pl.CreatedAt,
 			"changed":   pl.UpdatedAt,
@@ -1208,7 +1201,7 @@ func (s *State) GetTopSongs(w http.ResponseWriter, r *http.Request) {
 	children := make([]J, 0, len(songs))
 	for _, sg := range songs {
 		if strings.EqualFold(sg.Artist, artist) {
-			children = append(children, songToChild(sg))
+			children = append(children, s.songToChild(sg))
 		}
 	}
 	writeOK(w, J{"topSongs": J{"song": children}})

@@ -24,9 +24,12 @@ type State struct {
 	Pool      *sql.DB
 	MusicDirs []string
 	// SongTags is the allowlist of file tags exposed on songs (song_tags).
-	SongTags  []string
-	CoversDir string
-	Progress  *scanner.Progress
+	SongTags []string
+	// IgnoredArticles are the leading words skipped when indexing artists
+	// (ignored_articles). Nil means DefaultIgnoredArticles.
+	IgnoredArticles []string
+	CoversDir       string
+	Progress        *scanner.Progress
 
 	// BaseURL is the public address clients reach the server at; it is
 	// embedded in pairing QR codes. Empty means derive it from the request.
@@ -45,6 +48,13 @@ type State struct {
 	// for streams is what keeps first-byte latency under client timeouts on
 	// slow hardware (WASM SQLite on armv6 is the dominant cost otherwise).
 	songCache sync.Map
+}
+
+func (s *State) ignoredArticles() []string {
+	if s.IgnoredArticles == nil {
+		return strings.Fields(DefaultIgnoredArticles)
+	}
+	return s.IgnoredArticles
 }
 
 type songRef struct {
@@ -96,6 +106,7 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 		AllowRegistration: cfg.AllowRegistration,
 		MusicDirs:         cfg.MusicDirs,
 		SongTags:          cfg.SongTags,
+		IgnoredArticles:   strings.Fields(cfg.IgnoredArticles),
 		CoversDir:         cfg.CoversDir,
 		Progress:          progress,
 	}

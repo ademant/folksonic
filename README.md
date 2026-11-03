@@ -121,6 +121,7 @@ Configuration is checked at startup:
 | `base_path`         | URL prefix to serve under, such as `/folksonic`. Empty (default) serves from the root. See [Serving under a subpath](#serving-under-a-subpath). |
 | `allow_registration` | Enables `POST /api/register` without an invitation code. Default `false`. Invitation codes work either way. |
 | `song_tags`          | File tags exposed on songs, such as `["DANCE", "USE"]`. Only these names are read. Each song then carries `tinysonicTags`, and the `tinysonicSongTags` extension is advertised. Default empty. |
+| `ignored_articles`   | Leading words skipped when indexing and sorting artists in `getArtists`/`getIndexes`, separated by spaces, and announced as `ignoredArticles`. An article ending in `'` (`L'`) matches without a following space. Default `"The El La Las Le Les Los Il L' An A Die Das Ein"`; `""` disables it. |
 | `[oidc]` table       | Optional single sign-on with an OpenID Connect provider: `issuer`, `client_id` and optional `client_secret`. Needs `base_url`. See [Single sign-on](#single-sign-on). Off unless `issuer` is set. |
 
 ## Roles
@@ -237,6 +238,17 @@ each song carries `tinysonicTags`, an object mapping each configured name to all
 of its values in file order, for example `{"DANCE": ["Waltz", "Mazurka"]}`. Names
 are case-insensitive in the file and upper-cased in the response. Only the listed
 names are read, and they are read-only: the server never writes tags.
+
+**Response conventions** — optional fields without a value are omitted, never
+sent as `null`. A song's `path` is relative to the music directory that holds
+it (`Artist/Album/01.opus`); server paths are not exposed. `created` is when a
+file was first added to the library (kept across rescans; on upgrade it starts
+from the file's modification time), and an album's `created` is that of its
+earliest song, so `getAlbumList2?type=newest` lists recently added albums
+first, not recent release years. Album `duration` is the sum of its songs in
+milliseconds, rounded down once, and the same in every endpoint. The artist
+index skips a leading article from `ignored_articles` ("Les Frères Morvan" is
+under F); names themselves are unchanged.
 
 **Library (ID3 tag browsing)** — `getArtists`, `getArtist`, `getAlbum`,
 `getSong`, `getAlbumList2`, `getAlbumList` (alias)

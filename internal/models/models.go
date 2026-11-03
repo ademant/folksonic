@@ -16,6 +16,10 @@ type Album struct {
 	Year     int64
 	CoverArt sql.NullString
 	MBID     sql.NullString
+	// Derived from the album's songs.
+	SongCount  int64
+	DurationMs int64
+	Created    sql.NullString // earliest songs.created_at
 }
 
 type Song struct {
@@ -38,6 +42,7 @@ type Song struct {
 	CoverArt    sql.NullString
 	MBID        sql.NullString
 	Tags        sql.NullString // JSON object of allowlisted file tags
+	Created     sql.NullString // when the file was first added
 }
 
 type Playlist struct {

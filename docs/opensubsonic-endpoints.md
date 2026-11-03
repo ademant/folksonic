@@ -8,6 +8,11 @@ Every implemented endpoint is registered at both `/rest/<name>` and
 `/rest/<name>.view`, for `GET` and `POST`. Responses use the Subsonic JSON
 envelope and carry `"openSubsonic": true`.
 
+Optional fields without a value are omitted rather than sent as `null`.
+Song `path` is relative to its music directory, `created` is when a file was
+first added, and `getAlbumList2?type=newest` sorts by that date. See the
+README's "Response conventions".
+
 ## Implemented (42)
 
 Endpoints marked *stub* return the expected shape with minimal content. They
