@@ -7,22 +7,25 @@ import (
 )
 
 // PasskeyRecord is one stored WebAuthn credential. JSON is the serialized
-// webauthn.Credential; ID identifies the row for updates.
+// webauthn.Credential; ID identifies the row for updates. Label is the name the
+// user gave it, and may be empty.
 type PasskeyRecord struct {
-	ID   int64
-	JSON string
+	ID        int64
+	JSON      string
+	Label     string
+	CreatedAt string
 }
 
-func AddPasskey(ctx context.Context, db *sql.DB, userID int64, credentialJSON string) error {
+func AddPasskey(ctx context.Context, db *sql.DB, userID int64, credentialJSON, label string) error {
 	_, err := db.ExecContext(ctx,
-		"INSERT INTO webauthn_credentials (user_id, credential, created_at) VALUES (?, ?, ?)",
-		userID, credentialJSON, Now())
+		"INSERT INTO webauthn_credentials (user_id, credential, created_at, label) VALUES (?, ?, ?, ?)",
+		userID, credentialJSON, Now(), label)
 	return err
 }
 
 func ListPasskeys(ctx context.Context, db *sql.DB, userID int64) ([]PasskeyRecord, error) {
 	rows, err := db.QueryContext(ctx,
-		"SELECT id, credential FROM webauthn_credentials WHERE user_id = ? ORDER BY id", userID)
+		"SELECT id, credential, label, created_at FROM webauthn_credentials WHERE user_id = ? ORDER BY id", userID)
 	if err != nil {
 		return nil, err
 	}
@@ -30,12 +33,22 @@ func ListPasskeys(ctx context.Context, db *sql.DB, userID int64) ([]PasskeyRecor
 	var out []PasskeyRecord
 	for rows.Next() {
 		var r PasskeyRecord
-		if err := rows.Scan(&r.ID, &r.JSON); err != nil {
+		if err := rows.Scan(&r.ID, &r.JSON, &r.Label, &r.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// RemovePasskey deletes one passkey owned by userID. Anything else is
+// ErrNotFound.
+func RemovePasskey(ctx context.Context, db *sql.DB, userID, id int64) error {
+	res, err := db.ExecContext(ctx, "DELETE FROM webauthn_credentials WHERE id = ? AND user_id = ?", id, userID)
+	if err != nil {
+		return err
+	}
+	return requireOne(res)
 }
 
 // UpdatePasskey stores a credential after a successful login, so the

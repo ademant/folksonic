@@ -187,7 +187,11 @@ func (s *State) APIPasskeyRegisterFinish(w http.ResponseWriter, r *http.Request)
 		writeAPIError(w, http.StatusInternalServerError, "encoding error")
 		return
 	}
-	if err := users.AddPasskey(r.Context(), s.Pool, caller.ID, string(raw)); err != nil {
+	label := strings.TrimSpace(r.URL.Query().Get("label"))
+	if len(label) > maxPasskeyLabel {
+		label = label[:maxPasskeyLabel]
+	}
+	if err := users.AddPasskey(r.Context(), s.Pool, caller.ID, string(raw), label); err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "database error")
 		return
 	}

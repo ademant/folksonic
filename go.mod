@@ -5,15 +5,18 @@ go 1.27.3
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/abema/go-mp4 v1.7.4
+	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/dhowden/tag v0.0.0-20240417053706-3d75831295e8
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/fxamacker/cbor/v2 v2.9.4
 	github.com/go-audio/wav v1.1.0
+	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/go-webauthn/webauthn v0.18.2
 	github.com/mewkiz/flac v1.0.14
 	github.com/ncruces/go-sqlite3 v0.36.0
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/tcolgate/mp3 v0.0.0-20170426193717-e79c5a46d300
+	golang.org/x/oauth2 v0.37.0
 	golang.org/x/term v0.47.0
 )
 

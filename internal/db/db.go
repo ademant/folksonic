@@ -62,6 +62,9 @@ func migrate(d *sql.DB) error {
 	if err := migrateSongTagsColumn(d); err != nil {
 		return fmt.Errorf("song tags: %w", err)
 	}
+	if err := migratePasskeyLabel(d); err != nil {
+		return fmt.Errorf("passkey labels: %w", err)
+	}
 	return backfillFTS(d)
 }
 
@@ -303,6 +306,16 @@ CREATE TABLE IF NOT EXISTS webauthn_credentials (
     credential TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS oidc_identities (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    issuer     TEXT NOT NULL,
+    subject    TEXT NOT NULL,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    UNIQUE (issuer, subject)
+);
+CREATE INDEX IF NOT EXISTS idx_oidc_identities_user ON oidc_identities(user_id);
 
 `
 

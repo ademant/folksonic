@@ -32,6 +32,9 @@ type Config struct {
 	// SongTags lists the file tags exposed to clients (for example DANCE and
 	// USE). Normalised by Load to upper case, without duplicates.
 	SongTags []string `toml:"song_tags"`
+	// OIDC enables sign-in through an external identity provider. It is off
+	// unless Issuer is set; see OIDC for the rules.
+	OIDC OIDC `toml:"oidc"`
 
 	// Warnings holds non-fatal problems found while loading, such as a config
 	// file readable by other users. Callers should log them.
@@ -81,6 +84,9 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 	if err := c.normaliseSongTags(); err != nil {
+		return nil, err
+	}
+	if err := c.OIDC.validate(c.BaseURL); err != nil {
 		return nil, err
 	}
 
@@ -165,6 +171,42 @@ func resolve(base, p string) string {
 		return p
 	}
 	return filepath.Join(base, p)
+}
+
+// OIDC configures single sign-on with an OpenID Connect provider. Only the
+// issuer is required beyond the client ID: the endpoints come from the
+// provider's discovery document. base_url must be set, because it defines the
+// redirect address registered with the provider.
+type OIDC struct {
+	Issuer       string `toml:"issuer"`
+	ClientID     string `toml:"client_id"`
+	ClientSecret string `toml:"client_secret"`
+}
+
+// Enabled reports whether OIDC sign-in is configured.
+func (o OIDC) Enabled() bool { return o.Issuer != "" }
+
+func (o OIDC) validate(baseURL string) error {
+	if !o.Enabled() {
+		if o.ClientID != "" || o.ClientSecret != "" {
+			return errors.New("config: oidc needs issuer")
+		}
+		return nil
+	}
+	u, err := url.Parse(o.Issuer)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return fmt.Errorf("config: oidc issuer %q must be an absolute http or https URL", o.Issuer)
+	}
+	if u.Scheme == "http" && !strings.HasPrefix(u.Host, "localhost") && !strings.HasPrefix(u.Host, "127.0.0.1") {
+		return fmt.Errorf("config: oidc issuer %q must use https", o.Issuer)
+	}
+	if o.ClientID == "" {
+		return errors.New("config: oidc needs client_id")
+	}
+	if baseURL == "" {
+		return errors.New("config: oidc needs base_url, which the identity provider redirects back to")
+	}
+	return nil
 }
 
 // maxSongTags bounds the allowlist; every song response carries these values.

@@ -121,6 +121,7 @@ Configuration is checked at startup:
 | `base_path`         | URL prefix to serve under, such as `/folksonic`. Empty (default) serves from the root. See [Serving under a subpath](#serving-under-a-subpath). |
 | `allow_registration` | Enables `POST /api/register` without an invitation code. Default `false`. Invitation codes work either way. |
 | `song_tags`          | File tags exposed on songs, such as `["DANCE", "USE"]`. Only these names are read. Each song then carries `tinysonicTags`, and the `tinysonicSongTags` extension is advertised. Default empty. |
+| `[oidc]` table       | Optional single sign-on with an OpenID Connect provider: `issuer`, `client_id` and optional `client_secret`. Needs `base_url`. See [Single sign-on](#single-sign-on). Off unless `issuer` is set. |
 
 ## Roles
 
@@ -292,12 +293,71 @@ or token auth, and an empty password never matches.
 | POST | `/api/register/passkey/begin` · `/finish` | none | Sign up with an invite and a passkey, no password. The account is created only after the passkey is verified |
 | POST | `/api/login` | none | Sign in with username and password |
 | POST | `/api/logout` | Bearer | End a session |
+| GET | `/account` | page | Account page: API keys, pairing QR, passkeys and linked identities. Redirects to sign-in when there is no session |
+| POST | `/api/pair/qr` | user | Create a pairing token and return its QR code, SVG by default; PNG with `Accept: image/png` or `?format=png` |
+| GET | `/api/passkeys` | user | List own passkeys (`id`, `label`, `createdAt`) |
+| DELETE | `/api/passkeys/{id}` | user | Remove an own passkey. Refused (409) when it is the account's last sign-in method |
+| GET | `/api/oidc/status` | none | `{"enabled": bool}`, so the page knows whether to offer single sign-on |
+| POST | `/api/oidc/begin` | none (`link` needs user) | Start single sign-on. Body: `mode` (`signin`, `link` or `invite`), `client` (`web` or `app`), and `invite` and `username` for `invite`. Returns the provider's `url` |
+| GET | `/api/oidc/callback` | state | Provider redirect target. Ends in the sign-in page with a one-time code, or with an error |
+| POST | `/api/oidc/exchange` | one-time code | Trade the code for a session `token` (web) or a device `apiKey` (app) |
+| GET | `/api/oidc/identities` | user | List linked identities |
+| DELETE | `/api/oidc/identities/{id}` | user | Unlink an identity. Refused (409) when it is the account's last sign-in method |
 
 The QR code encodes `tinysonic://pair?server=<base_url>&token=<token>`. The app
 posts the token to `/api/pair/complete` and stores the returned key.
 
 Passkeys need HTTPS (or `localhost`) and `base_url`. Without `base_url` the
 passkey endpoints return 503, and every other method keeps working.
+
+### Account page
+
+`/account` is the place for a signed-in user to connect the Android app and
+manage sign-in. After sign-in the browser goes there. It offers:
+
+- **Pairing QR**, generated only when the button is pressed. It is an SVG
+  (PNG as fallback) that works once and expires after five minutes.
+- **API keys**: create one with a label and an optional expiry (shown once),
+  list them, and revoke them.
+- **Passkeys**: add one with a name, list them, and remove them.
+- **Single sign-on identities**, when `oidc` is configured: link and unlink.
+
+The page keeps the session in `sessionStorage` and calls the JSON API with a
+Bearer token. It contains no secrets of its own.
+
+### Single sign-on
+
+Set the `[oidc]` table to sign in through an identity provider such as Keycloak
+or Authentik. Discovery reads the endpoints from `issuer`, so only the issuer,
+`client_id` and (for confidential clients) `client_secret` are needed:
+
+```toml
+base_url = "https://music.example.com"
+
+[oidc]
+issuer        = "https://auth.example.com/realms/main"
+client_id     = "tinysonic"
+client_secret = "…"   # optional for public clients
+```
+
+Register `<base_url>/api/oidc/callback` as the redirect URI with the provider.
+The flow is Authorization Code with PKCE and a nonce, checked on the ID token.
+
+Accounts are never created by the provider on its own:
+
+- **Sign-in** works only for an identity already linked to an account.
+- **Linking** (`mode=link`) attaches an identity to the signed-in account.
+  An identity held by another account is refused.
+- **Invitations** (`mode=invite`) create an account bound to the invited
+  username. The invitation is spent only after the identity is verified. Such
+  an account has no password and uses the identity, or a passkey, to sign in.
+
+A successful sign-in does not hand tokens to the browser or app. The callback
+gives a one-time code, valid for a minute, which the client exchanges: the web
+page receives a session, and the app receives its own device API key, as with
+QR pairing. The code is in the URL fragment for the web and in the
+`tinysonic://oidc` redirect for the app. The provider's tokens are never stored
+or put in a URL.
 
 ## Serving under a subpath
 
