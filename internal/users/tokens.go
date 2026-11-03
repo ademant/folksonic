@@ -54,15 +54,15 @@ func CreateAPIKey(ctx context.Context, q querier, userID int64, label string, tt
 // LookupAPIKey returns the active user behind a presented key. Revoked,
 // expired and disabled-user keys are rejected with ErrNotFound.
 func LookupAPIKey(ctx context.Context, db *sql.DB, plain string) (User, error) {
-	var u User
-	err := db.QueryRowContext(ctx, `
-		SELECT u.id, u.username, u.password, u.role, u.status, u.created_at
+	// scanUser handles passwordless accounts, whose password is NULL.
+	u, err := scanUser(db.QueryRowContext(ctx, `
+		SELECT u.id, u.username, u.password, u.role, u.status, u.created_at, u.webauthn_handle
 		FROM api_keys k JOIN users u ON u.id = k.user_id
 		WHERE k.key_hash = ? AND k.revoked_at IS NULL
 		  AND (k.expires_at IS NULL OR k.expires_at > ?)
 		  AND u.status = ?`,
 		hashToken(plain), Now(), StatusActive,
-	).Scan(&u.ID, &u.Username, &u.Password, &u.Role, &u.Status, &u.CreatedAt)
+	))
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, ErrNotFound
 	}
