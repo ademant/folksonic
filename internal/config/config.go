@@ -39,7 +39,7 @@ type Config struct {
 // directory containing the config file, not the working directory.
 //
 // Username and password are optional: when set and the database has no users
-// yet, they create the first admin account. After that, users are managed with
+// yet, they create the first librarian account. After that, users are managed with
 // `tinysonic user …`.
 func Load(path string) (*Config, error) {
 	c := &Config{

@@ -61,7 +61,7 @@ CGO_ENABLED=0 go build -o tinysonic ./cmd/tinysonic
 ```sh
 # 1. Create a config
 cp smolsonic.example.toml smolsonic.toml
-$EDITOR smolsonic.toml      # set music_dirs; optionally a bootstrap admin
+$EDITOR smolsonic.toml      # set music_dirs; optionally a bootstrap account
 
 # 2. Run
 ./tinysonic --config smolsonic.toml
@@ -93,8 +93,8 @@ covers_dir        = "covers"
 # QR-code pairing. Must be HTTPS when served beyond localhost.
 base_url          = "https://music.example.com"
 
-# Let anyone create an account. New accounts stay pending until an active
-# user approves them. Off by default.
+# Let anyone create an account. New accounts stay pending until an
+# administrator approves them with `tinysonic user approve`. Off by default.
 allow_registration = false
 ```
 
@@ -112,7 +112,7 @@ Configuration is checked at startup:
 | Key                  | Purpose                                                              |
 | -------------------- | -------------------------------------------------------------------- |
 | `music_dirs`         | Library roots, each walked recursively. `music_dir = "…"` is accepted as a one-entry list. |
-| `username`/`password`| Optional bootstrap admin, imported once when the database has no users. |
+| `username`/`password`| Optional bootstrap librarian, imported once when the database has no users. |
 | `port`               | TCP port to bind.                                                    |
 | `host`               | Interface to bind (use `127.0.0.1` to keep it local).                |
 | `database_path`      | Path to the SQLite file. Created if missing. Holds users and keys.   |
@@ -121,19 +121,35 @@ Configuration is checked at startup:
 | `base_path`         | URL prefix to serve under, such as `/folksonic`. Empty (default) serves from the root. See [Serving under a subpath](#serving-under-a-subpath). |
 | `allow_registration` | Enables `POST /api/register` without an invitation code. Default `false`. Invitation codes work either way. |
 
+## Roles
+
+There are two roles:
+
+- **`librarian`** may start a library rescan (`startScan`). Nothing else in
+  the API is role-gated.
+- **`user`** has no extra rights. Stars, playlists and API keys belong to each
+  account.
+
+Account administration is CLI-only, because it needs shell access to the
+server: creating, approving, disabling and removing accounts, setting
+passwords, issuing invites and pairing. Pending registrations are approved
+with `tinysonic user approve` and rejected with `tinysonic user remove`. The
+API has no endpoint for either. Subsonic `getUser` reports `adminRole` as
+false for everyone.
+
 ## CLI
 
 ```
 tinysonic [--config FILE] [--no-scan] [--no-watch]    run the server
 
-tinysonic user add [-c FILE] [--admin] <username>     create an active account (prompts for password)
+tinysonic user add [-c FILE] [--librarian] <username>  create an active account (prompts for password)
 tinysonic user list [-c FILE]                         list accounts and their status
 tinysonic user approve [-c FILE] <username>           activate a pending account
 tinysonic user disable|enable [-c FILE] <username>
 tinysonic user set-password [-c FILE] <username>
 tinysonic user remove [-c FILE] <username>
 
-tinysonic invite create [-c FILE] [--expires 7d] [--admin] [--note TEXT] [--username NAME]
+tinysonic invite create [-c FILE] [--expires 7d] [--librarian] [--note TEXT] [--username NAME]
                                                       print a single-use invitation code; --username
                                                       binds it to one name, for a passkey-only account
 tinysonic invite list [-c FILE]                       list invites and their state (never the codes)
@@ -158,8 +174,8 @@ https://cloud.ademant.de/folksonic/login?invite=inv-7KQ2-M9XD-4TPA-HR3C
 ```
 
 The link opens the sign-in page with the registration form filled in. The
-account is active as soon as it is created, with the invite's role (`--admin`
-for an administrator).
+account is active as soon as it is created, with the invite's role (`--librarian`
+for a librarian).
 
 An invite can be redeemed in two ways. With a password, the account keeps that
 password. Without one, the user creates a passkey, and the account is created
@@ -245,9 +261,6 @@ or token auth, and an empty password never matches.
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |
 | POST | `/api/register` | none | Create an account. With `invite` and `password`: active and signed in (returns a session `token`). Without an invite: pending, needs `allow_registration`, and needs a password |
-| GET | `/api/users` | user | List accounts |
-| POST | `/api/users/{id}/approve` | user | Activate a pending account |
-| POST | `/api/users/{id}/reject` | user | Delete a pending account |
 | POST | `/api/keys` | user | Create an API key (shown once) |
 | GET | `/api/keys` | user | List own keys |
 | DELETE | `/api/keys/{id}` | user | Revoke an own key |

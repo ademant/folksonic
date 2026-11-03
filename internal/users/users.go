@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	RoleAdmin = "admin"
-	RoleUser  = "user"
+	RoleLibrarian = "librarian"
+	RoleUser      = "user"
 
 	StatusPending  = "pending"
 	StatusActive   = "active"
@@ -70,8 +70,8 @@ func ValidUsername(name string) error {
 	return nil
 }
 
-// Create inserts a user. Status and role are set by the caller: admin
-// creation uses active/admin, self-registration uses pending/user.
+// Create inserts a user. Status and role are set by the caller: CLI creation
+// uses active, self-registration uses pending/user.
 func Create(ctx context.Context, db *sql.DB, username, password, role, status string) (User, error) {
 	if err := ValidUsername(username); err != nil {
 		return User{}, err
@@ -203,7 +203,7 @@ func Bootstrap(ctx context.Context, db *sql.DB, username, password string) (bool
 	if err != nil || n > 0 {
 		return false, err
 	}
-	if _, err := Create(ctx, db, username, password, RoleAdmin, StatusActive); err != nil {
+	if _, err := Create(ctx, db, username, password, RoleLibrarian, StatusActive); err != nil {
 		return false, err
 	}
 	return true, nil

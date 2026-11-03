@@ -30,7 +30,7 @@ type State struct {
 	// embedded in pairing QR codes. Empty means derive it from the request.
 	BaseURL string
 	// AllowRegistration enables self-registration. New accounts stay pending
-	// until an active user approves them.
+	// until an administrator approves them with `tinysonic user approve`.
 	AllowRegistration bool
 
 	webAuthn   *webauthn.WebAuthn
@@ -340,9 +340,6 @@ func (s *State) routes() *http.ServeMux {
 
 	// Account and device management (JSON, not Subsonic)
 	mux.HandleFunc("POST /api/register", s.APIRegister)
-	mux.HandleFunc("GET /api/users", s.APIListUsers)
-	mux.HandleFunc("POST /api/users/{id}/approve", s.APIApprove)
-	mux.HandleFunc("POST /api/users/{id}/reject", s.APIReject)
 	mux.HandleFunc("POST /api/keys", s.APICreateKey)
 	mux.HandleFunc("GET /api/keys", s.APIListKeys)
 	mux.HandleFunc("DELETE /api/keys/{id}", s.APIRevokeKey)

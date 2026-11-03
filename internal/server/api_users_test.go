@@ -22,9 +22,9 @@ func TestRegistrationDisabledByDefault(t *testing.T) {
 	}
 }
 
-// Self-registration creates a pending account, which another active user
-// must approve before it can sign in.
-func TestRegistrationNeedsApproval(t *testing.T) {
+// Self-registration creates a pending account. Only the CLI approves it, so it
+// stays pending until an administrator runs `tinysonic user approve`.
+func TestRegistrationNeedsCLIApproval(t *testing.T) {
 	s := newTestState(t)
 	s.AllowRegistration = true
 	ctx := context.Background()
@@ -42,42 +42,30 @@ func TestRegistrationNeedsApproval(t *testing.T) {
 	if bob.Status != users.StatusPending {
 		t.Fatalf("new account status %q, want pending", bob.Status)
 	}
-
-	// Bob cannot sign in yet.
 	if _, ok := s.authenticate(httptest.NewRequest(http.MethodGet, "/rest/ping?u=bob&p=pw", nil)); ok {
 		t.Fatal("pending user authenticated")
 	}
 
-	// The admin approves with an API key.
-	admin, _ := users.ByName(ctx, s.Pool, "admin")
-	key, _ := users.CreateAPIKey(ctx, s.Pool, admin.ID, "test", 0)
-	req = httptest.NewRequest(http.MethodPost, "/api/users/"+itoa(bob.ID)+"/approve", nil)
-	req.SetPathValue("id", itoa(bob.ID))
-	req.URL.RawQuery = "apiKey=" + key
-	rec = httptest.NewRecorder()
-	s.APIApprove(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("approve status %d: %s", rec.Code, rec.Body.String())
+	// No API endpoint lists, approves or rejects accounts.
+	for _, call := range []struct{ method, path string }{
+		{http.MethodGet, "/api/users"},
+		{http.MethodPost, "/api/users/" + itoa(bob.ID) + "/approve"},
+		{http.MethodPost, "/api/users/" + itoa(bob.ID) + "/reject"},
+	} {
+		rec := httptest.NewRecorder()
+		s.routes().ServeHTTP(rec, httptest.NewRequest(call.method, call.path, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s %s: status %d, want 404", call.method, call.path, rec.Code)
+		}
+	}
+
+	// `tinysonic user approve` does exactly this.
+	if err := users.SetStatus(ctx, s.Pool, bob.ID, users.StatusActive, 0); err != nil {
+		t.Fatal(err)
 	}
 	if _, ok := s.authenticate(httptest.NewRequest(http.MethodGet, "/rest/ping?u=bob&p=pw", nil)); !ok {
 		t.Fatal("approved user cannot sign in")
 	}
-}
-
-func TestPendingUserCannotApprove(t *testing.T) {
-	s := newTestState(t)
-	ctx := context.Background()
-	bob, _ := users.Create(ctx, s.Pool, "bob", "pw", users.RoleUser, users.StatusPending)
-	carol, _ := users.Create(ctx, s.Pool, "carol", "pw", users.RoleUser, users.StatusPending)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/users/"+itoa(carol.ID)+"/approve?u=bob&p=pw", nil)
-	req.SetPathValue("id", itoa(carol.ID))
-	rec := httptest.NewRecorder()
-	s.APIApprove(rec, req)
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("pending user approve status %d, want 401", rec.Code)
-	}
-	_ = bob
 }
 
 func TestPairingTokenRedeemsOnce(t *testing.T) {

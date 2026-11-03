@@ -268,14 +268,13 @@ func (s *State) GetUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 40, "Wrong username or password")
 		return
 	}
-	isAdmin := u.Role == users.RoleAdmin
 	writeOK(w, J{
 		"user": J{
 			"username":          u.Username,
 			"email":             "",
 			"scrobblingEnabled": false,
-			"adminRole":         isAdmin,
-			"settingsRole":      isAdmin,
+			"adminRole":         false, // no API user administers the server
+			"settingsRole":      false,
 			"downloadRole":      true,
 			"uploadRole":        false,
 			"playlistRole":      true,
@@ -315,7 +314,13 @@ func (s *State) GetScanStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *State) StartScan(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAuth(w, r) {
+	caller, ok := s.authenticate(r)
+	if !ok {
+		writeError(w, 40, "Wrong username or password")
+		return
+	}
+	if caller.Role != users.RoleLibrarian {
+		writeError(w, 50, "only librarians can start a library scan")
 		return
 	}
 	if s.Progress.Running() {

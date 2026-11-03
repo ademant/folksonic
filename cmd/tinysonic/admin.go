@@ -76,7 +76,7 @@ func runUser(args []string) error {
 
 	fs := flag.NewFlagSet("user "+sub, flag.ContinueOnError)
 	cfgPath := fs.String("c", "smolsonic.toml", "path to the TOML config file")
-	admin := fs.Bool("admin", false, "with add: create an administrator")
+	librarian := fs.Bool("librarian", false, "with add: create a librarian, who may rescan the library")
 	if err := fs.Parse(reorderFlags(rest)); err != nil {
 		return err
 	}
@@ -92,15 +92,15 @@ func runUser(args []string) error {
 	switch sub {
 	case "add":
 		if len(names) != 1 {
-			return usage(fs, "user add [-c config] [--admin] <username>")
+			return usage(fs, "user add [-c config] [--librarian] <username>")
 		}
 		pw, err := readPassword("Password: ", true)
 		if err != nil {
 			return err
 		}
 		role := users.RoleUser
-		if *admin {
-			role = users.RoleAdmin
+		if *librarian {
+			role = users.RoleLibrarian
 		}
 		u, err := users.Create(ctx, pool, names[0], pw, role, users.StatusActive)
 		if err != nil {
@@ -161,7 +161,7 @@ func runInvite(args []string) error {
 
 	fs := flag.NewFlagSet("invite "+sub, flag.ContinueOnError)
 	cfgPath := fs.String("c", "smolsonic.toml", "path to the TOML config file")
-	admin := fs.Bool("admin", false, "with create: the invitee becomes an administrator")
+	librarian := fs.Bool("librarian", false, "with create: the invitee becomes a librarian, who may rescan the library")
 	expires := fs.String("expires", "7d", "with create: validity, in days (7d) or a Go duration (12h)")
 	note := fs.String("note", "", "with create: who the invite is for, shown by list")
 	boundName := fs.String("username", "", "with create: only this username may redeem the code; the account is passkey-only")
@@ -180,15 +180,15 @@ func runInvite(args []string) error {
 	switch sub {
 	case "create":
 		if len(pos) != 0 {
-			return usage(fs, "invite create [-c config] [--expires 7d] [--admin] [--note text] [--username name]")
+			return usage(fs, "invite create [-c config] [--expires 7d] [--librarian] [--note text] [--username name]")
 		}
 		ttl, err := parseExpiry(*expires)
 		if err != nil {
 			return err
 		}
 		role := users.RoleUser
-		if *admin {
-			role = users.RoleAdmin
+		if *librarian {
+			role = users.RoleLibrarian
 		}
 		code, inv, err := users.CreateInvite(ctx, pool, role, *boundName, *note, ttl)
 		if err != nil {
