@@ -14,13 +14,23 @@ music.example.com {
         max_size 1MB
     }
 
-    # Subpath variant (base_path = "/folksonic"): keep the prefix, so use
-    # handle (not handle_path, which strips it) and the same reverse_proxy.
-    # handle /folksonic/* {
-    #     reverse_proxy 127.0.0.1:4533 { flush_interval -1 }
+    # Subpath variant (base_path = "/folksonic", deploy/folksonic.toml): paste
+    # this into the existing site's block instead of using a site of its own.
+    # handle keeps the prefix (handle_path would strip it); the matcher also
+    # catches /folksonic without the slash, which tinysonic redirects.
+    #
+    # @folksonic path /folksonic /folksonic/*
+    # handle @folksonic {
+    #     reverse_proxy 127.0.0.1:4534 {
+    #         flush_interval -1
+    #         header_up X-Forwarded-Proto {scheme}
+    #     }
     # }
 
-    reverse_proxy 127.0.0.1:4533 {
+    reverse_proxy 127.0.0.1:4534 { flush_interval -1 }
+    # }
+
+    reverse_proxy 127.0.0.1:4534 {
         # Stream audio without buffering it.
         flush_interval -1
         header_up X-Forwarded-Proto {scheme}

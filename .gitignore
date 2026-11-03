@@ -5,3 +5,4 @@
 *.db-wal
 /covers/
 /smolsonic.toml
+/dist/

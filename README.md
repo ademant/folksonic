@@ -239,7 +239,8 @@ base_path = "/folksonic"
 
 tinysonic then answers at `/folksonic/rest/…`, `/folksonic/api/…` and
 `/folksonic/login`. The reverse proxy must pass the prefix through unchanged
-(see `deploy/nginx.conf` and `deploy/Caddyfile`); it does not need to strip it.
+(see `deploy/nginx-subpath.conf` and `deploy/Caddyfile`); it does not need to
+strip it.
 Subsonic clients take the full address as the server URL. Passkeys are not
 affected, since the RP ID is the hostname only.
 
@@ -259,15 +260,49 @@ body are never written to the log.
 Example files are in [`deploy/`](deploy/):
 
 - `tinysonic.service`: systemd unit with a dedicated `tinysonic` user, a state
-  directory under `/var/lib/tinysonic`, and sandboxing. The install steps are
-  in the file header. Verify with `systemd-analyze verify deploy/tinysonic.service`.
-- `nginx.conf`: TLS reverse proxy with streaming enabled and the same 1 MiB
-  body limit as tinysonic.
-- `Caddyfile`: the same proxy with automatic certificates.
+  directory under `/var/lib/tinysonic`, and sandboxing. Verify with
+  `systemd-analyze verify deploy/tinysonic.service`.
+- `folksonic.toml`: config for serving under `/folksonic` of an existing site
+  (`base_path`, `host = "127.0.0.1"`, `port = 4534`, state under
+  `/var/lib/tinysonic`).
+- `nginx-subpath.conf`: nginx locations to `include` in an existing site's
+  `server` block, for `/folksonic` next to other services.
+- `nginx.conf`: TLS reverse proxy for a domain of its own, with streaming
+  enabled and the same 1 MiB body limit as tinysonic.
+- `Caddyfile`: the same proxy with automatic certificates, plus the subpath
+  block as a commented snippet.
 
-Set `base_url` to the public address the proxy serves (for example
-`https://music.example.com`), and keep `host` at `127.0.0.1` so only the proxy
-can reach tinysonic.
+The deploy examples use port 4534 so tinysonic can share a host with
+Navidrome, whose default is 4533 (also tinysonic's built-in default). Keep
+`host` at `127.0.0.1` so only the proxy can reach tinysonic, and set
+`base_url` to the proxy's public address.
+
+### Deploying with make
+
+The `Makefile` builds a static Linux binary and installs it over ssh. The ssh
+user needs sudo rights on the server; the server needs `curl` and systemd,
+but no Go.
+
+```bash
+make setup  HOST=me@cloud.ademant.de   # once
+make deploy HOST=me@cloud.ademant.de   # every release
+```
+
+- `setup` creates the `tinysonic` user and `/etc/tinysonic`, installs and
+  enables the unit, and installs `deploy/folksonic.toml` as
+  `/etc/tinysonic/tinysonic.toml` unless a config already exists. Edit
+  `music_dirs` and `base_url` there, then add `deploy/nginx-subpath.conf` to
+  the site's nginx config. Re-running it updates the unit and keeps the config.
+- `deploy` runs `make check` (build, vet, gofmt, tests), builds
+  `dist/tinysonic`, installs it as `/usr/local/bin/tinysonic` (keeping the old
+  one as `tinysonic.prev`), restarts the service and waits for
+  `<base_path>/rest/ping` to answer on the configured host and port. If it
+  does not, the previous binary is restored.
+- `rollback` restores `tinysonic.prev`; `status` and `logs` show the unit's
+  state and journal.
+
+Set `GOARCH=arm64` for an ARM server. The reverse proxy is never changed by
+`make`. The server-side steps are in `deploy/remote.sh`.
 
 ## Format coverage
 
