@@ -41,3 +41,54 @@ func TestStartScanRestrictedToLibrarians(t *testing.T) {
 		t.Fatalf("librarian refused: %s", body)
 	}
 }
+
+// A role change made by the CLI applies to the next request without a restart.
+func TestSetRoleTakesEffectImmediately(t *testing.T) {
+	s := newTestState(t)
+	s.Progress = &scanner.Progress{}
+	s.MusicDirs = []string{t.TempDir()}
+	s.CoversDir = t.TempDir()
+	ctx := context.Background()
+	bob, err := users.Create(ctx, s.Pool, "bob", "pw", users.RoleUser, users.StatusActive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := func() string {
+		rec := httptest.NewRecorder()
+		s.StartScan(rec, httptest.NewRequest(http.MethodGet, "/rest/startScan?u=bob&p=pw", nil))
+		return rec.Body.String()
+	}
+	if body := call(); !strings.Contains(body, `"code":50`) {
+		t.Fatalf("user could start a scan: %s", body)
+	}
+	if err := users.SetRole(ctx, s.Pool, bob.ID, users.RoleLibrarian); err != nil {
+		t.Fatal(err)
+	}
+	if body := call(); !strings.Contains(body, `"status":"ok"`) {
+		t.Fatalf("new librarian refused: %s", body)
+	}
+}
+
+// After a rename, Subsonic sign-in works with the new name only.
+func TestRenameChangesSubsonicLogin(t *testing.T) {
+	s := newTestState(t)
+	ctx := context.Background()
+	bob, err := users.Create(ctx, s.Pool, "bobb", "pw", users.RoleUser, users.StatusActive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := users.Rename(ctx, s.Pool, bob.ID, "bob"); err != nil {
+		t.Fatal(err)
+	}
+	ping := func(name string) string {
+		rec := httptest.NewRecorder()
+		s.Ping(rec, httptest.NewRequest(http.MethodGet, "/rest/ping?u="+name+"&p=pw", nil))
+		return rec.Body.String()
+	}
+	if body := ping("bob"); !strings.Contains(body, `"status":"ok"`) {
+		t.Fatalf("new name refused: %s", body)
+	}
+	if body := ping("bobb"); !strings.Contains(body, `"code":40`) {
+		t.Fatalf("old name still accepted: %s", body)
+	}
+}

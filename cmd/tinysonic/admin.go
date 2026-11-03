@@ -70,7 +70,7 @@ func usage(fs *flag.FlagSet, synopsis string) error {
 
 func runUser(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: tinysonic user add|list|approve|disable|enable|remove|set-password")
+		return errors.New("usage: tinysonic user add|list|approve|disable|enable|remove|set-password|set-role|rename|keys|revoke-key")
 	}
 	sub, rest := args[0], args[1:]
 
@@ -109,14 +109,93 @@ func runUser(args []string) error {
 		fmt.Printf("created %s (%s, active)\n", u.Username, u.Role)
 
 	case "list":
-		all, err := users.List(ctx, pool)
+		all, err := users.ListSummaries(ctx, pool)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("%-20s %-8s %s\n", "USERNAME", "ROLE", "STATUS")
+		const row = "%-20s %-9s %-8s %-8s %-8s %-4s %s\n"
+		fmt.Printf(row, "USERNAME", "ROLE", "STATUS", "PASSWORD", "PASSKEYS", "OIDC", "KEYS")
 		for _, u := range all {
-			fmt.Printf("%-20s %-8s %s\n", u.Username, u.Role, u.Status)
+			pw := "no"
+			if u.HasPassword {
+				pw = "yes"
+			}
+			fmt.Printf(row, u.Username, u.Role, u.Status, pw,
+				strconv.Itoa(u.Passkeys), strconv.Itoa(u.OIDC), strconv.Itoa(u.ActiveKeys))
 		}
+
+	case "set-role":
+		if len(names) != 2 {
+			return usage(fs, "user set-role [-c config] <username> user|librarian")
+		}
+		u, err := users.ByName(ctx, pool, names[0])
+		if err != nil {
+			return fmt.Errorf("user %q: %w", names[0], err)
+		}
+		if err := users.SetRole(ctx, pool, u.ID, names[1]); err != nil {
+			return err
+		}
+		fmt.Printf("%s: role %s -> %s\n", u.Username, u.Role, names[1])
+
+	case "rename":
+		if len(names) != 2 {
+			return usage(fs, "user rename [-c config] <old-username> <new-username>")
+		}
+		u, err := users.ByName(ctx, pool, names[0])
+		if err != nil {
+			return fmt.Errorf("user %q: %w", names[0], err)
+		}
+		if err := users.Rename(ctx, pool, u.ID, names[1]); err != nil {
+			if errors.Is(err, users.ErrExists) {
+				return fmt.Errorf("username %q is already taken", names[1])
+			}
+			return err
+		}
+		fmt.Printf("renamed %s -> %s\n", u.Username, names[1])
+		fmt.Fprintln(os.Stderr, "note: Subsonic apps that sign in with the old username must be updated; API keys keep working.")
+
+	case "keys":
+		if len(names) != 1 {
+			return usage(fs, "user keys [-c config] <username>")
+		}
+		u, err := users.ByName(ctx, pool, names[0])
+		if err != nil {
+			return fmt.Errorf("user %q: %w", names[0], err)
+		}
+		keys, err := users.ListAllAPIKeys(ctx, pool, u.ID)
+		if err != nil {
+			return err
+		}
+		if len(keys) == 0 {
+			fmt.Printf("%s has no API keys\n", u.Username)
+			return nil
+		}
+		const row = "%-4s %-8s %-13s %-20s %-20s %-20s %s\n"
+		fmt.Printf(row, "ID", "STATE", "PREFIX", "CREATED", "LAST USED", "EXPIRES", "LABEL")
+		for _, k := range keys {
+			fmt.Printf(row, strconv.FormatInt(k.ID, 10), k.State(), k.Prefix, k.CreatedAt,
+				orDash(k.LastUsedAt), orDash(k.ExpiresAt), k.Label)
+		}
+
+	case "revoke-key":
+		if len(names) != 2 {
+			return usage(fs, "user revoke-key [-c config] <username> <key-id>")
+		}
+		u, err := users.ByName(ctx, pool, names[0])
+		if err != nil {
+			return fmt.Errorf("user %q: %w", names[0], err)
+		}
+		id, err := strconv.ParseInt(names[1], 10, 64)
+		if err != nil {
+			return fmt.Errorf("key id %q: not a number", names[1])
+		}
+		if err := users.RevokeAPIKey(ctx, pool, u.ID, id); err != nil {
+			if errors.Is(err, users.ErrNotFound) {
+				return fmt.Errorf("key %d: no active key of %s with this id (see `tinysonic user keys %s`)", id, u.Username, u.Username)
+			}
+			return err
+		}
+		fmt.Printf("%s: key %d revoked\n", u.Username, id)
 
 	case "approve", "disable", "enable", "remove", "set-password":
 		if len(names) != 1 {
@@ -236,6 +315,13 @@ func runInvite(args []string) error {
 		return fmt.Errorf("unknown invite command %q", sub)
 	}
 	return nil
+}
+
+func orDash(s sql.NullString) string {
+	if s.Valid {
+		return s.String
+	}
+	return "-"
 }
 
 // parseExpiry accepts a number of days ("7d") or a Go duration ("12h").

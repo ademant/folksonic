@@ -10,7 +10,7 @@
 #   systemctl daemon-reload && systemctl enable --now tinysonic
 #
 # Account commands run as the service user so they touch the same database:
-#   sudo -u tinysonic /usr/local/bin/tinysonic user add --admin alice -c /etc/tinysonic/tinysonic.toml
+#   sudo -u tinysonic /usr/local/bin/tinysonic user add --librarian alice -c /etc/tinysonic/tinysonic.toml
 #   sudo -u tinysonic /usr/local/bin/tinysonic pair --user alice -c /etc/tinysonic/tinysonic.toml
 
 [Unit]
