@@ -1,0 +1,27 @@
+# tinysonic config for serving under a subpath of an existing site, here
+# https://cloud.ademant.de/folksonic next to other services on the same host.
+#
+# `make setup` installs it as /etc/tinysonic/tinysonic.toml when no config
+# exists there yet. Set music_dirs and base_url, then run `make deploy`.
+# Unknown keys are an error; see smolsonic.example.toml for all keys.
+
+# Library roots, readable by the tinysonic user. Directories under /home also
+# need ProtectHome=read-only in the unit.
+music_dirs = ["/srv/music"]
+
+# Full public address including the prefix, and the prefix itself. The proxy
+# passes /folksonic through unchanged (deploy/nginx-subpath.conf).
+base_url  = "https://cloud.ademant.de/folksonic"
+base_path = "/folksonic"
+
+# Only the reverse proxy should reach tinysonic. 4534 keeps clear of
+# Navidrome's default 4533 on the same host.
+host = "127.0.0.1"
+port = 4534
+
+# Relative paths would resolve from /etc/tinysonic, which the service cannot
+# write. Keep state in the unit's StateDirectory.
+database_path = "/var/lib/tinysonic/tinysonic.db"
+covers_dir    = "/var/lib/tinysonic/covers"
+
+allow_registration = false

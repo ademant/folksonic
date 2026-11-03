@@ -1,10 +1,11 @@
 # systemd unit for tinysonic.
 #
-# Install (as root):
+# `make setup HOST=…` and `make deploy HOST=…` do these steps over ssh.
+# By hand (as root):
 #   useradd --system --home-dir /var/lib/tinysonic --shell /usr/sbin/nologin tinysonic
 #   install -m 0755 tinysonic /usr/local/bin/tinysonic
 #   install -d -m 0750 -o root -g tinysonic /etc/tinysonic
-#   install -m 0640 -o root -g tinysonic smolsonic.example.toml /etc/tinysonic/tinysonic.toml
+#   install -m 0640 -o root -g tinysonic deploy/folksonic.toml /etc/tinysonic/tinysonic.toml
 #   install -m 0644 deploy/tinysonic.service /etc/systemd/system/tinysonic.service
 #   systemctl daemon-reload && systemctl enable --now tinysonic
 #
