@@ -49,6 +49,11 @@ func authCheck(username, password, u, p, t, s string) bool {
 	if u == "" || subtle.ConstantTimeCompare([]byte(u), []byte(username)) != 1 {
 		return false
 	}
+	// A passkey-only account has no password. Without this check, p=enc: would
+	// decode to an empty string and match the empty stored value.
+	if password == "" {
+		return false
+	}
 	if t != "" && s != "" {
 		sum := md5.Sum([]byte(password + s))
 		want := hex.EncodeToString(sum[:])

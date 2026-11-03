@@ -350,6 +350,8 @@ func (s *State) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/pair/complete", s.APIPairComplete)
 	mux.HandleFunc("POST /api/passkey/register/begin", s.APIPasskeyRegisterBegin)
 	mux.HandleFunc("POST /api/passkey/register/finish", s.APIPasskeyRegisterFinish)
+	mux.HandleFunc("POST /api/register/passkey/begin", s.APIRegisterPasskeyBegin)
+	mux.HandleFunc("POST /api/register/passkey/finish", s.APIRegisterPasskeyFinish)
 	mux.HandleFunc("POST /api/passkey/login/begin", s.APIPasskeyLoginBegin)
 	mux.HandleFunc("POST /api/passkey/login/finish", s.APIPasskeyLoginFinish)
 	mux.HandleFunc("POST /api/login", s.APILogin)

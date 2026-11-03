@@ -57,7 +57,7 @@ func TestNormaliseInvite(t *testing.T) {
 func TestInviteRegistersActiveAccountOnce(t *testing.T) {
 	ctx := context.Background()
 	pool := testDB(t)
-	code, inv, err := CreateInvite(ctx, pool, RoleUser, "for bob", InviteTTL)
+	code, inv, err := CreateInvite(ctx, pool, RoleUser, "", "for bob", InviteTTL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestInviteRegistersActiveAccountOnce(t *testing.T) {
 func TestAdminInvite(t *testing.T) {
 	ctx := context.Background()
 	pool := testDB(t)
-	code, _, err := CreateInvite(ctx, pool, RoleAdmin, "", time.Hour)
+	code, _, err := CreateInvite(ctx, pool, RoleAdmin, "", "", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestInviteRejectedWhenExpiredOrRevoked(t *testing.T) {
 	ctx := context.Background()
 	pool := testDB(t)
 
-	expired, inv, err := CreateInvite(ctx, pool, RoleUser, "", time.Hour)
+	expired, inv, err := CreateInvite(ctx, pool, RoleUser, "", "", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestInviteRejectedWhenExpiredOrRevoked(t *testing.T) {
 		t.Fatalf("expired: %v, want ErrInviteInvalid", err)
 	}
 
-	revoked, inv, err := CreateInvite(ctx, pool, RoleUser, "", time.Hour)
+	revoked, inv, err := CreateInvite(ctx, pool, RoleUser, "", "", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestInviteKeptWhenUsernameTaken(t *testing.T) {
 	if _, err := Create(ctx, pool, "bob", "pw", RoleUser, StatusActive); err != nil {
 		t.Fatal(err)
 	}
-	code, _, err := CreateInvite(ctx, pool, RoleUser, "", time.Hour)
+	code, _, err := CreateInvite(ctx, pool, RoleUser, "", "", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestInviteKeptWhenUsernameTaken(t *testing.T) {
 func TestInviteConcurrentRedeemOnce(t *testing.T) {
 	ctx := context.Background()
 	pool := testDB(t)
-	code, _, err := CreateInvite(ctx, pool, RoleUser, "", time.Hour)
+	code, _, err := CreateInvite(ctx, pool, RoleUser, "", "", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,5 +181,22 @@ func TestInviteConcurrentRedeemOnce(t *testing.T) {
 	}
 	if ok != 1 {
 		t.Fatalf("%d registrations succeeded, want exactly 1", ok)
+	}
+}
+
+// A passkey-only account needs its passkey: no account may be created without a
+// verified credential.
+func TestRegisterPasskeyRequiresCredential(t *testing.T) {
+	pool := testDB(t)
+	ctx := context.Background()
+	code, _, err := CreateInvite(ctx, pool, RoleUser, "", "", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RegisterPasskey(ctx, pool, code, "ivan", []byte("0123456789abcdef"), ""); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("account created without a passkey: %v", err)
+	}
+	if _, err := InviteRoleFor(ctx, pool, code, "ivan"); err != nil {
+		t.Fatalf("invite consumed by a rejected request: %v", err)
 	}
 }

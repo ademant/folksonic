@@ -53,6 +53,9 @@ func migrate(d *sql.DB) error {
 	if err := migrateUserScope(d); err != nil {
 		return fmt.Errorf("user-scoped tables: %w", err)
 	}
+	if err := migratePasswordless(d); err != nil {
+		return fmt.Errorf("passwordless accounts: %w", err)
+	}
 	return backfillFTS(d)
 }
 
@@ -231,11 +234,12 @@ END;
 CREATE TABLE IF NOT EXISTS users (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     username    TEXT NOT NULL UNIQUE COLLATE NOCASE,
-    password    TEXT NOT NULL,
+    password    TEXT,                        -- NULL for passkey-only accounts
     role        TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
     status      TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'disabled')),
     approved_by INTEGER,
-    created_at  TEXT NOT NULL
+    created_at  TEXT NOT NULL,
+    webauthn_handle BLOB                     -- random passkey user handle; NULL uses the id
 );
 
 CREATE TABLE IF NOT EXISTS api_keys (
@@ -274,7 +278,8 @@ CREATE TABLE IF NOT EXISTS invites (
     expires_at TEXT NOT NULL,
     used_at    TEXT,
     used_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    revoked_at TEXT
+    revoked_at TEXT,
+    username   TEXT                          -- when set, only this username may redeem the code
 );
 
 CREATE TABLE IF NOT EXISTS webauthn_credentials (

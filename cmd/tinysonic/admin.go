@@ -164,6 +164,7 @@ func runInvite(args []string) error {
 	admin := fs.Bool("admin", false, "with create: the invitee becomes an administrator")
 	expires := fs.String("expires", "7d", "with create: validity, in days (7d) or a Go duration (12h)")
 	note := fs.String("note", "", "with create: who the invite is for, shown by list")
+	boundName := fs.String("username", "", "with create: only this username may redeem the code; the account is passkey-only")
 	if err := fs.Parse(reorderFlags(rest)); err != nil {
 		return err
 	}
@@ -179,7 +180,7 @@ func runInvite(args []string) error {
 	switch sub {
 	case "create":
 		if len(pos) != 0 {
-			return usage(fs, "invite create [-c config] [--expires 7d] [--admin] [--note text]")
+			return usage(fs, "invite create [-c config] [--expires 7d] [--admin] [--note text] [--username name]")
 		}
 		ttl, err := parseExpiry(*expires)
 		if err != nil {
@@ -189,11 +190,14 @@ func runInvite(args []string) error {
 		if *admin {
 			role = users.RoleAdmin
 		}
-		code, inv, err := users.CreateInvite(ctx, pool, role, *note, ttl)
+		code, inv, err := users.CreateInvite(ctx, pool, role, *boundName, *note, ttl)
 		if err != nil {
 			return err
 		}
 		fmt.Printf("invite %d (%s), valid until %s, single use\n", inv.ID, inv.Role, inv.ExpiresAt)
+		if inv.Username.Valid {
+			fmt.Printf("bound to username %q; the account is created when its passkey is registered\n", inv.Username.String)
+		}
 		fmt.Println(code)
 		if cfg.BaseURL != "" {
 			fmt.Println(strings.TrimRight(cfg.BaseURL, "/") + "/login?invite=" + code)
@@ -348,7 +352,7 @@ func readPassword(prompt string, confirm bool) (string, error) {
 // them, so `tinysonic user add alice -c cfg.toml` parses like the flags came
 // first. Go's flag package stops at the first positional argument otherwise.
 func reorderFlags(args []string) []string {
-	valueFlags := map[string]bool{"c": true, "user": true, "expires": true, "note": true}
+	valueFlags := map[string]bool{"c": true, "user": true, "expires": true, "note": true, "username": true}
 	var flags, pos []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
