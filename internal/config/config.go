@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -117,9 +118,12 @@ func (c *Config) normaliseBasePath() error {
 		return fmt.Errorf("config: base_path %q must be a plain path", c.BasePath)
 	}
 	c.BasePath = p
-	if c.BaseURL != "" && !strings.HasSuffix(strings.TrimRight(c.BaseURL, "/"), p) {
-		c.Warnings = append(c.Warnings, fmt.Sprintf(
-			"base_url %q does not end with base_path %q; pairing and clients need the full public address", c.BaseURL, p))
+	if c.BaseURL != "" {
+		u, err := url.Parse(c.BaseURL)
+		if err != nil || strings.TrimRight(u.Path, "/") != p {
+			c.Warnings = append(c.Warnings, fmt.Sprintf(
+				"base_url %q does not end with base_path %q; pairing and clients need the full public address", c.BaseURL, p))
+		}
 	}
 	return nil
 }
