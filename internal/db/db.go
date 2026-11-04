@@ -62,6 +62,9 @@ func migrate(d *sql.DB) error {
 	if err := migrateSongTagsColumn(d); err != nil {
 		return fmt.Errorf("song tags: %w", err)
 	}
+	if err := migrateIDScheme(d); err != nil {
+		return fmt.Errorf("library ids: %w", err)
+	}
 	if err := migratePasswordHash(d); err != nil {
 		return fmt.Errorf("password hashes: %w", err)
 	}

@@ -37,8 +37,11 @@ drop on any Linux/macOS/Windows host.
   inline OGG container parser for Vorbis + Opus).
 - Falls back to `cover.jpg` / `folder.jpg` / `front.jpg` next to the audio file
   if there's no embedded picture.
-- Stable IDs (`ar-…` / `al-…` / `so-…`) derived from tag content, so re-scans
-  are idempotent and clients don't lose their bookmarks.
+- Stable IDs (`ar-…` / `al-…` / `so-…`) derived from tag content with SHA-256
+  (32 hex characters), so re-scans are idempotent and clients keep their
+  bookmarks. Changing the scheme clears the library once; the next scan rebuilds
+  it, and starred items and playlist entries are removed. The current scheme is
+  recorded in the `settings` table under `id_scheme`.
 - HTTP `Range` support for proper seeking (via `http.ServeContent`).
 - Subsonic **username and password** (`u` with `p=…` or `p=enc:<hex>`) are
   supported. Subsonic token auth (`t` with `s`) is not: such requests get error
