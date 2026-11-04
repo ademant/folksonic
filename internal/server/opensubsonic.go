@@ -10,6 +10,7 @@ var baseOpenSubsonicExtensions = []J{
 	{"name": "tinysonicPaging", "versions": []int{1}},      // size/offset and X-Total-Count*, see paging.go
 	{"name": "tinysonicLibraryInfo", "versions": []int{1}}, // tinysonicLibraryInfo endpoint
 	{"name": "tinysonicMinimal", "versions": []int{1}},     // Prefer: tinysonic-minimal, see minimal.go
+	{"name": "tinysonicMeter", "versions": []int{1}},       // tinysonicMeter on songs from METER/TIME_SIGNATURE tags
 }
 
 // GetOpenSubsonicExtensions lists the extensions above. It deliberately needs no

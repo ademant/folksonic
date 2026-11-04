@@ -29,7 +29,11 @@ type State struct {
 	// (ignored_articles). Nil means DefaultIgnoredArticles.
 	IgnoredArticles []string
 	CoversDir       string
-	Progress        *scanner.Progress
+	// FFmpegPath is the configured ffmpeg for BPM calculation (ffmpeg_path).
+	FFmpegPath string
+	// jobs runs librarian background jobs (BPM calculation).
+	jobs     jobRunner
+	Progress *scanner.Progress
 
 	// BaseURL is the public address clients reach the server at; it is
 	// embedded in pairing QR codes. Empty means derive it from the request.
@@ -107,6 +111,7 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 		MusicDirs:         cfg.MusicDirs,
 		SongTags:          cfg.SongTags,
 		IgnoredArticles:   strings.Fields(cfg.IgnoredArticles),
+		FFmpegPath:        cfg.FFmpegPath,
 		CoversDir:         cfg.CoversDir,
 		Progress:          progress,
 	}
@@ -395,6 +400,11 @@ func (s *State) routes() *http.ServeMux {
 	mux.HandleFunc("DELETE /api/oidc/identities/{id}", s.APIUnlinkIdentity)
 	mux.HandleFunc("GET /login", s.ServeLoginPage)
 	mux.HandleFunc("GET /account", s.ServeAccountPage)
+	mux.HandleFunc("GET /library", s.ServeLibraryPage)
+	mux.HandleFunc("GET /api/library/stats", s.APILibraryStats)
+	mux.HandleFunc("POST /api/library/scan", s.APILibraryScan)
+	mux.HandleFunc("POST /api/library/bpm", s.APILibraryBPM)
+	mux.HandleFunc("POST /api/library/jobs/cancel", s.APILibraryCancel)
 	return mux
 }
 

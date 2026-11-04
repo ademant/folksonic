@@ -86,3 +86,45 @@ func TestMigrateSongCreated(t *testing.T) {
 	}
 	pool.Close()
 }
+
+// An existing songs table gets the loudness, meter and BPM columns and every
+// song is marked for one re-read, atomically; a second run changes nothing.
+func TestMigrateAudioColumns(t *testing.T) {
+	pool, err := Init(filepath.Join(t.TempDir(), "a.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	for _, c := range audioColumns {
+		if _, err := pool.Exec("ALTER TABLE songs DROP COLUMN " + c.name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := pool.Exec(`INSERT INTO artists (id, name, name_lower) VALUES ('ar-1','A','a');
+		INSERT INTO albums (id, title, artist, artist_id) VALUES ('al-1','B','A','ar-1');
+		INSERT INTO songs (id, path, title, artist, artist_id, album, album_id, suffix, content_type, mtime)
+		VALUES ('so-1','/m/1.opus','One','A','ar-1','B','al-1','opus','audio/ogg',1700000000)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateAudioColumns(pool); err != nil {
+		t.Fatal(err)
+	}
+	var mtime int64
+	if err := pool.QueryRow("SELECT mtime FROM songs").Scan(&mtime); err != nil || mtime != 0 {
+		t.Fatalf("song not marked for re-read: mtime %d, %v", mtime, err)
+	}
+	for _, c := range audioColumns {
+		if found, _, _ := tableColumn(pool, "songs", c.name); !found {
+			t.Fatalf("column %s missing", c.name)
+		}
+	}
+	if _, err := pool.Exec("UPDATE songs SET mtime = 5"); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrate(pool); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow("SELECT mtime FROM songs").Scan(&mtime); err != nil || mtime != 5 {
+		t.Fatalf("second migration reset mtime again: %d", mtime)
+	}
+}

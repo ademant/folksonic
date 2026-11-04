@@ -43,6 +43,10 @@ type Song struct {
 	MBID        sql.NullString
 	Tags        sql.NullString // JSON object of allowlisted file tags
 	Created     sql.NullString // when the file was first added
+	// ReplayGain in dB; BaseGain is the Opus header output gain.
+	TrackGain, AlbumGain, TrackPeak, AlbumPeak, BaseGain sql.NullFloat64
+	Meter                                                sql.NullString
+	BPM                                                  sql.NullFloat64
 }
 
 type Playlist struct {

@@ -36,6 +36,10 @@ type Config struct {
 	// artists, separated by spaces. An article ending in an apostrophe (L')
 	// matches without a following space. Load sets the default.
 	IgnoredArticles string `toml:"ignored_articles"`
+	// FFmpegPath is the ffmpeg binary used to decode audio for BPM
+	// calculation. Empty means look ffmpeg up on PATH. Without ffmpeg, BPM
+	// calculation is unavailable and everything else works.
+	FFmpegPath string `toml:"ffmpeg_path"`
 	// OIDC enables sign-in through an external identity provider. It is off
 	// unless Issuer is set; see OIDC for the rules.
 	OIDC OIDC `toml:"oidc"`

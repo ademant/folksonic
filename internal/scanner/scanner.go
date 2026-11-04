@@ -30,7 +30,12 @@ type Progress struct {
 	watchFailures atomic.Int64
 }
 
-func (p *Progress) Running() bool        { return p.running.Load() }
+func (p *Progress) Running() bool { return p.running.Load() }
+
+// Begin claims the scan slot for a caller that will run Scan in the
+// background. It returns false when a scan is already running, so two
+// requests cannot start two scans.
+func (p *Progress) Begin() bool          { return p.running.CompareAndSwap(false, true) }
 func (p *Progress) Count() int64         { return p.count.Load() }
 func (p *Progress) WatchFailures() int64 { return p.watchFailures.Load() }
 
@@ -101,6 +106,11 @@ func Scan(pool *sql.DB, roots []string, coversDir string, songTags []string, pro
 		return stats, fmt.Errorf("pruning missing songs: %w", err)
 	}
 	stats.Pruned = pruned
+	if _, err := pool.Exec(
+		"INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+		LastScanKey, time.Now().UTC().Format("2006-01-02T15:04:05Z")); err != nil {
+		log.Printf("scan: recording scan time: %v", err)
+	}
 	log.Printf("scan complete: %d scanned, %d inserted, %d updated, %d skipped, %d removed",
 		stats.Scanned, stats.Inserted, stats.Updated, stats.Skipped, stats.Pruned)
 	return stats, nil
@@ -189,6 +199,7 @@ type extracted struct {
 	TrackMBID     sql.NullString
 	AlbumMBID     sql.NullString
 	ArtistMBID    sql.NullString
+	Audio         audioTags
 }
 
 func processFile(pool *sql.DB, path, coversDir string, songTags []string) (processResult, error) {
@@ -267,11 +278,20 @@ func processFile(pool *sql.DB, path, coversDir string, songTags []string) (proce
 		yearOpt = sql.NullInt64{Int64: ex.Year, Valid: true}
 	}
 
+	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	au := ex.Audio
+	var bpmSource, bpmAt sql.NullString
+	if au.BPM.Valid {
+		bpmSource = sql.NullString{String: "tag", Valid: true}
+		bpmAt = sql.NullString{String: now, Valid: true}
+	}
 	if _, err := tx.Exec(
 		`INSERT INTO songs
 		   (id, path, title, artist, artist_id, album, album_id, genre, track_number,
-		    disc_number, year, duration_ms, bitrate, filesize, suffix, content_type, cover_art, mtime, mbid, tags, created_at)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		    disc_number, year, duration_ms, bitrate, filesize, suffix, content_type, cover_art, mtime, mbid, tags, created_at,
+		    rg_track_gain, rg_album_gain, rg_track_peak, rg_album_peak, rg_base_gain, meter,
+		    bpm, bpm_source, bpm_at)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(id) DO UPDATE SET
 		   path = excluded.path,
 		   title = excluded.title,
@@ -292,11 +312,31 @@ func processFile(pool *sql.DB, path, coversDir string, songTags []string) (proce
 		   mtime = excluded.mtime,
 		   mbid = COALESCE(excluded.mbid, songs.mbid),
 		   tags = excluded.tags,
-		   created_at = COALESCE(songs.created_at, excluded.created_at)`,
+		   created_at = COALESCE(songs.created_at, excluded.created_at),
+		   rg_track_gain = excluded.rg_track_gain,
+		   rg_album_gain = excluded.rg_album_gain,
+		   rg_track_peak = excluded.rg_track_peak,
+		   rg_album_peak = excluded.rg_album_peak,
+		   rg_base_gain = excluded.rg_base_gain,
+		   meter = excluded.meter,
+		   -- A BPM tag always wins. A calculated BPM survives a re-read while
+		   -- the audio length is unchanged (tag edits, forced re-reads), and
+		   -- is cleared when the recording changed.
+		   bpm = CASE WHEN excluded.bpm IS NOT NULL THEN excluded.bpm
+		              WHEN songs.bpm_source = 'calc' AND songs.duration_ms = excluded.duration_ms THEN songs.bpm END,
+		   bpm_source = CASE WHEN excluded.bpm IS NOT NULL THEN 'tag'
+		              WHEN songs.bpm_source = 'calc' AND songs.duration_ms = excluded.duration_ms THEN 'calc' END,
+		   bpm_confidence = CASE WHEN excluded.bpm IS NULL AND songs.bpm_source = 'calc'
+		              AND songs.duration_ms = excluded.duration_ms THEN songs.bpm_confidence END,
+		   bpm_at = CASE WHEN excluded.bpm IS NOT NULL THEN
+		                   CASE WHEN songs.bpm_source = 'tag' AND songs.bpm = excluded.bpm THEN songs.bpm_at ELSE excluded.bpm_at END
+		              WHEN songs.bpm_source = 'calc' AND songs.duration_ms = excluded.duration_ms THEN songs.bpm_at END`,
 		songID, path, ex.Title, ex.Artist, artistID, ex.Album, albumID,
 		ex.Genre, ex.Track, ex.Disc, yearOpt, ex.DurationMs, ex.Bitrate,
 		filesize, ex.Suffix, ex.ContentType, ex.CoverFilename, mtime, ex.TrackMBID, ex.Tags,
-		time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		now,
+		au.TrackGain, au.AlbumGain, au.TrackPeak, au.AlbumPeak, au.BaseGain, au.Meter,
+		au.BPM, bpmSource, bpmAt,
 	); err != nil {
 		return 0, err
 	}
@@ -360,13 +400,14 @@ func extractMetadata(path string, filesize int64, coversDir string, songTags []s
 		ex.AlbumMBID = readMBID(raw, albumMBID)
 		ex.ArtistMBID = readMBID(raw, artistMBID)
 	}
+	var meta tag.Metadata
+	if terr == nil {
+		meta = m
+	}
 	if len(songTags) > 0 {
-		var meta tag.Metadata
-		if terr == nil {
-			meta = m
-		}
 		ex.Tags = encodeSongTags(songTagValues(path, suffix, meta, allowMap(songTags)))
 	}
+	ex.Audio = readAudioTags(path, suffix, meta)
 
 	info := audioinfo.Probe(path, suffix, filesize)
 	ex.DurationMs = info.DurationMs

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/dhowden/tag"
@@ -14,6 +15,13 @@ import (
 // keeps repeated fields. Other formats use the tag library: ID3 user text frames
 // (TXXX, keyed by description) and MP4 freeform atoms.
 func songTagValues(path, suffix string, meta tag.Metadata, allow map[string]bool) map[string][]string {
+	return collectTags(path, suffix, meta, allow, false)
+}
+
+// collectTags is songTagValues; with plain set it also reads plain ID3 text
+// frames (TBPM) and MP4 atoms with string or integer values (tmpo), which
+// the built-in tag readers need but song_tags does not expose.
+func collectTags(path, suffix string, meta tag.Metadata, allow map[string]bool, plain bool) map[string][]string {
 	out := map[string][]string{}
 	add := func(name, value string) {
 		value = strings.TrimSpace(value)
@@ -45,6 +53,14 @@ func songTagValues(path, suffix string, meta tag.Metadata, allow map[string]bool
 		case []string:
 			for _, s := range v {
 				add(strings.ToUpper(k), s)
+			}
+		case string:
+			if plain {
+				add(strings.ToUpper(k), v)
+			}
+		case int:
+			if plain {
+				add(strings.ToUpper(k), strconv.Itoa(v))
 			}
 		}
 	}

@@ -9,6 +9,8 @@ Every implemented endpoint is registered at both `/rest/<name>` and
 envelope and carry `"openSubsonic": true`.
 
 Optional fields without a value are omitted rather than sent as `null`.
+Songs carry the standard `replayGain` object and `bpm` field when the files
+have the values (BPM can also be calculated on the library page).
 Song `path` is relative to its music directory, `created` is when a file was
 first added, and `getAlbumList2?type=newest` sorts by that date. See the
 README's "Response conventions".
@@ -138,4 +140,5 @@ Advertised by `getOpenSubsonicExtensions`; details in the README.
 | `tinysonicPaging` v1 | `size` (max 500) / `offset` on every list endpoint and nested list; aliases on `getSongsByGenre`, `search2/3`, `getStarred(2)` (standard parameters win); `X-Total-Count` or `X-Total-Count-Artist`/`-Album`/`-Song` on every response; `HEAD` returns the headers only; stable order with id as tie-breaker. |
 | `tinysonicLibraryInfo` v1 | Endpoint `tinysonicLibraryInfo`: `artists`, `albums`, `songs`, `duration`, `lastModified` (last library change). |
 | `tinysonicMinimal` v1 | `Prefer: tinysonic-minimal` removes optional derivable fields. Song: `parent` (kept in folder browsing), `isVideo`, `type`, `coverArt`, `path`, `suffix`. Album: `title`, `coverArt`. Artist: `coverArt`. Response header `Preference-Applied: tinysonic-minimal`; `Vary: Prefer` on all JSON responses. |
+| `tinysonicMeter` v1 | `tinysonicMeter` on songs: the text of the `METER` / `TIME_SIGNATURE` / `TIMESIGNATURE` tag, e.g. `3/4`. Kept in minimal mode. |
 | `tinysonicSongTags` v1 | `tinysonicTags` on songs, when `song_tags` is configured. |

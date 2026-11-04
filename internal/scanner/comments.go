@@ -76,6 +76,38 @@ func readFLACComments(r io.ReadSeeker) ([]vorbisComment, error) {
 // readOggComments reassembles the first two packets of an Ogg stream. The second
 // one is the comment header for both Opus ("OpusTags") and Vorbis ("\x03vorbis").
 func readOggComments(r io.Reader) ([]vorbisComment, error) {
+	packets, err := readOggHeaders(r)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case bytes.HasPrefix(packets[1], []byte("OpusTags")):
+		return parseVorbisCommentBlock(packets[1], 8)
+	case bytes.HasPrefix(packets[1], []byte("\x03vorbis")):
+		return parseVorbisCommentBlock(packets[1], 7)
+	}
+	return nil, errNoComments
+}
+
+// readOpusOutputGain returns the output gain in dB from the OpusHead packet:
+// a signed little-endian Q7.8 value at bytes 16–17. ok is false for files
+// that are not Opus.
+func readOpusOutputGain(path string) (gain float64, ok bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, false
+	}
+	defer f.Close()
+	packets, err := readOggHeaders(f)
+	if err != nil || !bytes.HasPrefix(packets[0], []byte("OpusHead")) || len(packets[0]) < 18 {
+		return 0, false
+	}
+	return float64(int16(binary.LittleEndian.Uint16(packets[0][16:18]))) / 256, true
+}
+
+// readOggHeaders reassembles the first two packets of an Ogg stream: the
+// identification header and the comment header.
+func readOggHeaders(r io.Reader) ([][]byte, error) {
 	var packets [][]byte
 	var current []byte
 	for len(packets) < 2 {
@@ -114,13 +146,7 @@ func readOggComments(r io.Reader) ([]vorbisComment, error) {
 			}
 		}
 	}
-	switch {
-	case bytes.HasPrefix(packets[1], []byte("OpusTags")):
-		return parseVorbisCommentBlock(packets[1], 8)
-	case bytes.HasPrefix(packets[1], []byte("\x03vorbis")):
-		return parseVorbisCommentBlock(packets[1], 7)
-	}
-	return nil, errNoComments
+	return packets, nil
 }
 
 // parseVorbisCommentBlock reads the Vorbis comment layout: a little-endian
