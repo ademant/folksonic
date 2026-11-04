@@ -129,6 +129,7 @@ Configuration is checked at startup:
 | `song_tags`          | File tags exposed on songs, such as `["DANCE", "USE"]`. Only these names are read. Each song then carries `tinysonicTags`, and the `tinysonicSongTags` extension is advertised. Default empty. |
 | `ffmpeg_path`        | ffmpeg binary for BPM calculation. Default: `ffmpeg` on `PATH`. Without ffmpeg, BPM calculation is unavailable and everything else works. |
 | `ignored_articles`   | Leading words skipped when indexing and sorting artists in `getArtists`/`getIndexes`, separated by spaces, and announced as `ignoredArticles`. An article ending in `'` (`L'`) matches without a following space. Default `"The El La Las Le Les Los Il L' An A Die Das Ein"`; `""` disables it. |
+| `log_level`          | Minimum level written to the log: `debug`, `info` (default), `warn` or `error`. `--log-level` overrides it. See [Logging](#logging). |
 | `[oidc]` table       | Optional single sign-on with an OpenID Connect provider: `issuer`, `client_id` and optional `client_secret`. Needs `base_url`. See [Single sign-on](#single-sign-on). Off unless `issuer` is set. |
 
 ## Roles
@@ -152,7 +153,8 @@ false for everyone.
 ## CLI
 
 ```
-tinysonic [--config FILE] [--no-scan] [--no-watch]    run the server
+tinysonic [--config FILE] [--no-scan] [--no-watch] [--log-level LEVEL]
+                                                      run the server
 
 tinysonic user add [-c FILE] [--librarian] <username>  create an active account (prompts for password)
 tinysonic user list [-c FILE]                         list accounts: role, status and sign-in methods
@@ -543,6 +545,32 @@ The deploy examples use port 4534 so tinysonic can share a host with
 Navidrome, whose default is 4533 (also tinysonic's built-in default). Keep
 `host` at `127.0.0.1` so only the proxy can reach tinysonic, and set
 `base_url` to the proxy's public address.
+
+### Logging
+
+The server logs to stderr at four levels, and `log_level` (or `--log-level`)
+sets the lowest one written:
+
+| Level   | What |
+|---------|------|
+| `debug` | Scan progress (`scan: walking <dir>`), song cache preload |
+| `info`  | One line per request, startup (`listening on`), `scan complete`, migrations, files the watcher adds, updates or removes |
+| `warn`  | Unreadable files or directories, a missing music directory, disabled passkeys, a config with a secret readable by others, BPM failures for single songs, 5xx answers |
+| `error` | Database errors, files that cannot be streamed, failed scans or watcher, startup failures |
+
+Under systemd (detected through `JOURNAL_STREAM`) each line starts with its
+syslog priority and has no timestamp of its own, so journald stores the level
+and the time:
+
+```bash
+journalctl -u tinysonic -o short-iso        # with times
+journalctl -u tinysonic -p warning          # warnings and errors only
+```
+
+Elsewhere each line starts with the local time, and every level but `info` is
+named (`2026/11/04 21:29:14 WARN …`). The startup banner is printed only when
+stdout is a terminal. Query strings are never logged, because they can carry
+credentials.
 
 ### Deploying with make
 

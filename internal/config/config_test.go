@@ -57,13 +57,47 @@ func TestAbsolutePathsUnchanged(t *testing.T) {
 
 func TestLooseFilePermissionsWarn(t *testing.T) {
 	dir := t.TempDir()
-	p := writeConfig(t, dir, "music_dirs = [\""+dir+"\"]\n", 0o644)
+	p := writeConfig(t, dir, "music_dirs = [\""+dir+"\"]\nusername = \"a\"\npassword = \"b\"\n", 0o644)
 	cfg, err := Load(p)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(cfg.Warnings) != 1 || !strings.Contains(cfg.Warnings[0], "chmod 600") {
 		t.Fatalf("want one permission warning, got %v", cfg.Warnings)
+	}
+}
+
+// Loose permissions only matter when the file holds a secret; the production
+// config (0640, no password) must not warn on every start.
+func TestLooseFilePermissionsWithoutSecretDoNotWarn(t *testing.T) {
+	dir := t.TempDir()
+	p := writeConfig(t, dir, "music_dirs = [\""+dir+"\"]\n", 0o644)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", cfg.Warnings)
+	}
+}
+
+func TestLogLevel(t *testing.T) {
+	dir := t.TempDir()
+	for body, want := range map[string]string{
+		"":                        "info",
+		"log_level = \"DEBUG\"\n": "debug",
+		"log_level = \"warn\"\n":  "warn",
+	} {
+		cfg, err := Load(writeConfig(t, dir, "music_dirs = [\""+dir+"\"]\n"+body, 0o600))
+		if err != nil {
+			t.Fatalf("%q: %v", body, err)
+		}
+		if cfg.LogLevel != want {
+			t.Errorf("%q: log level %q, want %q", body, cfg.LogLevel, want)
+		}
+	}
+	if _, err := Load(writeConfig(t, dir, "music_dirs = [\""+dir+"\"]\nlog_level = \"loud\"\n", 0o600)); err == nil {
+		t.Error("unknown log_level accepted")
 	}
 }
 

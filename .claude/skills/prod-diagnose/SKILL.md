@@ -11,12 +11,13 @@ Work from evidence: find the requests in the logs, reconstruct the timeline, the
 
 | Source | Command | Shows |
 |---|---|---|
-| Service log | `sudo journalctl -u tinysonic --since "-1h" --no-pager -o cat` | every request: method, path, status, bytes, duration; scan progress; startup |
+| Service log | `sudo journalctl -u tinysonic --since "-1h" --no-pager -o short-iso` | every request: method, path, status, bytes, duration; startup; scan summary. Lines carry no time of their own under systemd, so use `-o short-iso` (not `-o cat`) when times matter |
+| Problems only | `sudo journalctl -u tinysonic --since "-1d" --no-pager -p warning` | warnings and errors (journal priority is set per line) |
 | Apache access log | `sudo grep folksonic /var/log/apache2/access.log \| tail -n 50` | client IP, **user agent** (browser vs app, e.g. `okhttp` = Android), full query string |
 | Accounts/invites | `cd / && sudo -u tinysonic /usr/local/bin/tinysonic user list\|invite list -c /etc/tinysonic/tinysonic.toml 2>/dev/null` | states, who used which invite |
 | Database (read-only) | see below | anything else |
 
-Filter out noise: `grep -vE "scan: walking|readable by other"`.
+Scan progress (`scan: walking`) is at debug level and not logged at the default `log_level = "info"`; versions before #59 logged it, filter it with `grep -v "scan: walking"`.
 
 Read-only database queries, as the service user so file permissions don't change:
 ```bash

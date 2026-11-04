@@ -3,6 +3,9 @@ package cli
 import (
 	"flag"
 	"fmt"
+	"os"
+
+	"golang.org/x/term"
 )
 
 const Version = "0.1.0"
@@ -20,6 +23,8 @@ type Args struct {
 	ConfigPath string
 	NoScan     bool
 	NoWatch    bool
+	// LogLevel overrides the config's log_level when not empty.
+	LogLevel string
 }
 
 func Parse() Args {
@@ -28,6 +33,7 @@ func Parse() Args {
 	flag.StringVar(&a.ConfigPath, "c", "smolsonic.toml", "Path to the TOML config file (shorthand)")
 	flag.BoolVar(&a.NoScan, "no-scan", false, "Skip the startup library scan")
 	flag.BoolVar(&a.NoWatch, "no-watch", false, "Disable the filesystem watcher that keeps the library in sync")
+	flag.StringVar(&a.LogLevel, "log-level", "", "Minimum log level: debug, info, warn or error (overrides log_level in the config)")
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(),
 			"tinysonic %s — a tiny Subsonic-compatible music server\n\n"+
@@ -39,7 +45,13 @@ func Parse() Args {
 	return a
 }
 
+// PrintBanner prints the startup banner to stdout when stdout is a terminal.
+// Under systemd or with output redirected it prints nothing: the escape codes
+// would only clutter the log, and "listening on" is logged anyway.
 func PrintBanner(host string, port int, musicDirs []string) {
+	if !term.IsTerminal(int(os.Stdout.Fd())) {
+		return
+	}
 	const (
 		hotPink        = "\x1b[1;38;2;255;42;109m"
 		electricCyan   = "\x1b[1;38;2;5;217;232m"

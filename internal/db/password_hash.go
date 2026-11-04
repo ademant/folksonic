@@ -3,8 +3,8 @@ package db
 import (
 	"database/sql"
 	"fmt"
-	"log"
 
+	"github.com/tsirysndr/tinysonic/internal/logging"
 	"github.com/tsirysndr/tinysonic/internal/passwords"
 )
 
@@ -59,7 +59,7 @@ func migratePasswordHash(d *sql.DB) error {
 		}
 	}
 	if len(todo) > 0 {
-		log.Printf("passwords: hashed %d stored password(s) and removed the plaintext", len(todo))
+		logging.Infof("passwords: hashed %d stored password(s) and removed the plaintext", len(todo))
 	}
 	return nil
 }

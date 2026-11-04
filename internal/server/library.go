@@ -5,12 +5,12 @@ import (
 	"database/sql"
 	_ "embed"
 	"errors"
-	"log"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/tsirysndr/tinysonic/internal/bpm"
+	"github.com/tsirysndr/tinysonic/internal/logging"
 	"github.com/tsirysndr/tinysonic/internal/scanner"
 	"github.com/tsirysndr/tinysonic/internal/users"
 )
@@ -159,7 +159,7 @@ func (s *State) runBPM(ctx context.Context, ffmpeg string, todo []bpmCandidate) 
 		if updated > 0 {
 			markLibraryModified(s.Pool)
 		}
-		log.Printf("bpm: finished, %d updated", updated)
+		logging.Infof("bpm: finished, %d updated", updated)
 	}()
 	for _, c := range todo {
 		if ctx.Err() != nil {
@@ -192,13 +192,13 @@ func (s *State) analyseOne(ctx context.Context, ffmpeg string, c bpmCandidate) b
 	samples, err := bpm.Decode(tctx, ffmpeg, c.path, float64(c.durationMs)/1000)
 	if err != nil {
 		if ctx.Err() == nil {
-			log.Printf("bpm %s: %v", c.id, err)
+			logging.Warnf("bpm %s: %v", c.id, err)
 		}
 		return bpmFailed
 	}
 	tempo, conf, err := bpm.Estimate(samples)
 	if err != nil {
-		log.Printf("bpm %s: %v", c.id, err)
+		logging.Warnf("bpm %s: %v", c.id, err)
 		return bpmFailed
 	}
 	// The condition keeps tag values safe if a scan added one meanwhile.
@@ -275,7 +275,7 @@ func (s *State) APILibraryScan(w http.ResponseWriter, r *http.Request) {
 	}
 	go func() {
 		if _, err := scanner.Scan(s.Pool, s.MusicDirs, s.CoversDir, s.SongTags, s.Progress); err != nil {
-			log.Printf("scan: %v", err)
+			logging.Errorf("scan: %v", err)
 		}
 	}()
 	writeJSON(w, http.StatusAccepted, J{"status": "started"})

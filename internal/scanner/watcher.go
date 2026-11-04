@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +11,8 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+
+	"github.com/tsirysndr/tinysonic/internal/logging"
 )
 
 // watchDebounce is how long we wait after the last Create/Write event for a
@@ -32,7 +33,7 @@ func Watch(ctx context.Context, pool *sql.DB, roots []string, coversDir string, 
 	for _, root := range roots {
 		progress.watchFailures.Add(int64(addRecursive(w, root)))
 	}
-	log.Printf("watch: monitoring %d music director(ies) for changes (%d directories not watched)", len(roots), progress.WatchFailures())
+	logging.Infof("watch: monitoring %d music director(ies) for changes (%d directories not watched)", len(roots), progress.WatchFailures())
 
 	d := newDebouncer(watchDebounce)
 	defer d.stopAll()
@@ -45,7 +46,7 @@ func Watch(ctx context.Context, pool *sql.DB, roots []string, coversDir string, 
 			if !ok {
 				return nil
 			}
-			log.Printf("watch error: %v", err)
+			logging.Errorf("watch error: %v", err)
 		case ev, ok := <-w.Events:
 			if !ok {
 				return nil
@@ -84,14 +85,14 @@ func handleEvent(w *fsnotify.Watcher, pool *sql.DB, coversDir string, songTags [
 		// Try the single-song path first, then a prefix sweep in case a whole
 		// directory disappeared without per-file events.
 		if err := DeletePath(pool, ev.Name); err != nil {
-			log.Printf("watch delete %s: %v", ev.Name, err)
+			logging.Errorf("watch delete %s: %v", ev.Name, err)
 		}
 		// A file cannot contain songs, so the directory sweep is only needed
 		// for paths that are not audio files. This avoids a full-table LIKE
 		// scan on every removed audio file.
 		if !hasAudioExt(ev.Name) {
 			if err := deletePrefix(pool, ev.Name); err != nil {
-				log.Printf("watch delete prefix %s: %v", ev.Name, err)
+				logging.Errorf("watch delete prefix %s: %v", ev.Name, err)
 			}
 		}
 	}
@@ -104,14 +105,14 @@ func runProcess(pool *sql.DB, coversDir string, songTags []string, path string) 
 	}
 	res, err := processFile(pool, path, coversDir, songTags)
 	if err != nil {
-		log.Printf("watch process %s: %v", path, err)
+		logging.Warnf("watch process %s: %v", path, err)
 		return
 	}
 	switch res {
 	case resultInserted:
-		log.Printf("watch: added %s", path)
+		logging.Infof("watch: added %s", path)
 	case resultUpdated:
-		log.Printf("watch: updated %s", path)
+		logging.Infof("watch: updated %s", path)
 	}
 }
 
@@ -124,7 +125,7 @@ func addRecursive(w *fsnotify.Watcher, root string) int {
 	_ = filepath.WalkDir(root, func(path string, dirEntry os.DirEntry, err error) error {
 		if err != nil {
 			// Don't abort the whole walk on a single unreadable dir.
-			log.Printf("watch walk %s: %v", path, err)
+			logging.Warnf("watch walk %s: %v", path, err)
 			failures++
 			return nil
 		}
@@ -132,7 +133,7 @@ func addRecursive(w *fsnotify.Watcher, root string) int {
 			return nil
 		}
 		if err := w.Add(path); err != nil {
-			log.Printf("watch add %s: %v", path, err)
+			logging.Warnf("watch add %s: %v", path, err)
 			failures++
 		}
 		return nil
@@ -184,7 +185,7 @@ func DeletePath(pool *sql.DB, path string) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	log.Printf("watch: removed %s from library", path)
+	logging.Infof("watch: removed %s from library", path)
 	return nil
 }
 
@@ -230,7 +231,7 @@ func deletePrefix(pool *sql.DB, prefix string) error {
 	}
 	for _, p := range paths {
 		if err := DeletePath(pool, p); err != nil {
-			log.Printf("watch delete %s: %v", p, err)
+			logging.Errorf("watch delete %s: %v", p, err)
 		}
 	}
 	return nil

@@ -70,6 +70,7 @@ Copy `smolsonic.example.toml` to `smolsonic.toml` for local testing. Don't commi
 | `internal/server/webauthn.go` | Passkey (WebAuthn) registration and sign-in |
 | `internal/server/library.go` | Librarian library page (`/library`, `static/library.html`), `/api/library/*`, BPM job runner |
 | `internal/server/paging.go`, `minimal.go` | `tinysonicPaging` / `tinysonicLibraryInfo` and `tinysonicMinimal` vendor extensions |
+| `internal/logging/` | Leveled logging (`log/slog` handler, `log_level`), journald priority prefixes |
 | `internal/bpm/` | Tempo estimation (pure Go) and ffmpeg decoding for BPM calculation |
 | `internal/server/login.go` | Password sign-in and the `/login` page (`static/login.html`) |
 | `internal/users/` | Accounts, API keys, invitation codes, pairing tokens, sessions, passkey storage |

@@ -5,7 +5,7 @@ description: Manage accounts and invitations on the production tinysonic/folkson
 
 # Accounts and invitations on cloud.ademant.de
 
-The CLI works directly on the production database, so run it as the service user with the production config. Run it from `/` (the service user cannot read the repo directory) and drop stderr, which only carries the known false "holds a password" warning:
+The CLI works directly on the production database, so run it as the service user with the production config. Run it from `/` (the service user cannot read the repo directory) and drop stderr, which only carries config warnings (before #59 a false "holds a password" warning on every call):
 
 ```bash
 cd / && sudo -u tinysonic /usr/local/bin/tinysonic <command> -c /etc/tinysonic/tinysonic.toml 2>/dev/null

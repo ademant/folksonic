@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -15,6 +15,7 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 
 	"github.com/tsirysndr/tinysonic/internal/config"
+	"github.com/tsirysndr/tinysonic/internal/logging"
 	"github.com/tsirysndr/tinysonic/internal/scanner"
 	"github.com/tsirysndr/tinysonic/internal/users"
 )
@@ -87,7 +88,7 @@ func (s *State) evictSong(id string) { s.songCache.Delete(id) }
 func (s *State) preloadSongs(ctx context.Context) {
 	rows, err := s.Pool.QueryContext(ctx, "SELECT id, path, content_type FROM songs")
 	if err != nil {
-		log.Printf("song cache preload: %v", err)
+		logging.Errorf("song cache preload: %v", err)
 		return
 	}
 	defer rows.Close()
@@ -100,7 +101,7 @@ func (s *State) preloadSongs(ctx context.Context) {
 		s.songCache.Store(id, songRef{Path: path, ContentType: ct})
 		n++
 	}
-	log.Printf("song cache: %d entries preloaded", n)
+	logging.Debugf("song cache: %d entries preloaded", n)
 }
 
 func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scanner.Progress) error {
@@ -122,7 +123,7 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 	// and API-key access keep working.
 	wa, err := newWebAuthn(cfg.BaseURL)
 	if err != nil {
-		log.Printf("warning: passkeys disabled: %v", err)
+		logging.Warnf("passkeys disabled: %v", err)
 	}
 	s.webAuthn = wa
 	s.ceremonies = &ceremonyStore{m: map[string]ceremony{}}
@@ -137,6 +138,7 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 		Addr:              addr,
 		Handler:           requestLogger(corsMiddleware(limitBody(handler))),
 		ReadHeaderTimeout: 15 * time.Second,
+		ErrorLog:          logging.StdLogger(slog.LevelWarn),
 	}
 
 	go func() {
@@ -146,7 +148,7 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 		_ = srv.Shutdown(shutdownCtx)
 	}()
 
-	log.Printf("listening on %s", addr)
+	logging.Infof("listening on %s", addr)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return err
 	}
@@ -182,7 +184,7 @@ func limitBody(h http.Handler) http.Handler {
 }
 
 // requestLogger emits one log line per request: method, path, status, bytes,
-// duration. Wraps the inner handler so middleware ordering matters — keep this
+// duration, at info level (warn for a 5xx). Wraps the inner handler so middleware ordering matters — keep this
 // outermost so the recorded status reflects what the client sees.
 func requestLogger(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -195,7 +197,13 @@ func requestLogger(h http.Handler) http.Handler {
 		if rw.Header().Get("Preference-Applied") != "" {
 			mode = " minimal"
 		}
-		log.Printf("%s %s %d %dB %s%s", r.Method, r.URL.Path, rw.status, rw.bytes, time.Since(start), mode)
+		// A 5xx is a server fault; everything else, 4xx included, is normal
+		// traffic.
+		level := slog.LevelInfo
+		if rw.status >= 500 {
+			level = slog.LevelWarn
+		}
+		logging.Logf(level, "%s %s %d %dB %s%s", r.Method, r.URL.Path, rw.status, rw.bytes, time.Since(start), mode)
 	})
 }
 
