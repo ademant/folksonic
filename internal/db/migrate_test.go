@@ -7,7 +7,8 @@ import (
 )
 
 // A database created before accounts existed has starred(id PRIMARY KEY) and
-// playlists without an owner. Init must upgrade it in place and keep the rows.
+// playlists without an owner. Init must upgrade it in place: playlists keep
+// their rows, and stars are cleared because their IDs use the old scheme.
 func TestMigratesLegacyStarredAndPlaylists(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "old.db")
 	raw, err := sql.Open("sqlite3", "file:"+path)
@@ -33,12 +34,14 @@ func TestMigratesLegacyStarredAndPlaylists(t *testing.T) {
 	}
 	defer pool.Close()
 
+	// The star's ID is in the old MD5 scheme. The ID-scheme reset removes it,
+	// since the library is rebuilt under the new IDs (see migrateIDScheme).
 	var stars int
-	if err := pool.QueryRow("SELECT COUNT(*) FROM starred WHERE id = 'al-old' AND user_id IS NULL").Scan(&stars); err != nil {
+	if err := pool.QueryRow("SELECT COUNT(*) FROM starred WHERE id = 'al-old'").Scan(&stars); err != nil {
 		t.Fatal(err)
 	}
-	if stars != 1 {
-		t.Fatalf("legacy star not kept with NULL owner: %d", stars)
+	if stars != 0 {
+		t.Fatalf("star with an old-scheme ID kept after the reset: %d", stars)
 	}
 	var pls int
 	if err := pool.QueryRow("SELECT COUNT(*) FROM playlists WHERE id = 'pl-old' AND owner_id IS NULL").Scan(&pls); err != nil {

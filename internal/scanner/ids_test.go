@@ -13,8 +13,20 @@ func TestIDsAreStableAndPrefixed(t *testing.T) {
 		t.Error("song ID must depend on path")
 	}
 	for _, id := range []string{ArtistID("x"), AlbumID("x", "y", 0), SongID("/x")} {
-		if len(id) != 3+16 {
+		if len(id) != 3+32 {
 			t.Errorf("unexpected ID length for %q", id)
 		}
+	}
+}
+
+// IDs are bookmarks for clients, so their exact values are pinned. The
+// expected values are the first 32 hex characters of the SHA-256 of the
+// input, computed outside the Go code.
+func TestIDsAreFixedValues(t *testing.T) {
+	if got, want := SongID("/x"), "so-b3d1db318671a024a7e4b433389f8820"; got != want {
+		t.Errorf("SongID = %q, want %q", got, want)
+	}
+	if got, want := ArtistID("Radiohead"), "ar-3f3371c759cd4d39b5d9ac571fdde100"; got != want {
+		t.Errorf("ArtistID = %q, want %q", got, want)
 	}
 }
