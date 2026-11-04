@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/tsirysndr/tinysonic/internal/passwords"
 )
 
 // InviteTTL is how long an invitation code stays valid unless the admin
@@ -175,8 +177,9 @@ func RegisterWithInvite(ctx context.Context, db *sql.DB, code, username, passwor
 	if err := ValidUsername(username); err != nil {
 		return User{}, err
 	}
-	if password == "" {
-		return User{}, fmt.Errorf("%w: password must not be empty", ErrInvalid)
+	hash, err := passwords.Hash(password)
+	if err != nil {
+		return User{}, fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
 	body, ok := normaliseInvite(code)
 	if !ok {
@@ -214,8 +217,8 @@ func RegisterWithInvite(ctx context.Context, db *sql.DB, code, username, passwor
 		return User{}, ErrExists
 	}
 	res, err := tx.ExecContext(ctx,
-		`INSERT INTO users (username, password, role, status, created_at) VALUES (?, ?, ?, ?, ?)`,
-		username, password, role, StatusActive, now)
+		`INSERT INTO users (username, password_hash, role, status, created_at) VALUES (?, ?, ?, ?, ?)`,
+		username, hash, role, StatusActive, now)
 	if err != nil {
 		return User{}, err
 	}

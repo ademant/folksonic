@@ -317,7 +317,7 @@ func TestOIDCInviteCreatesLinkedAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dave.Password != "" {
+	if dave.PasswordHash != "" {
 		t.Fatal("OIDC account has a password")
 	}
 	if linked, err := users.UserByOIDC(ctx, s.Pool, s.sso.cfg.Issuer, "subject-dave"); err != nil || linked.ID != dave.ID {

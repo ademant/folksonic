@@ -76,8 +76,8 @@ func TestPasskeyInviteCreatesPasswordlessAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if carol.Password != "" || carol.Status != users.StatusActive || len(carol.WebAuthnHandle) != 16 {
-		t.Fatalf("unexpected account: password=%q status=%s handle=%d bytes", carol.Password, carol.Status, len(carol.WebAuthnHandle))
+	if carol.PasswordHash != "" || carol.Status != users.StatusActive || len(carol.WebAuthnHandle) != 16 {
+		t.Fatalf("unexpected account: hash=%q status=%s handle=%d bytes", carol.PasswordHash, carol.Status, len(carol.WebAuthnHandle))
 	}
 	if keys, err := users.ListPasskeys(ctx, s.Pool, carol.ID); err != nil || len(keys) != 1 {
 		t.Fatalf("passkey not stored: %v %d", err, len(keys))
@@ -155,13 +155,10 @@ func TestPasswordlessAccountCannotUsePassword(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("empty password login: status %d", rec.Code)
 	}
-	if authCheck("hank", "", "hank", "enc:", "", "") {
+	if authCheck("hank", "", "hank", "enc:") {
 		t.Fatal("p=enc: (empty) accepted for a passwordless account")
 	}
-	if authCheck("hank", "", "hank", "", "", "") {
+	if authCheck("hank", "", "hank", "") {
 		t.Fatal("empty p accepted for a passwordless account")
-	}
-	if authCheck("hank", "", "hank", "", "d41d8cd98f00b204e9800998ecf8427e", "s") {
-		t.Fatal("empty token accepted for a passwordless account")
 	}
 }

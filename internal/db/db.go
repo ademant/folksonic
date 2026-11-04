@@ -62,6 +62,9 @@ func migrate(d *sql.DB) error {
 	if err := migrateSongTagsColumn(d); err != nil {
 		return fmt.Errorf("song tags: %w", err)
 	}
+	if err := migratePasswordHash(d); err != nil {
+		return fmt.Errorf("password hashes: %w", err)
+	}
 	if err := migratePasskeyLabel(d); err != nil {
 		return fmt.Errorf("passkey labels: %w", err)
 	}
@@ -269,7 +272,8 @@ END;
 CREATE TABLE IF NOT EXISTS users (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     username    TEXT NOT NULL UNIQUE COLLATE NOCASE,
-    password    TEXT,                        -- NULL for passkey-only accounts
+    password    TEXT,                        -- legacy plaintext; always NULL after migratePasswordHash
+    password_hash TEXT,                      -- argon2id encoding; NULL for passkey-only accounts
     role        TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('librarian', 'user')),
     status      TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'disabled')),
     approved_by INTEGER,

@@ -98,7 +98,7 @@ type Summary struct {
 // List.
 func ListSummaries(ctx context.Context, db *sql.DB) ([]Summary, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT u.id, u.username, u.password, u.role, u.status, u.created_at, u.webauthn_handle,
+		SELECT u.id, u.username, u.password_hash, u.role, u.status, u.created_at, u.webauthn_handle,
 		       (SELECT COUNT(*) FROM webauthn_credentials w WHERE w.user_id = u.id),
 		       (SELECT COUNT(*) FROM oidc_identities o WHERE o.user_id = u.id),
 		       (SELECT COUNT(*) FROM api_keys k WHERE k.user_id = u.id AND k.revoked_at IS NULL
@@ -116,7 +116,7 @@ func ListSummaries(ctx context.Context, db *sql.DB) ([]Summary, error) {
 			&s.Passkeys, &s.OIDC, &s.ActiveKeys); err != nil {
 			return nil, err
 		}
-		s.Password = pw.String
+		s.PasswordHash = pw.String
 		s.HasPassword = pw.String != ""
 		out = append(out, s)
 	}

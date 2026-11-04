@@ -165,7 +165,7 @@ func SignInMethods(ctx context.Context, db *sql.DB, userID int64) (int, error) {
 	err := db.QueryRowContext(ctx, `
 		SELECT (SELECT COUNT(*) FROM webauthn_credentials WHERE user_id = ?)
 		     + (SELECT COUNT(*) FROM oidc_identities WHERE user_id = ?)
-		     + (SELECT CASE WHEN password IS NULL OR password = '' THEN 0 ELSE 1 END FROM users WHERE id = ?)`,
+		     + (SELECT CASE WHEN password_hash IS NULL OR password_hash = '' THEN 0 ELSE 1 END FROM users WHERE id = ?)`,
 		userID, userID, userID).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("counting sign-in methods: %w", err)
