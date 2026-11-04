@@ -29,7 +29,7 @@ Check column names with `pragma table_info(<table>)` first; the schema changes b
 
 ## Reading the logs
 
-- **Subsonic endpoints (`/rest/*`) answer HTTP 200 even when authentication fails.** The error is inside the JSON body (`"status":"failed"`, code 40). A 200 in the log does not mean success; compare the body size to a known-good and a known-unauthenticated response, or better, reproduce.
+- **Subsonic endpoints (`/rest/*`) answer HTTP 200 even when authentication fails.** The error is inside the JSON body (`"status":"failed"`, code 40). Since #57 the request line ends with `err=<code>` for such answers, and with `client=<c>` and `user=<name>` when known, so the service log alone shows which app and account made a request. In logs from before #57, compare the body size to a known-good and a known-unauthenticated response, or match times against the Apache log for the user agent.
 - **`/api/*` uses real status codes.** 401 = not signed in or token invalid/used; 403 = forbidden or invalid invite; 409 = name taken.
 - **~200 ms on a 401/403** is the deliberate delay on failed sign-in or invalid invite/pairing codes, i.e. a rejected credential rather than a server error.
 - **Pairing flow**: browser `POST /api/pair/qr` → app `POST /api/pair/complete` (200 = key issued) → app's first `/rest/ping?apiKey=…`. Tokens are single use, so a second `pair/complete` with the same token is a 401 by design (DanceSonic has sent duplicates).

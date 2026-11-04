@@ -184,13 +184,19 @@ func limitBody(h http.Handler) http.Handler {
 }
 
 // requestLogger emits one log line per request: method, path, status, bytes,
-// duration, at info level (warn for a 5xx). Wraps the inner handler so middleware ordering matters — keep this
-// outermost so the recorded status reflects what the client sees.
+// duration, then client, user and Subsonic error code when known (see
+// reqLog), at info level (warn for a 5xx). Middleware ordering matters: keep
+// this outermost so the recorded status reflects what the client sees.
 func requestLogger(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		rw := &recordedResponse{ResponseWriter: w, status: http.StatusOK}
-		h.ServeHTTP(rw, r)
+		rl := &reqLog{}
+		rw := &recordedResponse{ResponseWriter: w, status: http.StatusOK, log: rl}
+		h.ServeHTTP(rw, withReqLog(r, rl))
+		if rl.client == "" {
+			// The request did not authenticate (or failed before it did).
+			rl.client = r.URL.Query().Get("c")
+		}
 		// Path only: the query string carries p=, t= and s= credentials and
 		// must never reach the log.
 		mode := ""
@@ -203,7 +209,7 @@ func requestLogger(h http.Handler) http.Handler {
 		if rw.status >= 500 {
 			level = slog.LevelWarn
 		}
-		logging.Logf(level, "%s %s %d %dB %s%s", r.Method, r.URL.Path, rw.status, rw.bytes, time.Since(start), mode)
+		logging.Logf(level, "%s %s %d %dB %s%s%s", r.Method, r.URL.Path, rw.status, rw.bytes, time.Since(start), mode, rl.fields())
 	})
 }
 
@@ -212,6 +218,7 @@ type recordedResponse struct {
 	status      int
 	bytes       int64
 	wroteHeader bool
+	log         *reqLog
 }
 
 func (r *recordedResponse) WriteHeader(s int) {

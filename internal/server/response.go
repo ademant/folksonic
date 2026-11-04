@@ -30,6 +30,7 @@ func writeOK(w http.ResponseWriter, payload J) {
 }
 
 func writeError(w http.ResponseWriter, code int, message string) {
+	noteError(w, code)
 	body := J{
 		"status":       "failed",
 		"version":      apiVersion,
