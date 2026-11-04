@@ -77,6 +77,9 @@ func migrate(d *sql.DB) error {
 	if err := migrateAudioColumns(d); err != nil {
 		return fmt.Errorf("loudness, meter and bpm columns: %w", err)
 	}
+	if err := migrateChangeFeed(d); err != nil {
+		return fmt.Errorf("change feed: %w", err)
+	}
 	return backfillFTS(d)
 }
 

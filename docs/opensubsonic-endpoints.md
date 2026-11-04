@@ -15,7 +15,7 @@ Song `path` is relative to its music directory, `created` is when a file was
 first added, and `getAlbumList2?type=newest` sorts by that date. See the
 README's "Response conventions".
 
-## Implemented (43)
+## Implemented (44)
 
 Endpoints marked *stub* return the expected shape with minimal content. They
 make no Last.fm or other external lookups.
@@ -59,6 +59,7 @@ make no Last.fm or other external lookups.
 
 **tinysonic vendor extensions** (see below)
 - `tinysonicLibraryInfo`
+- `getLibraryChanges` (extension tinysonicLibraryChanges)
 
 **Artist and album information** (stubs)
 - `getArtistInfo`, `getArtistInfo2`
@@ -140,5 +141,6 @@ Advertised by `getOpenSubsonicExtensions`; details in the README.
 | `tinysonicPaging` v1 | `size` (max 500) / `offset` on every list endpoint and nested list; aliases on `getSongsByGenre`, `search2/3`, `getStarred(2)` (standard parameters win); `X-Total-Count` or `X-Total-Count-Artist`/`-Album`/`-Song` on every response; `HEAD` returns the headers only; stable order with id as tie-breaker. |
 | `tinysonicLibraryInfo` v1 | Endpoint `tinysonicLibraryInfo`: `artists`, `albums`, `songs`, `duration`, `lastModified` (last library change). |
 | `tinysonicMinimal` v1 | `Prefer: tinysonic-minimal` removes optional derivable fields. Song: `parent` (kept in folder browsing), `isVideo`, `type`, `coverArt`, `path`, `suffix`. Album: `title`, `coverArt`. Artist: `coverArt`. Response header `Preference-Applied: tinysonic-minimal`; `Vary: Prefer` on all JSON responses. |
+| `tinysonicLibraryChanges` v1 | Endpoint `getLibraryChanges?since=<ms>`: ids of artists, albums, songs, playlists and starred items changed since `since` (`{id, updated}`), and `deleted` tombstones (`{type, id, deleted}`), kept 90 days. `full: true` when `since` is missing or older than the floor, or the library was reset. `size` and `cursor` page one snapshot. Playlists and starred items are per account. `serverTime` lags the clock by 2 s. |
 | `tinysonicMeter` v1 | `tinysonicMeter` on songs: the text of the `METER` / `TIME_SIGNATURE` / `TIMESIGNATURE` tag, e.g. `3/4`. Kept in minimal mode. |
 | `tinysonicSongTags` v1 | `tinysonicTags` on songs, when `song_tags` is configured. |

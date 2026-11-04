@@ -14,6 +14,7 @@ func TestMigrationAddsMBIDAndForcesRescan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	dropChangeTriggers(t, d)
 	stmts := []string{
 		"INSERT INTO artists (id, name, name_lower) VALUES ('ar-1', 'A', 'a')",
 		"INSERT INTO albums (id, title, artist, artist_id) VALUES ('al-1', 'B', 'A', 'ar-1')",

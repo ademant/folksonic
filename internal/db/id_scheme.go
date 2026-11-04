@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"log"
+	"time"
 )
 
 // idScheme names how library IDs are derived. The stored value is compared
@@ -48,6 +49,11 @@ func migrateIDScheme(d *sql.DB) error {
 	if _, err := tx.Exec(
 		"INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
 		idSchemeKey, idScheme); err != nil {
+		return err
+	}
+	// Every client's sync point predates the reset, so the change feed must
+	// tell them to rebuild rather than apply changes to IDs that are gone.
+	if err := raiseChangeFloor(tx, time.Now().UnixMilli()); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {

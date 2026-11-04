@@ -319,6 +319,7 @@ func (s *State) routes() *http.ServeMux {
 	register("getScanStatus", s.GetScanStatus)
 	register("startScan", s.StartScan)
 	register("tinysonicLibraryInfo", s.TinysonicLibraryInfo)
+	register("getLibraryChanges", s.GetLibraryChanges)
 
 	// Library — tag browsing
 	register("getArtists", s.GetArtists)

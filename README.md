@@ -239,7 +239,7 @@ without a manual rescan.
 **OpenSubsonic** — responses carry `"openSubsonic": true`.
 `getOpenSubsonicExtensions` lists the extensions the server implements:
 `apiKeyAuthentication`, `formPost`, the vendor extensions `tinysonicPaging`,
-`tinysonicLibraryInfo`, `tinysonicMinimal` and `tinysonicMeter` (below), plus `tinysonicSongTags`
+`tinysonicLibraryInfo`, `tinysonicLibraryChanges`, `tinysonicMinimal` and `tinysonicMeter` (below), plus `tinysonicSongTags`
 when `song_tags` is set. It needs no sign-in.
 
 **Song tags (vendor extension `tinysonicSongTags`)** — with `song_tags` set,
@@ -269,6 +269,25 @@ capped, so existing clients that fetch everything at once keep working.
 `duration` in seconds and `lastModified`, the time of the last change a scan or
 the watcher made. A client can compare it with its last sync and skip
 unchanged libraries with one small request.
+
+**Change feed (vendor extension `tinysonicLibraryChanges`)** —
+`GET /rest/getLibraryChanges?since=<ms>` lists what changed since the previous
+answer. Send the `serverTime` of the last answer as `since`; leave it out, or
+send 0, for the whole library. The answer has `artists`, `albums`, `songs` and
+`playlists`, each `{id, updated}`, and `starred`, each `{id, type, updated}`
+where `type` is `artist`, `album` or `song`. `deleted` holds `{type, id, deleted}`
+for removals, with `type` one of `artist`, `album`, `song`, `playlist` or
+`starred`. The feed lists ids only: the client fetches changed items with the
+usual endpoints. A tag change to a song also marks its album and artist, and a
+playlist changes when its entries are added, removed or reordered. Playlists
+and starred items are the caller's own; `deleted` covers them the same way.
+Removals are kept for 90 days. If `since` is older than that, or the library
+was reset, the answer has `full: true`: the client should discard its copy and
+rebuild it from the answer. With `size` (1–500) the answer comes in pages linked
+by `nextCursor`; pass it back as `cursor` to get the next page of the same
+snapshot. `serverTime` lags the clock by 2 seconds, so a change committed just
+after a sync is returned by the next one. Authentication is as for every
+endpoint; token auth (`t` with `s`) gets error 42.
 
 **Minimal responses (vendor extension `tinysonicMinimal`)** — with the request
 header `Prefer: tinysonic-minimal` (RFC 7240), objects omit optional fields that
@@ -331,6 +350,8 @@ under F); names themselves are unchanged.
 **Genres** — `getGenres`, `getSongsByGenre`
 
 **Lists** — `getRandomSongs`, `getStarred2`, `getStarred` (alias)
+
+**Change feed** — `getLibraryChanges` (see *Change feed* above)
 
 **Playback** — `stream`, `download`, `getCoverArt`, `scrobble`,
 `getNowPlaying`, `updateNowPlaying`
