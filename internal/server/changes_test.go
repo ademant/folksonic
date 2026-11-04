@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"sort"
 	"strconv"
@@ -331,5 +333,131 @@ func TestLibraryChangesRejectsBadCursorAndSince(t *testing.T) {
 		if lc, body := changesCall(t, s, form); lc != nil || !strings.Contains(body, `"status":"failed"`) {
 			t.Errorf("%v: want a failed status, got %s", extra, body)
 		}
+	}
+}
+
+// itemOf returns the item of the entry with the given id in one list.
+func itemOf(t *testing.T, lc map[string]any, key, id string) map[string]any {
+	t.Helper()
+	arr, _ := lc[key].([]any)
+	for _, x := range arr {
+		e := x.(map[string]any)
+		if e["id"] == id {
+			item, _ := e["item"].(map[string]any)
+			return item
+		}
+	}
+	t.Fatalf("no %s entry %s in %v", key, id, lc[key])
+	return nil
+}
+
+func TestLibraryChangesIncludeItems(t *testing.T) {
+	s := feedState(t)
+	seedFeed(t, s, 2)
+	auth := url.Values{"u": {"admin"}, "p": {"s3cret"}}
+
+	// Without include, entries stay {id, updated}.
+	lc, _ := changesCall(t, s, auth)
+	if item := itemOf(t, lc, "songs", "so-1"); item != nil {
+		t.Fatalf("item without include: %v", item)
+	}
+
+	form := url.Values{"u": {"admin"}, "p": {"s3cret"}, "include": {"items"}}
+	lc, body := changesCall(t, s, form)
+	if lc == nil {
+		t.Fatalf("include=items failed: %s", body)
+	}
+	song := itemOf(t, lc, "songs", "so-1")
+	if song["title"] != "t1" || song["mediaType"] != "song" || song["albumId"] != "al-1" {
+		t.Errorf("song item: %v", song)
+	}
+	album := itemOf(t, lc, "albums", "al-1")
+	if album["name"] != "B" || album["songCount"] != float64(2) {
+		t.Errorf("album item: %v", album)
+	}
+	if _, ok := album["song"]; ok {
+		t.Errorf("album item carries its songs: %v", album)
+	}
+	artist := itemOf(t, lc, "artists", "ar-1")
+	if artist["name"] != "A" || artist["albumCount"] != float64(1) {
+		t.Errorf("artist item: %v", artist)
+	}
+
+	// An incremental answer carries the changed song's new state.
+	since := serverTimeOf(t, lc)
+	tickFeed()
+	if _, err := s.Pool.Exec("UPDATE songs SET title = 'renamed' WHERE id = 'so-2'"); err != nil {
+		t.Fatal(err)
+	}
+	form.Set("since", since)
+	lc, _ = changesCall(t, s, form)
+	if got := itemOf(t, lc, "songs", "so-2")["title"]; got != "renamed" {
+		t.Errorf("incremental song item title %v", got)
+	}
+}
+
+// With include=items the answer is paged even without size, and every page
+// read through the cursor carries items.
+func TestLibraryChangesIncludeItemsPagesByDefault(t *testing.T) {
+	s := feedState(t)
+	seedFeed(t, s, maxPageSize+5)
+	form := url.Values{"u": {"admin"}, "p": {"s3cret"}, "include": {"items"}}
+
+	lc, body := changesCall(t, s, form)
+	next, _ := lc["nextCursor"].(string)
+	if next == "" {
+		t.Fatalf("no nextCursor on a %d-row answer: %.200s", maxPageSize+7, body)
+	}
+	n := 0
+	for _, k := range []string{"artists", "albums", "songs"} {
+		arr, _ := lc[k].([]any)
+		n += len(arr)
+	}
+	if n != maxPageSize {
+		t.Fatalf("first page has %d entries, want %d", n, maxPageSize)
+	}
+
+	form.Set("cursor", next)
+	lc, _ = changesCall(t, s, form)
+	arr, _ := lc["songs"].([]any)
+	if len(arr) == 0 {
+		t.Fatal("second page is empty")
+	}
+	for _, x := range arr {
+		if _, ok := x.(map[string]any)["item"]; !ok {
+			t.Fatalf("second page entry without item: %v", x)
+		}
+	}
+}
+
+// Items follow tinysonicMinimal like every other song object.
+func TestLibraryChangesIncludeItemsMinimal(t *testing.T) {
+	s := feedState(t)
+	seedFeed(t, s, 1)
+	form := url.Values{"u": {"admin"}, "p": {"s3cret"}, "include": {"items"}}
+	req := httptest.NewRequest(http.MethodPost, "/rest/x", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Prefer", preferMinimal)
+	rec := httptest.NewRecorder()
+	subsonicJSON(s.GetLibraryChanges)(rec, req)
+	var env map[string]map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	lc := env["subsonic-response"]["libraryChanges"].(map[string]any)
+	song := itemOf(t, lc, "songs", "so-1")
+	if _, ok := song["path"]; ok {
+		t.Errorf("minimal song item still has path: %v", song)
+	}
+	if song["title"] != "t1" {
+		t.Errorf("minimal song item lost its title: %v", song)
+	}
+}
+
+func TestLibraryChangesRejectsUnknownInclude(t *testing.T) {
+	s := feedState(t)
+	_, body := changesCall(t, s, url.Values{"u": {"admin"}, "p": {"s3cret"}, "include": {"everything"}})
+	if !strings.Contains(body, `"status":"failed"`) {
+		t.Fatalf("unknown include accepted: %s", body)
 	}
 }

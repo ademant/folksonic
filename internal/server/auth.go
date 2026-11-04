@@ -14,7 +14,20 @@ import (
 // or Subsonic username and password (u with p, plain or enc:-hex). A presented
 // but invalid API key or session does not fall through to the other methods.
 // Subsonic token auth (t with s) is not accepted; see usesTokenAuth.
+//
+// It records the client name and, on success, the username for the request
+// log (noteCaller).
 func (s *State) authenticate(r *http.Request) (users.User, bool) {
+	u, ok := s.resolveCaller(r)
+	name := ""
+	if ok {
+		name = u.Username
+	}
+	noteCaller(r, name)
+	return u, ok
+}
+
+func (s *State) resolveCaller(r *http.Request) (users.User, bool) {
 	ctx := r.Context()
 	q := params(r)
 

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tsirysndr/tinysonic/internal/db"
+	"github.com/tsirysndr/tinysonic/internal/models"
 )
 
 // changeSettleMs is how far serverTime lags the clock. A write whose
@@ -126,12 +127,27 @@ func changeRows(ctx context.Context, d *sql.DB, userID int64, c changeCursor, li
 // than the floor, it returns the full library and sets full. With `size`, the
 // answer is split into pages linked by nextCursor. Every page of one snapshot
 // reports the same serverTime.
+//
+// With include=items (version 2 of the extension), artist, album and song
+// entries also carry the item itself, as getArtist (without albums),
+// getAlbum (without songs) and getSong return it, and the answer is paged
+// at maxPageSize entries when size is not given.
 func (s *State) GetLibraryChanges(w http.ResponseWriter, r *http.Request) {
 	caller, ok := s.requireCaller(w, r)
 	if !ok {
 		return
 	}
 	ctx := r.Context()
+
+	withItems := false
+	switch v := queryFirst(r, "include"); v {
+	case "":
+	case "items":
+		withItems = true
+	default:
+		writeError(w, 0, "include must be items")
+		return
+	}
 
 	var c changeCursor
 	if cur := queryFirst(r, "cursor"); cur != "" {
@@ -165,6 +181,10 @@ func (s *State) GetLibraryChanges(w http.ResponseWriter, r *http.Request) {
 	}
 
 	p := pageParams(r)
+	if withItems && !p.set {
+		// Full objects are large; never build the whole library at once.
+		p = page{size: maxPageSize, set: true}
+	}
 	limit := int64(-1)
 	if p.set {
 		limit = p.size + 1
@@ -184,16 +204,35 @@ func (s *State) GetLibraryChanges(w http.ResponseWriter, r *http.Request) {
 		next = nc.encode()
 	}
 
+	var items changeItemSet
+	if withItems {
+		items, err = s.changeItems(ctx, rows)
+		if err != nil {
+			writeError(w, 0, err.Error())
+			return
+		}
+	}
+	// entry is the {id, updated} of a library item, plus the item itself when
+	// asked for and still present (it may have been deleted since the
+	// snapshot; the next sync then reports the deletion).
+	entry := func(r changeRow, objs map[string]J) J {
+		e := J{"id": r.ID, "updated": r.Ms}
+		if obj, ok := objs[r.ID]; ok {
+			e["item"] = obj
+		}
+		return e
+	}
+
 	artists, albums, songs := []J{}, []J{}, []J{}
 	playlists, starred, deleted := []J{}, []J{}, []J{}
 	for _, r := range rows {
 		switch r.Kind {
 		case "artist":
-			artists = append(artists, J{"id": r.ID, "updated": r.Ms})
+			artists = append(artists, entry(r, items.artists))
 		case "album":
-			albums = append(albums, J{"id": r.ID, "updated": r.Ms})
+			albums = append(albums, entry(r, items.albums))
 		case "song":
-			songs = append(songs, J{"id": r.ID, "updated": r.Ms})
+			songs = append(songs, entry(r, items.songs))
 		case "playlist":
 			playlists = append(playlists, J{"id": r.ID, "updated": r.Ms})
 		case "starred":
@@ -217,6 +256,76 @@ func (s *State) GetLibraryChanges(w http.ResponseWriter, r *http.Request) {
 		out["nextCursor"] = next
 	}
 	writeOK(w, J{"libraryChanges": out})
+}
+
+// changeItemSet holds the objects for one page of include=items, by id.
+type changeItemSet struct {
+	artists, albums, songs map[string]J
+}
+
+// changeItems loads the artists, albums and songs of a page, one query per
+// kind. A page has at most maxPageSize rows, well inside SQLite's limit on
+// bound parameters.
+func (s *State) changeItems(ctx context.Context, rows []changeRow) (changeItemSet, error) {
+	var artistIDs, albumIDs, songIDs []any
+	for _, r := range rows {
+		switch r.Kind {
+		case "artist":
+			artistIDs = append(artistIDs, r.ID)
+		case "album":
+			albumIDs = append(albumIDs, r.ID)
+		case "song":
+			songIDs = append(songIDs, r.ID)
+		}
+	}
+	set := changeItemSet{artists: map[string]J{}, albums: map[string]J{}, songs: map[string]J{}}
+
+	if len(artistIDs) > 0 {
+		q := "SELECT a.id, a.name, a.mbid, (SELECT COUNT(*) FROM albums WHERE artist_id = a.id) " +
+			"FROM artists a WHERE a.id IN (" + placeholders(len(artistIDs)) + ")"
+		rs, err := s.Pool.QueryContext(ctx, q, artistIDs...)
+		if err != nil {
+			return set, err
+		}
+		defer rs.Close()
+		for rs.Next() {
+			var a models.Artist
+			var n int64
+			if err := rs.Scan(&a.ID, &a.Name, &a.MBID, &n); err != nil {
+				return set, err
+			}
+			set.artists[a.ID] = artistToJSON(a, n)
+		}
+		if err := rs.Err(); err != nil {
+			return set, err
+		}
+	}
+	if len(albumIDs) > 0 {
+		as, err := queryManyAlbums(ctx, s.Pool,
+			"SELECT "+albumCols+" FROM albums a WHERE a.id IN ("+placeholders(len(albumIDs))+")", albumIDs...)
+		if err != nil {
+			return set, err
+		}
+		for _, a := range as {
+			set.albums[a.ID] = albumToChild(a)
+		}
+	}
+	if len(songIDs) > 0 {
+		ss, err := queryManySongs(ctx, s.Pool,
+			"SELECT "+songCols+" FROM songs s WHERE s.id IN ("+placeholders(len(songIDs))+")", songIDs...)
+		if err != nil {
+			return set, err
+		}
+		for _, so := range ss {
+			set.songs[so.ID] = s.songToChild(so)
+		}
+	}
+	return set, nil
+}
+
+// placeholders returns n comma-separated SQL parameters.
+func placeholders(n int) string {
+	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
 }
 
 // changeSinceParam reads `since`. It is 0 when absent.

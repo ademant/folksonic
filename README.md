@@ -288,7 +288,14 @@ was reset, the answer has `full: true`: the client should discard its copy and
 rebuild it from the answer. With `size` (1–500) the answer comes in pages linked
 by `nextCursor`; pass it back as `cursor` to get the next page of the same
 snapshot. `serverTime` lags the clock by 2 seconds, so a change committed just
-after a sync is returned by the next one. Authentication is as for every
+after a sync is returned by the next one. With `include=items` (extension
+version 2), each artist, album and song entry also carries `item`: the object
+as `getArtist` (without its albums), `getAlbum` (without its songs) or
+`getSong` returns it, minimal when `Prefer: tinysonic-minimal` is sent. An
+entry has no `item` when the object was deleted after the snapshot; the next
+sync reports the deletion. With `include=items` the answer is paged at 500
+entries even without `size`, so a full sync is a few requests instead of one
+per album. Authentication is as for every
 endpoint; token auth (`t` with `s`) gets error 42.
 
 **Minimal responses (vendor extension `tinysonicMinimal`)** — with the request
@@ -571,6 +578,18 @@ Elsewhere each line starts with the local time, and every level but `info` is
 named (`2026/11/04 21:29:14 WARN …`). The startup banner is printed only when
 stdout is a terminal. Query strings are never logged, because they can carry
 credentials.
+
+A request line ends with the client name (`c`), the signed-in user and, for a
+failed Subsonic answer (which is still HTTP 200), its error code, each only
+when known:
+
+```
+GET /folksonic/rest/getAlbum.view 200 1801B 3.1ms minimal client=DanceSonic user=ademin
+GET /folksonic/rest/ping.view 200 162B 210ms client=DSub err=40
+```
+
+Client names are cut to 64 characters, and characters other than letters,
+digits and `._-+/:@` become `_`.
 
 ### Deploying with make
 

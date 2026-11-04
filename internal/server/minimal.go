@@ -29,6 +29,9 @@ type minimalWriter struct {
 	http.ResponseWriter
 }
 
+// Unwrap returns the wrapped writer, for http.ResponseController and noteError.
+func (m *minimalWriter) Unwrap() http.ResponseWriter { return m.ResponseWriter }
+
 // subsonicJSON is the middleware for every JSON /rest endpoint: it varies
 // caches on Prefer and selects minimal mode when asked for.
 func subsonicJSON(h http.HandlerFunc) http.HandlerFunc {
