@@ -142,7 +142,8 @@ func repoAlbumsPaginated(ctx context.Context, db *sql.DB, listType string, size,
 
 // songCols selects a song aliased s.
 const songCols = "s.id, s.path, s.title, s.artist, s.artist_id, s.album, s.album_id, s.genre, s.track_number, " +
-	"s.disc_number, s.year, s.duration_ms, s.bitrate, s.filesize, s.suffix, s.content_type, s.cover_art, s.mbid, s.tags, s.created_at"
+	"s.disc_number, s.year, s.duration_ms, s.bitrate, s.filesize, s.suffix, s.content_type, s.cover_art, s.mbid, s.tags, s.created_at, " +
+	"s.rg_track_gain, s.rg_album_gain, s.rg_track_peak, s.rg_album_peak, s.rg_base_gain, s.meter, s.bpm"
 
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -154,6 +155,7 @@ func scanSong(s rowScanner) (models.Song, error) {
 		&v.ID, &v.Path, &v.Title, &v.Artist, &v.ArtistID, &v.Album, &v.AlbumID,
 		&v.Genre, &v.TrackNumber, &v.DiscNumber, &v.Year,
 		&v.DurationMs, &v.Bitrate, &v.Filesize, &v.Suffix, &v.ContentType, &v.CoverArt, &v.MBID, &v.Tags, &v.Created,
+		&v.TrackGain, &v.AlbumGain, &v.TrackPeak, &v.AlbumPeak, &v.BaseGain, &v.Meter, &v.BPM,
 	)
 	return v, err
 }

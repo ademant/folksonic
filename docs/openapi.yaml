@@ -26,6 +26,8 @@ tags:
   - name: Device pairing
   - name: Passkeys
   - name: Single sign-on
+  - name: Library
+    description: Library administration for librarians. Other accounts get 403.
 components:
   securitySchemes:
     bearerAuth:
@@ -53,6 +55,20 @@ components:
       schema:
         type: string
   schemas:
+    LibraryJob:
+      type: object
+      description: The running or last BPM job. Only `running` is set before the first job.
+      properties:
+        kind: {type: string, enum: [bpm]}
+        mode: {type: string, enum: [missing, all]}
+        running: {type: boolean}
+        total: {type: integer}
+        done: {type: integer}
+        updated: {type: integer, description: Songs that got a BPM.}
+        failed: {type: integer}
+        startedAt: {type: string, format: date-time}
+        finishedAt: {type: string, format: date-time, nullable: true}
+        error: {type: string, nullable: true, description: '"stopped" when cancelled.'}
     Error:
       type: object
       required: [error]
@@ -150,6 +166,12 @@ components:
       description: The credential returned by `navigator.credentials.create()` or `.get()`, serialised as JSON. Passed to the library unchanged.
       additionalProperties: true
   responses:
+    Forbidden:
+      description: The caller is not a librarian.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
     BadRequest:
       description: Invalid JSON body or invalid value.
       content:
@@ -851,5 +873,111 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/library/stats:
+    get:
+      tags: [Library]
+      summary: Library statistics, BPM coverage and running jobs
+      responses:
+        '200':
+          description: Statistics.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  artists: {type: integer}
+                  albums: {type: integer}
+                  songs: {type: integer}
+                  duration: {type: integer, description: Total playing time in seconds.}
+                  bpm:
+                    type: object
+                    properties:
+                      tag: {type: integer, description: Songs with a BPM from file tags.}
+                      calc: {type: integer, description: Songs with a calculated BPM.}
+                      missing: {type: integer}
+                  lastScan: {type: string, format: date-time, nullable: true, description: When the last full scan finished.}
+                  scan:
+                    type: object
+                    properties:
+                      running: {type: boolean}
+                      count: {type: integer, description: Files read by the running scan.}
+                  job:
+                    $ref: '#/components/schemas/LibraryJob'
+                  ffmpeg:
+                    type: object
+                    properties:
+                      available: {type: boolean}
+                      reason: {type: string, description: Why BPM calculation is unavailable.}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/library/scan:
+    post:
+      tags: [Library]
+      summary: Rescan the music folders
+      responses:
+        '202':
+          description: Scan started.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/library/bpm:
+    post:
+      tags: [Library]
+      summary: Calculate BPM from the audio
+      description: >-
+        Starts a background job that decodes 90 s from the middle of each track
+        with ffmpeg and estimates the tempo. `missing` analyses songs without a
+        BPM; `all` also recalculates calculated values. BPM from file tags is
+        never changed. Refused while a scan or another job runs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mode]
+              properties:
+                mode:
+                  type: string
+                  enum: [missing, all]
+      responses:
+        '202':
+          description: Job started.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, enum: [started]}
+                  job:
+                    $ref: '#/components/schemas/LibraryJob'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/library/jobs/cancel:
+    post:
+      tags: [Library]
+      summary: Stop the running job after the current track
+      responses:
+        '200':
+          description: Stopping.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'

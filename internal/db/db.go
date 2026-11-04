@@ -68,6 +68,9 @@ func migrate(d *sql.DB) error {
 	if err := migrateSongCreated(d); err != nil {
 		return fmt.Errorf("song created_at: %w", err)
 	}
+	if err := migrateAudioColumns(d); err != nil {
+		return fmt.Errorf("loudness, meter and bpm columns: %w", err)
+	}
 	return backfillFTS(d)
 }
 
@@ -157,6 +160,16 @@ CREATE TABLE IF NOT EXISTS songs (
     mbid          TEXT,
     tags          TEXT,
     created_at    TEXT,                       -- when the file was first added; kept by rescans
+    rg_track_gain REAL,                       -- ReplayGain in dB (-18 LUFS reference)
+    rg_album_gain REAL,
+    rg_track_peak REAL,
+    rg_album_peak REAL,
+    rg_base_gain  REAL,                       -- Opus header output gain in dB
+    meter         TEXT,                       -- METER / TIME_SIGNATURE tag text
+    bpm           REAL,
+    bpm_source    TEXT,                       -- 'tag' or 'calc'
+    bpm_confidence REAL,                      -- 0..1, calculated values only
+    bpm_at        TEXT,                       -- when bpm was set
     FOREIGN KEY (album_id) REFERENCES albums(id),
     FOREIGN KEY (artist_id) REFERENCES artists(id)
 );

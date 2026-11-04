@@ -92,6 +92,12 @@
     </div>
   </section>
 
+  <section id="librarySection" hidden aria-labelledby="h-lib">
+    <h2 id="h-lib">Library</h2>
+    <p>Statistics, rescans and BPM calculation for librarians.</p>
+    <a href="library">Manage the library</a>
+  </section>
+
   <section id="ssoSection" hidden aria-labelledby="h-sso">
     <h2 id="h-sso">Single sign-on</h2>
     <p>Identities from your identity provider that can sign in to this account.</p>
@@ -315,6 +321,8 @@
 
   // Load everything; each section fails on its own so one problem does not hide the rest.
   [loadKeys, loadPasskeys].forEach(function (f) { f().catch(function (e) { say(e.message); }); });
+  // The library page is for librarians; its stats endpoint answers 403 otherwise.
+  raw("GET", "library/stats").then(function (r) { $("librarySection").hidden = !r.ok; }).catch(function () {});
   fetch("api/oidc/status").then(function (r) { return r.json(); }).then(function (j) {
     if (!j.enabled) return;
     $("ssoSection").hidden = false;

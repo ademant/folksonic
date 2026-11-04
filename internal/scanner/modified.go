@@ -10,6 +10,9 @@ import (
 // watcher). Clients read it through tinysonicLibraryInfo to skip syncs.
 const LibraryModifiedKey = "library_modified"
 
+// LastScanKey is the settings key holding when the last full scan finished.
+const LastScanKey = "last_scan"
+
 // markModified records a library change inside the transaction that made it.
 func markModified(tx *sql.Tx) error {
 	_, err := tx.Exec(

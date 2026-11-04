@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -161,6 +162,15 @@ func (st *State) songToChild(s models.Song) J {
 		"type":          "music",
 		"created":       nsToAny(s.Created),
 	}
+	if rg := replayGain(s); rg != nil {
+		out["replayGain"] = rg
+	}
+	if s.BPM.Valid {
+		out["bpm"] = int64(math.Round(s.BPM.Float64))
+	}
+	if s.Meter.Valid && s.Meter.String != "" {
+		out["tinysonicMeter"] = s.Meter.String // vendor extension tinysonicMeter
+	}
 	if s.Tags.Valid {
 		var tags map[string][]string
 		if json.Unmarshal([]byte(s.Tags.String), &tags) == nil && len(tags) > 0 {
@@ -169,6 +179,31 @@ func (st *State) songToChild(s models.Song) J {
 	}
 	return out
 }
+
+// replayGain is the OpenSubsonic replayGain object with the known values
+// only, or nil when no gain is known. An Opus output gain of 0 alone is not
+// worth an object.
+func replayGain(s models.Song) J {
+	rg := J{}
+	for k, v := range map[string]sql.NullFloat64{
+		"trackGain": s.TrackGain, "albumGain": s.AlbumGain,
+		"trackPeak": s.TrackPeak, "albumPeak": s.AlbumPeak,
+	} {
+		if v.Valid {
+			rg[k] = roundGain(v.Float64)
+		}
+	}
+	if s.BaseGain.Valid && (len(rg) > 0 || s.BaseGain.Float64 != 0) {
+		rg["baseGain"] = roundGain(s.BaseGain.Float64)
+	}
+	if len(rg) == 0 {
+		return nil
+	}
+	return rg
+}
+
+// roundGain keeps gains and peaks to the precision the tags carry.
+func roundGain(f float64) float64 { return math.Round(f*1e6) / 1e6 }
 
 // albumToChild is the album object shared by every endpoint, including
 // getAlbum, so song count, duration and created agree everywhere.
@@ -381,10 +416,10 @@ func (s *State) StartScan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 50, "only librarians can start a library scan")
 		return
 	}
-	if s.Progress.Running() {
+	if s.jobs.running() || !s.Progress.Begin() {
 		writeOK(w, J{
 			"scanStatus": J{
-				"scanning": true,
+				"scanning": s.Progress.Running(),
 				"count":    s.Progress.Count(),
 			},
 		})

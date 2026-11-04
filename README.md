@@ -22,8 +22,10 @@ drop on any Linux/macOS/Windows host.
 ## Features
 
 - One binary, one TOML file, one SQLite database. No external services.
-- Built on Go's `net/http` with [modernc.org/sqlite](https://pkg.go.dev/modernc.org/sqlite)
-  (pure-Go SQLite, FTS5 enabled).
+  [ffmpeg](https://ffmpeg.org/) is an optional runtime dependency, used only
+  to calculate missing BPM values.
+- Built on Go's `net/http` with [ncruces/go-sqlite3](https://pkg.go.dev/github.com/ncruces/go-sqlite3)
+  (SQLite compiled to WebAssembly, no cgo, FTS5 enabled).
 - Library scanner powered by [dhowden/tag](https://pkg.go.dev/github.com/dhowden/tag)
   — extracts ID3/Vorbis/MP4 tags and embedded cover art from `mp3`, `flac`,
   `ogg`, `opus`, `m4a`, `wav`, and more.
@@ -121,6 +123,7 @@ Configuration is checked at startup:
 | `base_path`         | URL prefix to serve under, such as `/folksonic`. Empty (default) serves from the root. See [Serving under a subpath](#serving-under-a-subpath). |
 | `allow_registration` | Enables `POST /api/register` without an invitation code. Default `false`. Invitation codes work either way. |
 | `song_tags`          | File tags exposed on songs, such as `["DANCE", "USE"]`. Only these names are read. Each song then carries `tinysonicTags`, and the `tinysonicSongTags` extension is advertised. Default empty. |
+| `ffmpeg_path`        | ffmpeg binary for BPM calculation. Default: `ffmpeg` on `PATH`. Without ffmpeg, BPM calculation is unavailable and everything else works. |
 | `ignored_articles`   | Leading words skipped when indexing and sorting artists in `getArtists`/`getIndexes`, separated by spaces, and announced as `ignoredArticles`. An article ending in `'` (`L'`) matches without a following space. Default `"The El La Las Le Les Los Il L' An A Die Das Ein"`; `""` disables it. |
 | `[oidc]` table       | Optional single sign-on with an OpenID Connect provider: `issuer`, `client_id` and optional `client_secret`. Needs `base_url`. See [Single sign-on](#single-sign-on). Off unless `issuer` is set. |
 
@@ -128,8 +131,9 @@ Configuration is checked at startup:
 
 There are two roles:
 
-- **`librarian`** may start a library rescan (`startScan`). Nothing else in
-  the API is role-gated.
+- **`librarian`** may start a library rescan (`startScan`) and use the library
+  page (`/library`, linked from the account page): statistics, rescans and BPM
+  calculation. Nothing else in the API is role-gated.
 - **`user`** has no extra rights. Stars, playlists and API keys belong to each
   account.
 
@@ -231,7 +235,7 @@ without a manual rescan.
 **OpenSubsonic** — responses carry `"openSubsonic": true`.
 `getOpenSubsonicExtensions` lists the extensions the server implements:
 `apiKeyAuthentication`, `formPost`, the vendor extensions `tinysonicPaging`,
-`tinysonicLibraryInfo` and `tinysonicMinimal` (below), plus `tinysonicSongTags`
+`tinysonicLibraryInfo`, `tinysonicMinimal` and `tinysonicMeter` (below), plus `tinysonicSongTags`
 when `song_tags` is set. It needs no sign-in.
 
 **Song tags (vendor extension `tinysonicSongTags`)** — with `song_tags` set,
@@ -266,7 +270,7 @@ unchanged libraries with one small request.
 header `Prefer: tinysonic-minimal` (RFC 7240), objects omit optional fields that
 are constant, duplicated or derivable: songs drop `parent`, `isVideo`, `type`,
 `coverArt`, `path` and `suffix`; albums drop `title` (same as `name`) and
-`coverArt`; artists drop `coverArt`. Cover art ids follow a fixed rule: an
+`coverArt`; artists drop `coverArt`. `replayGain`, `bpm` and `tinysonicMeter` stay. Cover art ids follow a fixed rule: an
 album's or artist's is its `id`, a song's is its `albumId`. Required fields
 (`id`, `isDir`, `title` on songs, `albumCount`, …), `mediaType` and all data
 fields (`tinysonicTags`, …) always stay, and folder browsing keeps `parent`.
@@ -274,6 +278,35 @@ The response then carries `Preference-Applied: tinysonic-minimal`; all JSON
 responses send `Vary: Prefer`. Other `Prefer` values are ignored. It applies to
 every endpoint and combines with paging. On a 5,453-song library the full
 song list shrinks from 2,954 to 2,163 KiB (688 to 559 KiB with gzip).
+
+**Loudness, tempo and meter** — songs carry the standard OpenSubsonic
+`replayGain` object and `bpm` field, and the vendor field `tinysonicMeter`
+(extension `tinysonicMeter`), each only when known. They are read from the
+files and never written back:
+
+| Field | Tags | Notes |
+|---|---|---|
+| `replayGain.trackGain` / `albumGain` | Opus: `R128_TRACK_GAIN` / `R128_ALBUM_GAIN`; otherwise `REPLAYGAIN_TRACK_GAIN` / `REPLAYGAIN_ALBUM_GAIN` | R128 is Q7.8 relative to −23 LUFS and is converted to the ReplayGain reference of −18 LUFS: `value / 256 + 5` dB |
+| `replayGain.trackPeak` / `albumPeak` | `REPLAYGAIN_TRACK_PEAK` / `REPLAYGAIN_ALBUM_PEAK` | Opus R128 tags carry no peaks |
+| `replayGain.baseGain` | Opus header output gain | Sent when non-zero or together with other gains |
+| `bpm` | `BPM` (Vorbis/FLAC/Opus, MP3 `TXXX`), MP3 `TBPM`, MP4 `tmpo` | Rounded to an integer. Missing values can be calculated on the library page |
+| `tinysonicMeter` | `METER`, `TIME_SIGNATURE`, `TIMESIGNATURE` (first found) | The tag text as written, e.g. `3/4`, at most 32 characters; never guessed |
+
+MP3 reads the names from `TXXX` frames, M4A from `----:com.apple.iTunes:` atoms.
+Upgrading an existing library re-reads every file's tags once, in the
+background scan after the first start.
+
+**BPM calculation** — the library page calculates BPM for songs without a BPM
+tag. ffmpeg decodes 90 seconds from the middle of each track (mono, 11 kHz) at
+the lowest CPU priority; the tempo is estimated in Go from a spectral-flux
+onset envelope by autocorrelation with harmonic summation and a tempo prior
+around 120 BPM. It takes about one second per track, one track at a time, and
+can be stopped. Values from tags are never overwritten. A calculated value is
+kept when a file is re-read with the same audio length (tag edits) and
+cleared when the recording changed. On a folk dance library, about 60% of the
+estimates match the BPM tag within 4%; most others are off by a 3:4 or 2:1
+ratio (cross-rhythms, half or double time), so treat calculated values as a
+starting point. Each one stores a confidence (0–1).
 
 **Response conventions** — optional fields without a value are omitted, never
 sent as `null`. A song's `path` is relative to the music directory that holds
@@ -363,6 +396,11 @@ The JSON endpoints below are described in [`docs/openapi.yaml`](docs/openapi.yam
 | POST | `/api/oidc/begin` | none (`link` needs user) | Start single sign-on. Body: `mode` (`signin`, `link` or `invite`), `client` (`web` or `app`), and `invite` and `username` for `invite`. Returns the provider's `url` |
 | GET | `/api/oidc/callback` | state | Provider redirect target. Ends in the sign-in page with a one-time code, or with an error |
 | POST | `/api/oidc/exchange` | one-time code | Trade the code for a session `token` (web) or a device `apiKey` (app) |
+| GET | `/library` | page | Library page for librarians: statistics, rescan, BPM calculation |
+| GET | `/api/library/stats` | librarian | Totals, BPM coverage (tag / calculated / missing), last scan, running scan or job, ffmpeg availability |
+| POST | `/api/library/scan` | librarian | Rescan the music folders (409 while a scan or job runs) |
+| POST | `/api/library/bpm` | librarian | Start BPM calculation, body `{"mode": "missing"}` or `{"mode": "all"}` (all also recalculates calculated values; 503 without ffmpeg) |
+| POST | `/api/library/jobs/cancel` | librarian | Stop the running BPM job after the current track |
 | GET | `/api/oidc/identities` | user | List linked identities |
 | DELETE | `/api/oidc/identities/{id}` | user | Unlink an identity. Refused (409) when it is the account's last sign-in method |
 
