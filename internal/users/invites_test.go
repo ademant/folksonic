@@ -226,7 +226,7 @@ func TestAPIKeyForPasswordlessAccount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LookupAPIKey for passwordless account: %v", err)
 	}
-	if got.ID != u.ID || got.Password != "" || string(got.WebAuthnHandle) != "handle" {
+	if got.ID != u.ID || got.PasswordHash != "" || string(got.WebAuthnHandle) != "handle" {
 		t.Fatalf("LookupAPIKey returned %+v", got)
 	}
 }

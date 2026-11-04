@@ -40,8 +40,9 @@ drop on any Linux/macOS/Windows host.
 - Stable IDs (`ar-…` / `al-…` / `so-…`) derived from tag content, so re-scans
   are idempotent and clients don't lose their bookmarks.
 - HTTP `Range` support for proper seeking (via `http.ServeContent`).
-- Subsonic **token auth** (`t = md5(password + salt)`) and plaintext (`p=…`
-  or `p=enc:<hex>`) both supported.
+- Subsonic **username and password** (`u` with `p=…` or `p=enc:<hex>`) are
+  supported. Subsonic token auth (`t` with `s`) is not: such requests get error
+  42, and clients should use an API key or the password instead.
 - CORS is permissive — works directly from web clients.
 
 ## Install
@@ -358,18 +359,23 @@ Every `/rest/*` request is authenticated in this order:
    rights as its user and can be revoked.
 2. **Session token** (`Authorization: Bearer <token>`): issued by a passkey or
    password sign-in on the web page at `/login`.
-3. **Subsonic credentials**: token auth (`u`, `t = md5(password + salt)`, `s`)
-   or plaintext (`u`, `p`, or `p=enc:<hex>`). Stock Subsonic clients use this.
+3. **Subsonic username and password**: `u` with `p`, plain or `p=enc:<hex>`.
+   Clients that offer a password option use this. Token auth (`t` with `s`) is
+   refused with Subsonic error 42.
 
 Credentials may be sent in the query string or as a form-encoded POST body.
 Only active accounts authenticate; pending and disabled accounts are refused.
 
-Passwords are stored so that token auth can verify them, so anyone with read
-access to the database file can read them. Protect the database file, and use
-passkeys for the web UI.
+Passwords are stored as argon2id hashes, with a per-password salt, so a copy of
+the database does not reveal them. Each password check costs about 70 ms on a
+small host, which is why passkeys or API keys are better for long-lived clients.
+Passkeys remain the recommended sign-in for the web UI.
+
+Existing databases are migrated at the next start: stored plaintext passwords
+are hashed and the plaintext is removed. The step is idempotent.
 
 Passkey-only accounts have no password. They cannot use the password parameter
-or token auth, and an empty password never matches.
+and an empty password never matches.
 
 ### Accounts and pairing
 
@@ -479,8 +485,8 @@ affected, since the RP ID is the hostname only.
 
 ## Running over HTTPS
 
-tinysonic serves plain HTTP. Subsonic clients send the password (or a token
-derived from it) on every request, and passkeys require HTTPS. Put tinysonic
+tinysonic serves plain HTTP. Subsonic clients send the password on every
+request, and passkeys require HTTPS. Put tinysonic
 behind a TLS-terminating reverse proxy (nginx, Caddy, Traefik) when it is
 reachable from outside a trusted network, bind it to `127.0.0.1` so only the
 proxy can reach it, and set `base_url` to the proxy's public address.
@@ -583,13 +589,14 @@ cmd/tinysonic/main.go          entry point
 internal/
   cli/                         flag parsing, synthwave banner
   config/                      TOML loader
+  passwords/                   argon2id password hashing
   db/                          schema + migrations + FTS5 backfill
   models/                      Artist / Album / Song / Playlist row types
   audioinfo/                   per-format duration + bitrate probers
   scanner/                     filepath.WalkDir + tag extraction + cover art
   server/
     server.go                  net/http server, routing, CORS
-    auth.go                    Subsonic token / plaintext auth
+    auth.go                    Subsonic password auth (hash check)
     response.go                JSON envelope helpers
     repo.go                    database/sql queries
     handlers.go                Subsonic endpoint handlers

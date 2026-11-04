@@ -12,6 +12,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/tsirysndr/tinysonic/internal/passwords"
 )
 
 const (
@@ -29,16 +31,16 @@ var (
 	ErrInvalid  = errors.New("invalid input")
 )
 
-// User is one account. Password is stored as given because Subsonic token
-// auth (md5(password+salt)) requires the server to know it. It is empty for
-// passkey-only accounts, which can never match a password.
+// User is one account. PasswordHash is the argon2id encoding of its password
+// (see package passwords). It is empty for passkey-only and single sign-on
+// accounts, which can never match a password.
 type User struct {
-	ID        int64
-	Username  string
-	Password  string
-	Role      string
-	Status    string
-	CreatedAt string
+	ID           int64
+	Username     string
+	PasswordHash string
+	Role         string
+	Status       string
+	CreatedAt    string
 	// WebAuthnHandle is the passkey user handle of a passkey-only account.
 	// Nil means the handle is derived from ID (older accounts).
 	WebAuthnHandle []byte
@@ -79,12 +81,16 @@ func Create(ctx context.Context, db *sql.DB, username, password, role, status st
 	if password == "" {
 		return User{}, fmt.Errorf("%w: password must not be empty", ErrInvalid)
 	}
+	hash, err := passwords.Hash(password)
+	if err != nil {
+		return User{}, fmt.Errorf("%w: %w", ErrInvalid, err)
+	}
 	if _, err := ByName(ctx, db, username); err == nil {
 		return User{}, ErrExists
 	}
 	res, err := db.ExecContext(ctx,
-		`INSERT INTO users (username, password, role, status, created_at) VALUES (?, ?, ?, ?, ?)`,
-		username, password, role, status, Now())
+		`INSERT INTO users (username, password_hash, role, status, created_at) VALUES (?, ?, ?, ?, ?)`,
+		username, hash, role, status, Now())
 	if err != nil {
 		return User{}, err
 	}
@@ -95,13 +101,13 @@ func Create(ctx context.Context, db *sql.DB, username, password, role, status st
 	return ByID(ctx, db, id)
 }
 
-const userCols = "id, username, password, role, status, created_at, webauthn_handle"
+const userCols = "id, username, password_hash, role, status, created_at, webauthn_handle"
 
 func scanUser(s interface{ Scan(...any) error }) (User, error) {
 	var u User
-	var pw sql.NullString
-	err := s.Scan(&u.ID, &u.Username, &pw, &u.Role, &u.Status, &u.CreatedAt, &u.WebAuthnHandle)
-	u.Password = pw.String
+	var hash sql.NullString
+	err := s.Scan(&u.ID, &u.Username, &hash, &u.Role, &u.Status, &u.CreatedAt, &u.WebAuthnHandle)
+	u.PasswordHash = hash.String
 	return u, err
 }
 
@@ -165,7 +171,11 @@ func SetPassword(ctx context.Context, db *sql.DB, id int64, password string) err
 	if password == "" {
 		return fmt.Errorf("%w: password must not be empty", ErrInvalid)
 	}
-	res, err := db.ExecContext(ctx, "UPDATE users SET password = ? WHERE id = ?", password, id)
+	hash, err := passwords.Hash(password)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalid, err)
+	}
+	res, err := db.ExecContext(ctx, "UPDATE users SET password_hash = ?, password = NULL WHERE id = ?", hash, id)
 	if err != nil {
 		return err
 	}

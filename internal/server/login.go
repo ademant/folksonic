@@ -1,11 +1,11 @@
 package server
 
 import (
-	"crypto/subtle"
 	_ "embed"
 	"net/http"
 	"time"
 
+	"github.com/tsirysndr/tinysonic/internal/passwords"
 	"github.com/tsirysndr/tinysonic/internal/users"
 )
 
@@ -31,11 +31,13 @@ func (s *State) APILogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, err := users.ByName(r.Context(), s.Pool, in.Username)
-	// Compare even when the account is missing, so timing does not reveal which
-	// usernames exist.
-	// A passkey-only account has no password, and an empty one never matches.
-	match := u.Password != "" && subtle.ConstantTimeCompare([]byte(in.Password), []byte(u.Password)) == 1
-	if err != nil || !match || u.Status != users.StatusActive {
+	if err != nil {
+		// Unknown username: spend the same time as a wrong password.
+		passwords.Burn(in.Password)
+	}
+	// A passkey-only account has no hash, and an empty password never matches.
+	match := err == nil && passwords.Verify(u.PasswordHash, in.Password)
+	if !match || u.Status != users.StatusActive {
 		time.Sleep(200 * time.Millisecond) // slow down online guessing
 		writeAPIError(w, http.StatusUnauthorized, "wrong username or password")
 		return

@@ -261,7 +261,7 @@ type writerOnly struct{ io.Writer }
 func (s *State) requireCaller(w http.ResponseWriter, r *http.Request) (users.User, bool) {
 	u, ok := s.authenticate(r)
 	if !ok {
-		writeError(w, 40, "Wrong username or password")
+		s.writeAuthFailure(w, r)
 		return users.User{}, false
 	}
 	return u, true
@@ -269,7 +269,7 @@ func (s *State) requireCaller(w http.ResponseWriter, r *http.Request) (users.Use
 
 func (s *State) requireAuth(w http.ResponseWriter, r *http.Request) bool {
 	if _, ok := s.authenticate(r); !ok {
-		writeError(w, 40, "Wrong username or password")
+		s.writeAuthFailure(w, r)
 		return false
 	}
 	return true

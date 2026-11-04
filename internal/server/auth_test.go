@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/tsirysndr/tinysonic/internal/db"
+	"github.com/tsirysndr/tinysonic/internal/passwords"
 	"github.com/tsirysndr/tinysonic/internal/users"
 )
 
@@ -41,33 +42,60 @@ func postForm(t *testing.T, s *State, path string, form url.Values) *httptest.Re
 
 func TestAuthCheck(t *testing.T) {
 	const user, pass = "admin", "s3cret"
-	salt := "abc123"
-	sum := md5.Sum([]byte(pass + salt))
-	token := hex.EncodeToString(sum[:])
+	hash, err := passwords.Hash(pass)
+	if err != nil {
+		t.Fatal(err)
+	}
 	enc := hex.EncodeToString([]byte(pass))
 
 	tests := []struct {
-		name       string
-		u, p, t, s string
-		want       bool
+		name string
+		u, p string
+		want bool
 	}{
-		{"token ok", user, "", token, salt, true},
-		{"token uppercase accepted", user, "", strings.ToUpper(token), salt, true},
-		{"token wrong salt", user, "", token, "other", false},
-		{"plaintext ok", user, pass, "", "", true},
-		{"plaintext wrong", user, "nope", "", "", false},
-		{"enc hex ok", user, "enc:" + enc, "", "", true},
-		{"enc hex wrong", user, "enc:" + hex.EncodeToString([]byte("x")), "", "", false},
-		{"wrong user", "mallory", pass, "", "", false},
-		{"missing user", "", pass, "", "", false},
-		{"no credentials", user, "", "", "", false},
+		{"plaintext ok", user, pass, true},
+		{"plaintext wrong", user, "nope", false},
+		{"enc hex ok", user, "enc:" + enc, true},
+		{"enc hex wrong", user, "enc:" + hex.EncodeToString([]byte("x")), false},
+		{"wrong user", "mallory", pass, false},
+		{"missing user", "", pass, false},
+		{"no credentials", user, "", false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := authCheck(user, pass, tc.u, tc.p, tc.t, tc.s); got != tc.want {
+			if got := authCheck(user, hash, tc.u, tc.p); got != tc.want {
 				t.Fatalf("authCheck = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// Subsonic token auth (t with s) is gone. A request that uses only t and s gets
+// error 42, so the client can say so, rather than error 40 (wrong password).
+func TestTokenAuthAnsweredWithError42(t *testing.T) {
+	s := newTestState(t)
+	sum := md5.Sum([]byte("s3cret" + "abc123"))
+	token := hex.EncodeToString(sum[:])
+
+	tokenOnly := httptest.NewRecorder()
+	s.routes().ServeHTTP(tokenOnly, httptest.NewRequest(http.MethodGet,
+		"/rest/ping?u=admin&t="+token+"&s=abc123&v=1.16.1&c=test&f=json", nil))
+	if !strings.Contains(tokenOnly.Body.String(), `"code":42`) {
+		t.Fatalf("token-only request: want error 42, got %s", tokenOnly.Body.String())
+	}
+
+	wrongPassword := httptest.NewRecorder()
+	s.routes().ServeHTTP(wrongPassword, httptest.NewRequest(http.MethodGet,
+		"/rest/ping?u=admin&p=nope&v=1.16.1&c=test&f=json", nil))
+	if !strings.Contains(wrongPassword.Body.String(), `"code":40`) {
+		t.Fatalf("wrong password: want error 40, got %s", wrongPassword.Body.String())
+	}
+
+	plain := httptest.NewRecorder()
+	s.routes().ServeHTTP(plain, httptest.NewRequest(http.MethodGet,
+		"/rest/ping?u=admin&p=s3cret&v=1.16.1&c=test&f=json", nil))
+	if !strings.Contains(plain.Body.String(), `"status":"ok"`) {
+		t.Fatalf("plain password: %s", plain.Body.String())
 	}
 }
 

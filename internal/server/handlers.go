@@ -99,8 +99,8 @@ Supported endpoints
     GET  /rest/getLyrics        ?artist=&title=
 
 Auth (all /rest/* endpoints)
-  Token:     u=<user>&t=md5(password+salt)&s=<salt>
-  Plaintext: u=<user>&p=<password>      or  p=enc:<hex>
+  Password:  u=<user>&p=<password>      or  p=enc:<hex>
+  (token auth with t and s is not supported; use an API key or the password)
 
 List endpoints accept size/offset and send X-Total-Count headers; HEAD
 returns only the headers. Prefer: tinysonic-minimal trims derivable fields.
@@ -358,7 +358,7 @@ func (s *State) Ping(w http.ResponseWriter, r *http.Request) {
 func (s *State) GetUser(w http.ResponseWriter, r *http.Request) {
 	u, ok := s.authenticate(r)
 	if !ok {
-		writeError(w, 40, "Wrong username or password")
+		s.writeAuthFailure(w, r)
 		return
 	}
 	writeOK(w, J{
@@ -409,7 +409,7 @@ func (s *State) GetScanStatus(w http.ResponseWriter, r *http.Request) {
 func (s *State) StartScan(w http.ResponseWriter, r *http.Request) {
 	caller, ok := s.authenticate(r)
 	if !ok {
-		writeError(w, 40, "Wrong username or password")
+		s.writeAuthFailure(w, r)
 		return
 	}
 	if caller.Role != users.RoleLibrarian {

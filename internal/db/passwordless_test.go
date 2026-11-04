@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+
+	"github.com/tsirysndr/tinysonic/internal/passwords"
 )
 
 // A database from before passwordless accounts: password NOT NULL, no handle
@@ -66,8 +68,17 @@ func TestMigrationMakesPasswordNullable(t *testing.T) {
 		t.Fatal("old role name still accepted after migration")
 	}
 	var n int
-	if err := d.QueryRow("SELECT COUNT(*) FROM users WHERE username = 'admin' AND password = 'pw'").Scan(&n); err != nil || n != 1 {
+	if err := d.QueryRow("SELECT COUNT(*) FROM users WHERE username = 'admin'").Scan(&n); err != nil || n != 1 {
 		t.Fatalf("existing user not preserved: %v %d", err, n)
+	}
+	// The plaintext is hashed and cleared, and the hash still verifies it.
+	var plain sql.NullString
+	var hash string
+	if err := d.QueryRow("SELECT password, password_hash FROM users WHERE username = 'admin'").Scan(&plain, &hash); err != nil {
+		t.Fatal(err)
+	}
+	if plain.Valid || !passwords.Verify(hash, "pw") {
+		t.Fatalf("password not migrated to a hash: plaintext=%v hash=%q", plain, hash)
 	}
 	if err := d.QueryRow("SELECT COUNT(*) FROM webauthn_credentials WHERE user_id = 1").Scan(&n); err != nil || n != 1 {
 		t.Fatalf("child rows deleted by the rebuild: %v %d", err, n)
