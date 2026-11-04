@@ -95,6 +95,7 @@ func TestMigrateAudioColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Close()
+	dropChangeTriggers(t, pool)
 	for _, c := range audioColumns {
 		if _, err := pool.Exec("ALTER TABLE songs DROP COLUMN " + c.name); err != nil {
 			t.Fatal(err)
