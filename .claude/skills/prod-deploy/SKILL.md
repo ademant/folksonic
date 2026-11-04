@@ -66,4 +66,4 @@ Restoring the database discards accounts, invites, playlists and stars created s
 
 ## Known noise
 
-Every start and CLI call warns that the config "holds a password" and is readable by others. It is a false positive (no password in the file; 0640 root:tinysonic is intended). Ignore it.
+Before #59, every start and CLI call warned that the config "holds a password" and is readable by others. It was a false positive (no password in the file; 0640 root:tinysonic is intended). Since #59 the warning appears only when the config holds `password` or `oidc.client_secret`.

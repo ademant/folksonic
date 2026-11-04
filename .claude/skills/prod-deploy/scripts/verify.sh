@@ -14,7 +14,7 @@ ps -o rss=,etime= -C tinysonic | awk '{printf "rss %d MB, up %s\n", $1/1024, $2}
 echo "--- log since last start"
 since=$(systemctl show tinysonic -p ActiveEnterTimestamp --value)
 sudo journalctl -u tinysonic --since "$since" --no-pager -o cat |
-	grep -E "listening on|scan complete|error|fail|panic|warning" |
+	grep -iE "listening on|scan complete|error|fail|panic|warn" |
 	grep -v "readable by other users" | tail -n 10
 
 echo "--- accounts"

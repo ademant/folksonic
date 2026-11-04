@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/tsirysndr/tinysonic/internal/logging"
 )
 
 type Config struct {
@@ -43,6 +45,9 @@ type Config struct {
 	// OIDC enables sign-in through an external identity provider. It is off
 	// unless Issuer is set; see OIDC for the rules.
 	OIDC OIDC `toml:"oidc"`
+	// LogLevel is the minimum level written to the log: debug, info, warn or
+	// error. Load normalises it to lower case; empty means info.
+	LogLevel string `toml:"log_level"`
 
 	// Warnings holds non-fatal problems found while loading, such as a config
 	// file readable by other users. Callers should log them.
@@ -99,6 +104,11 @@ func Load(path string) (*Config, error) {
 	if err := c.OIDC.validate(c.BaseURL); err != nil {
 		return nil, err
 	}
+	lvl, err := logging.ParseLevel(c.LogLevel)
+	if err != nil {
+		return nil, fmt.Errorf("config: log_level: %w", err)
+	}
+	c.LogLevel = strings.ToLower(lvl.String())
 
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -116,9 +126,11 @@ func Load(path string) (*Config, error) {
 	c.DatabasePath = resolve(base, c.DatabasePath)
 	c.CoversDir = resolve(base, c.CoversDir)
 
-	if info, err := os.Stat(path); err == nil && info.Mode().Perm()&0o077 != 0 {
+	// Only a secret in the file makes loose permissions a problem.
+	secret := c.Password != "" || c.OIDC.ClientSecret != ""
+	if info, err := os.Stat(path); err == nil && secret && info.Mode().Perm()&0o077 != 0 {
 		c.Warnings = append(c.Warnings, fmt.Sprintf(
-			"config file %s is readable by other users (mode %o); it holds a password, run: chmod 600 %s",
+			"config file %s is readable by other users (mode %o); it holds a secret, run: chmod 600 %s",
 			path, info.Mode().Perm(), path))
 	}
 	return c, nil

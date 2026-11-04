@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"math"
 	"net/http"
 	"os"
@@ -19,6 +18,7 @@ import (
 	"unicode"
 
 	"github.com/tsirysndr/tinysonic/internal/cli"
+	"github.com/tsirysndr/tinysonic/internal/logging"
 	"github.com/tsirysndr/tinysonic/internal/models"
 	"github.com/tsirysndr/tinysonic/internal/scanner"
 	"github.com/tsirysndr/tinysonic/internal/users"
@@ -427,7 +427,7 @@ func (s *State) StartScan(w http.ResponseWriter, r *http.Request) {
 	}
 	go func() {
 		if _, err := scanner.Scan(s.Pool, s.MusicDirs, s.CoversDir, s.SongTags, s.Progress); err != nil {
-			log.Printf("scan: %v", err)
+			logging.Errorf("scan: %v", err)
 		}
 	}()
 	writeOK(w, J{"scanStatus": J{"scanning": true, "count": 0}})
@@ -442,7 +442,7 @@ func (s *State) GetArtists(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	artists, err := repoAllArtists(ctx, s.Pool)
 	if err != nil {
-		log.Printf("getArtists: %v", err)
+		logging.Errorf("getArtists: %v", err)
 		writeError(w, 0, "database error")
 		return
 	}
@@ -472,7 +472,7 @@ func (s *State) GetArtist(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	artist, err := repoFindArtist(ctx, s.Pool, id)
 	if err != nil {
-		log.Printf("getArtist: %v", err)
+		logging.Errorf("getArtist: %v", err)
 		writeError(w, 0, "database error")
 		return
 	}
@@ -515,7 +515,7 @@ func (s *State) GetAlbum(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	album, err := repoFindAlbum(ctx, s.Pool, id)
 	if err != nil {
-		log.Printf("getAlbum: %v", err)
+		logging.Errorf("getAlbum: %v", err)
 		writeError(w, 0, "database error")
 		return
 	}
@@ -549,7 +549,7 @@ func (s *State) GetSong(w http.ResponseWriter, r *http.Request) {
 	}
 	song, err := repoFindSong(r.Context(), s.Pool, id)
 	if err != nil {
-		log.Printf("getSong: %v", err)
+		logging.Errorf("getSong: %v", err)
 		writeError(w, 0, "database error")
 		return
 	}
@@ -861,7 +861,7 @@ func (s *State) starOp(w http.ResponseWriter, r *http.Request, star bool) {
 		err = repoUnstar(r.Context(), s.Pool, caller.ID, target)
 	}
 	if err != nil {
-		log.Printf("starOp: %v", err)
+		logging.Errorf("starOp: %v", err)
 		writeError(w, 0, "database error")
 		return
 	}
@@ -881,7 +881,7 @@ func (s *State) Stream(w http.ResponseWriter, r *http.Request) {
 	}
 	path, contentType, found, err := s.lookupSong(r.Context(), id)
 	if err != nil {
-		log.Printf("stream lookup %s: %v", id, err)
+		logging.Errorf("stream lookup %s: %v", id, err)
 		writeError(w, 0, "database error")
 		return
 	}
@@ -892,14 +892,14 @@ func (s *State) Stream(w http.ResponseWriter, r *http.Request) {
 	f, err := os.Open(path)
 	if err != nil {
 		s.evictSong(id)
-		log.Printf("stream open %s: %v", path, err)
+		logging.Errorf("stream open %s: %v", path, err)
 		writeError(w, 0, "could not read file")
 		return
 	}
 	defer f.Close()
 	st, err := f.Stat()
 	if err != nil {
-		log.Printf("stream stat %s: %v", path, err)
+		logging.Errorf("stream stat %s: %v", path, err)
 		writeError(w, 0, "could not read file")
 		return
 	}
@@ -1083,7 +1083,7 @@ func (s *State) GetPlaylist(w http.ResponseWriter, r *http.Request) {
 	}
 	pl, err := repoFindPlaylist(r.Context(), s.Pool, caller.ID, id)
 	if err != nil {
-		log.Printf("getPlaylist: %v", err)
+		logging.Errorf("getPlaylist: %v", err)
 		writeError(w, 0, "database error")
 		return
 	}
@@ -1141,7 +1141,7 @@ func (s *State) CreatePlaylist(w http.ResponseWriter, r *http.Request) {
 		pl, _ := repoFindPlaylist(ctx, s.Pool, caller.ID, id)
 		if pl == nil {
 			if err := repoCreatePlaylist(ctx, s.Pool, caller.ID, id, name, now); err != nil {
-				log.Printf("createPlaylist: %v", err)
+				logging.Errorf("createPlaylist: %v", err)
 				writeError(w, 0, "database error")
 				return
 			}
@@ -1154,7 +1154,7 @@ func (s *State) CreatePlaylist(w http.ResponseWriter, r *http.Request) {
 	} else {
 		id = newPlaylistID()
 		if err := repoCreatePlaylist(ctx, s.Pool, caller.ID, id, name, now); err != nil {
-			log.Printf("createPlaylist: %v", err)
+			logging.Errorf("createPlaylist: %v", err)
 			writeError(w, 0, "database error")
 			return
 		}
@@ -1259,7 +1259,7 @@ func (s *State) DeletePlaylist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := repoDeletePlaylist(r.Context(), s.Pool, caller.ID, id); err != nil {
-		log.Printf("deletePlaylist: %v", err)
+		logging.Errorf("deletePlaylist: %v", err)
 		writeError(w, 0, "database error")
 		return
 	}

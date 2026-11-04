@@ -38,6 +38,9 @@ allow_registration = false
 # Default: "ffmpeg" on PATH. Without it, everything else works.
 # ffmpeg_path = "/usr/bin/ffmpeg"
 
+# Lowest log level written: debug, info, warn or error. --log-level overrides it.
+# log_level = "info"
+
 # Leading words skipped when grouping and sorting artists (getArtists,
 # getIndexes). L' matches without a following space. "" disables it.
 # ignored_articles = "The El La Las Le Les Los Il L' An A Die Das Ein"

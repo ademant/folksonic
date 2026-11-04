@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"github.com/dhowden/tag"
 
 	"github.com/tsirysndr/tinysonic/internal/audioinfo"
+	"github.com/tsirysndr/tinysonic/internal/logging"
 )
 
 var audioExts = map[string]bool{
@@ -83,7 +83,7 @@ func Scan(pool *sql.DB, roots []string, coversDir string, songTags []string, pro
 			progress.count.Store(int64(stats.Scanned))
 			switch res, perr := processFile(pool, path, coversDir, songTags); {
 			case perr != nil:
-				log.Printf("scan %s: %v", path, perr)
+				logging.Warnf("scan %s: %v", path, perr)
 				stats.Skipped++
 			case res == resultInserted:
 				stats.Inserted++
@@ -96,7 +96,7 @@ func Scan(pool *sql.DB, roots []string, coversDir string, songTags []string, pro
 		if failures == 0 {
 			completeRoots = append(completeRoots, root)
 		} else {
-			log.Printf("scan: %s: %d unreadable directories, its missing songs are kept", root, failures)
+			logging.Warnf("scan: %s: %d unreadable directories, its missing songs are kept", root, failures)
 		}
 	}
 	// Songs whose files vanished while the server was down are removed only
@@ -109,9 +109,9 @@ func Scan(pool *sql.DB, roots []string, coversDir string, songTags []string, pro
 	if _, err := pool.Exec(
 		"INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
 		LastScanKey, time.Now().UTC().Format("2006-01-02T15:04:05Z")); err != nil {
-		log.Printf("scan: recording scan time: %v", err)
+		logging.Errorf("scan: recording scan time: %v", err)
 	}
-	log.Printf("scan complete: %d scanned, %d inserted, %d updated, %d skipped, %d removed",
+	logging.Infof("scan complete: %d scanned, %d inserted, %d updated, %d skipped, %d removed",
 		stats.Scanned, stats.Inserted, stats.Updated, stats.Skipped, stats.Pruned)
 	return stats, nil
 }
@@ -130,7 +130,7 @@ func pruneMissing(pool *sql.DB, roots []string, seen map[string]bool) (int, erro
 				continue
 			}
 			if err := DeletePath(pool, p); err != nil {
-				log.Printf("prune %s: %v", p, err)
+				logging.Errorf("prune %s: %v", p, err)
 				continue
 			}
 			n++
@@ -152,7 +152,7 @@ func walkAudio(dir string, visited map[string]bool, fn func(path string)) int {
 		return 0
 	}
 	visited[real] = true
-	log.Printf("scan: walking %s", dir)
+	logging.Debugf("scan: walking %s", dir)
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {

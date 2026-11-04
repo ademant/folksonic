@@ -3,8 +3,9 @@ package db
 import (
 	"database/sql"
 	"errors"
-	"log"
 	"time"
+
+	"github.com/tsirysndr/tinysonic/internal/logging"
 )
 
 // idScheme names how library IDs are derived. The stored value is compared
@@ -59,6 +60,6 @@ func migrateIDScheme(d *sql.DB) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	log.Printf("library IDs use scheme %s: the library is cleared and will be rebuilt by the next scan", idScheme)
+	logging.Infof("library IDs use scheme %s: the library is cleared and will be rebuilt by the next scan", idScheme)
 	return nil
 }
