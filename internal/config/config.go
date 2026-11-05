@@ -48,10 +48,33 @@ type Config struct {
 	// LogLevel is the minimum level written to the log: debug, info, warn or
 	// error. Load normalises it to lower case; empty means info.
 	LogLevel string `toml:"log_level"`
+	// Site is shown on the public information page; see Site.
+	Site Site `toml:"site"`
 
 	// Warnings holds non-fatal problems found while loading, such as a config
 	// file readable by other users. Callers should log them.
 	Warnings []string `toml:"-"`
+}
+
+// DefaultRepository is the repository link shown when [site] repository is empty.
+const DefaultRepository = "https://github.com/ademant/folksonic"
+
+// Site is the public description of this server, shown on the information
+// page at / and in robots.txt and sitemap.xml. Empty fields are not shown.
+type Site struct {
+	// Name is the server's display name. Empty means "tinysonic".
+	Name string `toml:"name"`
+	// Description is a short paragraph about the server.
+	Description string `toml:"description"`
+	// Contact is how to reach the operator: an email address or a URL.
+	Contact string `toml:"contact"`
+	// Repository links the project's source code, which also hosts the API
+	// documentation. Load sets DefaultRepository when this is empty.
+	Repository string `toml:"repository"`
+	// ImpressumFile is a Markdown file with the legal notice, served at
+	// /impressum. Relative paths resolve from the config file's directory.
+	// Empty means there is no Impressum page.
+	ImpressumFile string `toml:"impressum_file"`
 }
 
 // Load reads the config file. Unknown keys are an error, so a typo cannot
@@ -109,12 +132,21 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("config: log_level: %w", err)
 	}
 	c.LogLevel = strings.ToLower(lvl.String())
+	if c.Site.Repository == "" {
+		c.Site.Repository = DefaultRepository
+	}
+	if u, err := url.Parse(c.Site.Repository); err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return nil, fmt.Errorf("config: site.repository %q must be an http or https URL", c.Site.Repository)
+	}
 
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, fmt.Errorf("config file %s: %w", path, err)
 	}
 	base := filepath.Dir(abs)
+	if c.Site.ImpressumFile != "" {
+		c.Site.ImpressumFile = resolveAll(base, []string{c.Site.ImpressumFile})[0]
+	}
 	c.MusicDirs = uniqueDirs(resolveAll(base, c.MusicDirs))
 	for _, d := range c.MusicDirs {
 		// A missing directory is not fatal: the rest of the library keeps

@@ -31,6 +31,10 @@ func (s *State) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if acceptsHTML(r) {
+		s.serveInfoPage(w, r)
+		return
+	}
 	body := cli.Banner + fmt.Sprintf(`
   tinysonic v%s
   a tiny Subsonic-compatible music server

@@ -17,7 +17,8 @@ it an account (created with `tinysonic user add`), and any
 This is a pure-Go port of [smolsonic](https://github.com/tsirysndr/smolsonic).
 Same TOML config, same SQLite schema, same Subsonic endpoints — no C
 dependencies, so `CGO_ENABLED=0 go build` produces a fully static binary you can
-drop on any Linux/macOS/Windows host.
+drop on any Linux/macOS/Windows host. The one library added for the public
+Impressum page is [goldmark](https://github.com/yuin/goldmark), also pure Go.
 
 ## Features
 
@@ -130,6 +131,7 @@ Configuration is checked at startup:
 | `ffmpeg_path`        | ffmpeg binary for BPM calculation. Default: `ffmpeg` on `PATH`. Without ffmpeg, BPM calculation is unavailable and everything else works. |
 | `ignored_articles`   | Leading words skipped when indexing and sorting artists in `getArtists`/`getIndexes`, separated by spaces, and announced as `ignoredArticles`. An article ending in `'` (`L'`) matches without a following space. Default `"The El La Las Le Les Los Il L' An A Die Das Ein"`; `""` disables it. |
 | `log_level`          | Minimum level written to the log: `debug`, `info` (default), `warn` or `error`. `--log-level` overrides it. See [Logging](#logging). |
+| `[site]` table       | Public description: `name`, `description`, `contact` (email or URL), `repository` (default `https://github.com/ademant/folksonic`) and `impressum_file` (a Markdown file). Empty fields are not shown. See [Public pages](#public-pages). |
 | `[oidc]` table       | Optional single sign-on with an OpenID Connect provider: `issuer`, `client_id` and optional `client_secret`. Needs `base_url`. See [Single sign-on](#single-sign-on). Off unless `issuer` is set. |
 
 ## Roles
@@ -498,6 +500,38 @@ QR pairing. The code is in the URL fragment for the web and in the
 `tinysonic://oidc` redirect for the app. The provider's tokens are never stored
 or put in a URL.
 
+## Public pages
+
+Four pages are public, and they describe the server only. The library is never
+listed.
+
+- `/` shows an information page to browsers: the name, description, version,
+  contact, a link to the source repository, the OpenAPI description and the
+  endpoint list (both on GitHub), and links to the Impressum and sign-in. Other
+  clients, such as `curl`, still get the plain-text banner.
+- `/impressum` renders `impressum_file`, a Markdown file. goldmark converts it,
+  and raw HTML in the file is not passed through. Without the setting the page
+  is not found.
+- `/robots.txt` disallows `/rest/`, `/api/`, `/login`, `/account` and `/library`.
+- `/sitemap.xml` lists `/` and `/impressum` with the absolute addresses from
+  `base_url`. It is not found when `base_url` is not set.
+
+The sign-in, account and library pages send `X-Robots-Tag: noindex`.
+
+```toml
+base_url = "https://music.example.com"
+
+[site]
+name          = "Folk Cloud"
+description   = "Private library of folk recordings for the dance group."
+contact       = "admin@example.com"
+impressum_file = "impressum.md"   # relative paths resolve from this file's directory
+```
+
+Under `base_path`, all four pages are served under that prefix. Crawlers only
+read `robots.txt` from the host root, so a subpath deployment needs its own
+`robots.txt` at the proxy.
+
 ## Serving under a subpath
 
 Set `base_path` to serve tinysonic under a prefix of an existing site, for
@@ -667,6 +701,7 @@ internal/
   scanner/                     filepath.WalkDir + tag extraction + cover art
   server/
     server.go                  net/http server, routing, CORS
+    site.go                    public pages: info, Impressum, robots.txt, sitemap
     auth.go                    Subsonic password auth (hash check)
     response.go                JSON envelope helpers
     repo.go                    database/sql queries
