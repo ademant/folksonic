@@ -57,3 +57,12 @@ covers_dir = "covers"
 # issuer        = "https://auth.example.com/realms/main"
 # client_id     = "tinysonic"
 # client_secret = ""   # optional for public clients
+
+# Public information page at /, with Impressum, robots.txt and sitemap.xml.
+# Empty fields are not shown. impressum_file is Markdown, served at /impressum.
+# [site]
+# name           = "tinysonic"
+# description    = ""
+# contact        = ""                              # email or URL
+# repository     = "https://github.com/ademant/folksonic"
+# impressum_file = ""

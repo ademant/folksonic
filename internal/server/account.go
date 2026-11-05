@@ -24,6 +24,7 @@ const maxPasskeyLabel = 64
 // reads the session token from sessionStorage and calls the JSON API, so the
 // server does not need to know who is looking.
 func (s *State) ServeAccountPage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("X-Robots-Tag", "noindex")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' blob:")

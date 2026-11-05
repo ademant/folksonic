@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"html/template"
 	"io"
 	"log/slog"
 	"net/http"
@@ -39,6 +40,14 @@ type State struct {
 	// BaseURL is the public address clients reach the server at; it is
 	// embedded in pairing QR codes. Empty means derive it from the request.
 	BaseURL string
+	// Site describes the server on the public pages (config [site]).
+	Site config.Site
+	// BasePath is the mount point (base_path), "" for the root.
+	BasePath string
+	// impressumHTML is the rendered impressum_file; impressumOK is false when
+	// there is no usable file, and then /impressum is not found.
+	impressumHTML template.HTML
+	impressumOK   bool
 	// AllowRegistration enables self-registration. New accounts stay pending
 	// until an administrator approves them with `tinysonic user approve`.
 	AllowRegistration bool
@@ -108,6 +117,8 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 	s := &State{
 		Pool:              pool,
 		BaseURL:           cfg.BaseURL,
+		Site:              cfg.Site,
+		BasePath:          cfg.BasePath,
 		AllowRegistration: cfg.AllowRegistration,
 		MusicDirs:         cfg.MusicDirs,
 		SongTags:          cfg.SongTags,
@@ -118,6 +129,7 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 	}
 
 	go s.preloadSongs(ctx)
+	s.impressumHTML, s.impressumOK = renderImpressum(cfg.Site.ImpressumFile)
 
 	// A bad base_url disables passkeys but must not stop the server: password
 	// and API-key access keep working.
@@ -417,6 +429,9 @@ func (s *State) routes() *http.ServeMux {
 	mux.HandleFunc("GET /login", s.ServeLoginPage)
 	mux.HandleFunc("GET /account", s.ServeAccountPage)
 	mux.HandleFunc("GET /library", s.ServeLibraryPage)
+	mux.HandleFunc("GET /impressum", s.ServeImpressum)
+	mux.HandleFunc("GET /robots.txt", s.ServeRobots)
+	mux.HandleFunc("GET /sitemap.xml", s.ServeSitemap)
 	mux.HandleFunc("GET /api/library/stats", s.APILibraryStats)
 	mux.HandleFunc("POST /api/library/scan", s.APILibraryScan)
 	mux.HandleFunc("POST /api/library/bpm", s.APILibraryBPM)
