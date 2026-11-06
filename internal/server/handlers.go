@@ -875,9 +875,19 @@ func (s *State) starOp(w http.ResponseWriter, r *http.Request, star bool) {
 // ── Playback ────────────────────────────────────────────────────────────────
 
 func (s *State) Stream(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAuth(w, r) {
+	caller, ok := s.requireCaller(w, r)
+	if !ok {
 		return
 	}
+	// Refused rather than queued: a waiting stream would hold its connection
+	// open anyway.
+	release, ok := s.streams.acquire(caller.ID, s.maxStreams, s.maxStreamsPerUser)
+	if !ok {
+		w.Header().Set("Retry-After", "5")
+		writeErrorStatus(w, http.StatusServiceUnavailable, 0, "Too many streams are open; try again shortly")
+		return
+	}
+	defer release()
 	id := queryFirst(r, "id")
 	if id == "" {
 		writeError(w, 10, "Required parameter is missing: id")
@@ -909,7 +919,7 @@ func (s *State) Stream(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Accept-Ranges", "bytes")
-	http.ServeContent(w, r, path, st.ModTime(), f)
+	http.ServeContent(idleWriter{ResponseWriter: w, rc: http.NewResponseController(w)}, r, path, st.ModTime(), f)
 }
 
 func (s *State) GetCoverArt(w http.ResponseWriter, r *http.Request) {

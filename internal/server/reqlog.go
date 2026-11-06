@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -18,6 +19,10 @@ type reqLog struct {
 	user   string
 	errSet bool
 	err    int
+	// throttled is set when password attempts from the client are refused by
+	// the failure limit; retryAfter is how long to wait.
+	throttled  bool
+	retryAfter time.Duration
 }
 
 type reqLogKey struct{}

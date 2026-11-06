@@ -3,7 +3,7 @@ package server
 import (
 	_ "embed"
 	"net/http"
-	"time"
+	"strconv"
 
 	"github.com/tsirysndr/tinysonic/internal/passwords"
 	"github.com/tsirysndr/tinysonic/internal/users"
@@ -31,6 +31,13 @@ func (s *State) APILogin(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &in) {
 		return
 	}
+	ip := s.clientIP(r)
+	if ok, retry := s.auth.allow(ip); !ok {
+		logAuthFailure(ip, "rate-limit", r.URL.Path)
+		w.Header().Set("Retry-After", strconv.Itoa(retrySeconds(retry)))
+		writeAPIError(w, http.StatusTooManyRequests, "too many failed sign-in attempts; wait before trying again")
+		return
+	}
 	u, err := users.ByName(r.Context(), s.Pool, in.Username)
 	if err != nil {
 		// Unknown username: spend the same time as a wrong password.
@@ -39,10 +46,18 @@ func (s *State) APILogin(w http.ResponseWriter, r *http.Request) {
 	// A passkey-only account has no hash, and an empty password never matches.
 	match := err == nil && passwords.Verify(u.PasswordHash, in.Password)
 	if !match || u.Status != users.StatusActive {
-		time.Sleep(200 * time.Millisecond) // slow down online guessing
+		reason := "password"
+		switch {
+		case err != nil:
+			reason = "unknown-user"
+		case u.Status != users.StatusActive:
+			reason = "not-active"
+		}
+		s.authFailed(ip, reason, r.URL.Path)
 		writeAPIError(w, http.StatusUnauthorized, "wrong username or password")
 		return
 	}
+	s.auth.succeed(ip)
 	token, err := users.CreateSession(r.Context(), s.Pool, u.ID)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "database error")

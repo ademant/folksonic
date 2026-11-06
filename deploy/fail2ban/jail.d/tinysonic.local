@@ -1,0 +1,25 @@
+# Fail2ban jail for tinysonic. Install as
+# /etc/fail2ban/jail.d/tinysonic.local.
+#
+# Bans an address after 50 failed password attempts in a minute. tinysonic
+# already slows each address down (one attempt per second after a burst of 5),
+# so this only fires on sustained guessing.
+#
+# Behind a reverse proxy, tinysonic logs the real client address (see
+# trusted_proxies in the README). Apply the ban on the host that receives the
+# client connections, because the packets from the client reach the proxy, not
+# tinysonic. Running this jail on the tinysonic host only protects a direct
+# deployment.
+#
+# backend = systemd reads the journal, where tinysonic writes when it runs under
+# systemd. Use backend = auto with logpath = /path/to/tinysonic.log otherwise.
+
+[tinysonic]
+enabled  = true
+filter   = tinysonic
+backend  = systemd
+journalmatch = _SYSTEMD_UNIT=tinysonic.service
+port     = http,https
+maxretry = 50
+findtime = 60
+bantime  = 3600
