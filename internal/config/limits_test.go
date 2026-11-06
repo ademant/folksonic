@@ -51,3 +51,22 @@ trusted_proxies = ["proxy.example.org"]
 		t.Fatalf("hostname accepted as a trusted proxy: %v", err)
 	}
 }
+
+func TestLegacyPasswordAuthDefaultAndOff(t *testing.T) {
+	c, err := Load(writeSiteConfig(t, `music_dirs = ["music"]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.LegacyPasswordAuth {
+		t.Fatal("legacy_password_auth should default to true")
+	}
+	c, err = Load(writeSiteConfig(t, `music_dirs = ["music"]
+legacy_password_auth = false
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.LegacyPasswordAuth {
+		t.Fatal("explicit false was overridden by the default")
+	}
+}

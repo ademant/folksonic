@@ -51,6 +51,10 @@ type Config struct {
 	LogLevel string `toml:"log_level"`
 	// Site is shown on the public information page; see Site.
 	Site Site `toml:"site"`
+	// LegacyPasswordAuth allows Subsonic clients to sign in with u and p (plain
+	// or enc:-hex) on every request. Off, those requests get error 42 and API
+	// keys are the only way in. Load sets the default, true.
+	LegacyPasswordAuth bool `toml:"legacy_password_auth"`
 	// MaxStreams caps the audio streams served at once, across all accounts.
 	// Zero disables the cap. Load sets the default.
 	MaxStreams int `toml:"max_streams"`
@@ -163,6 +167,9 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("config: log_level: %w", err)
 	}
 	c.LogLevel = strings.ToLower(lvl.String())
+	if !md.IsDefined("legacy_password_auth") {
+		c.LegacyPasswordAuth = true
+	}
 	if c.MaxStreams < 0 || c.MaxStreamsPerUser < 0 {
 		return nil, errors.New("config: max_streams and max_streams_per_user must not be negative")
 	}

@@ -58,6 +58,9 @@ type State struct {
 	maxStreamsPerUser int
 	// trusted lists the reverse proxies whose X-Forwarded-For is believed.
 	trusted []netip.Prefix
+	// legacyPasswordOff refuses Subsonic u+p sign-in (legacy_password_auth).
+	// The zero value allows it, as the default does.
+	legacyPasswordOff bool
 	// AllowRegistration enables self-registration. New accounts stay pending
 	// until an administrator approves them with `tinysonic user approve`.
 	AllowRegistration bool
@@ -140,6 +143,7 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 
 	go s.preloadSongs(ctx)
 	s.impressumHTML, s.impressumOK = renderImpressum(cfg.Site.ImpressumFile)
+	s.legacyPasswordOff = !cfg.LegacyPasswordAuth
 	s.maxStreams = cfg.MaxStreams
 	s.maxStreamsPerUser = cfg.MaxStreamsPerUser
 	for _, p := range cfg.TrustedProxies {
@@ -165,7 +169,7 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           requestLogger(corsMiddleware(limitBody(handler))),
+		Handler:           requestLogger(securityHeaders(corsMiddleware(limitBody(handler)))),
 		ReadHeaderTimeout: 15 * time.Second,
 		ErrorLog:          logging.StdLogger(slog.LevelWarn),
 	}
@@ -447,6 +451,7 @@ func (s *State) routes() *http.ServeMux {
 	mux.HandleFunc("GET /account", s.ServeAccountPage)
 	mux.HandleFunc("GET /library", s.ServeLibraryPage)
 	mux.HandleFunc("GET /impressum", s.ServeImpressum)
+	mux.HandleFunc("GET /static/{name}", s.ServeStatic)
 	mux.HandleFunc("GET /robots.txt", s.ServeRobots)
 	mux.HandleFunc("GET /sitemap.xml", s.ServeSitemap)
 	mux.HandleFunc("GET /api/library/stats", s.APILibraryStats)

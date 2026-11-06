@@ -43,7 +43,7 @@ func (s *State) resolveCaller(r *http.Request) (users.User, bool) {
 	}
 
 	name := q.Get("u")
-	if name == "" {
+	if name == "" || s.legacyPasswordOff {
 		return users.User{}, false
 	}
 	ip := s.clientIP(r)
@@ -100,6 +100,10 @@ func usesTokenAuth(r *http.Request) bool {
 // error code tells the client what went wrong: 42 for a removed mechanism,
 // 40 for wrong credentials.
 func (s *State) writeAuthFailure(w http.ResponseWriter, r *http.Request) {
+	if s.legacyPasswordOff && params(r).Get("u") != "" {
+		writeError(w, 42, "Password authentication is disabled on this server. Use an API key")
+		return
+	}
 	if l := reqLogFrom(r.Context()); l != nil && l.throttled {
 		w.Header().Set("Retry-After", strconv.Itoa(retrySeconds(l.retryAfter)))
 		writeErrorStatus(w, http.StatusTooManyRequests, 0, "Too many failed sign-in attempts; wait before trying again")

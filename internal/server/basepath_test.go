@@ -23,8 +23,11 @@ func TestMountAtServesUnderPrefix(t *testing.T) {
 	if rec := do("/folksonic/rest/ping"); rec.Code == http.StatusNotFound {
 		t.Fatalf("subsonic endpoint under prefix not routed")
 	}
-	if rec := do("/folksonic/login"); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `post("api/login"`) {
+	if rec := do("/folksonic/login"); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `src="static/login.js"`) {
 		t.Fatalf("login page under prefix: status %d", rec.Code)
+	}
+	if rec := do("/folksonic/static/login.js"); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `post("api/login"`) {
+		t.Fatalf("login script under prefix: status %d", rec.Code)
 	}
 	if rec := do("/folksonic"); rec.Code != http.StatusMovedPermanently || rec.Header().Get("Location") != "/folksonic/" {
 		t.Fatalf("bare prefix: status %d location %q", rec.Code, rec.Header().Get("Location"))

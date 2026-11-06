@@ -19,23 +19,8 @@ import (
 // library. Paths under base_path are prefixed with the mount point, because
 // that is where the server answers.
 
-// sitePageCSP allows the inline style of the public pages and nothing else.
-const sitePageCSP = "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'"
-
-// siteStyle is shared by the information page and the Impressum page.
-const siteStyle = `
-body { font: 16px/1.5 system-ui, sans-serif; margin: 0; background: #fbfbfc; color: #1d1f24; }
-main { max-width: 42rem; margin: 0 auto; padding: 2rem 1rem; }
-h1 { font-size: 1.8rem; margin: 0 0 .25rem; }
-.version { color: #6b7080; font-size: .9rem; margin: 0 0 1.5rem; }
-a { color: #2456c8; }
-nav ul { padding-left: 1.2rem; }
-footer { margin-top: 3rem; color: #6b7080; font-size: .85rem; }
-@media (prefers-color-scheme: dark) {
-  body { background: #15161a; color: #e6e7eb; }
-  a { color: #8fb4ff; }
-  .version, footer { color: #9499a8; }
-}`
+// sitePageCSP allows the stylesheet of the public pages and nothing else.
+const sitePageCSP = "default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 
 var infoTemplate = template.Must(template.New("info").Parse(`<!doctype html>
 <html lang="en">
@@ -44,7 +29,7 @@ var infoTemplate = template.Must(template.New("info").Parse(`<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="{{.Description}}">
 <title>{{.Name}}</title>
-<style>` + siteStyle + `</style>
+<link rel="stylesheet" href="{{.Style}}">
 </head>
 <body>
 <main>
@@ -73,7 +58,7 @@ var impressumTemplate = template.Must(template.New("impressum").Parse(`<!doctype
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Impressum</title>
-<style>` + siteStyle + `</style>
+<link rel="stylesheet" href="{{.Style}}">
 </head>
 <body>
 <main>
@@ -140,6 +125,7 @@ func (s *State) serveInfoPage(w http.ResponseWriter, r *http.Request) {
 		"Endpoints":   repo + "/blob/main/docs/opensubsonic-endpoints.md",
 		"Impressum":   impressum,
 		"Login":       s.siteURL("/login"),
+		"Style":       s.siteURL("/static/site.css"),
 	})
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -164,8 +150,9 @@ func (s *State) ServeImpressum(w http.ResponseWriter, r *http.Request) {
 	}
 	var buf bytes.Buffer
 	err := impressumTemplate.Execute(&buf, map[string]any{
-		"Body": s.impressumHTML,
-		"Home": s.siteURL("/"),
+		"Body":  s.impressumHTML,
+		"Home":  s.siteURL("/"),
+		"Style": s.siteURL("/static/site.css"),
 	})
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
