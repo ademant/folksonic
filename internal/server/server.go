@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"sync"
@@ -48,6 +49,15 @@ type State struct {
 	// there is no usable file, and then /impressum is not found.
 	impressumHTML template.HTML
 	impressumOK   bool
+	// auth throttles failed password attempts per client address.
+	auth authLimiter
+	// streams counts audio streams in progress. maxStreams and
+	// maxStreamsPerUser are its caps (zero means none).
+	streams           streamLimiter
+	maxStreams        int
+	maxStreamsPerUser int
+	// trusted lists the reverse proxies whose X-Forwarded-For is believed.
+	trusted []netip.Prefix
 	// AllowRegistration enables self-registration. New accounts stay pending
 	// until an administrator approves them with `tinysonic user approve`.
 	AllowRegistration bool
@@ -130,6 +140,13 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 
 	go s.preloadSongs(ctx)
 	s.impressumHTML, s.impressumOK = renderImpressum(cfg.Site.ImpressumFile)
+	s.maxStreams = cfg.MaxStreams
+	s.maxStreamsPerUser = cfg.MaxStreamsPerUser
+	for _, p := range cfg.TrustedProxies {
+		if pr, err := config.ParseTrustedProxy(p); err == nil {
+			s.trusted = append(s.trusted, pr)
+		}
+	}
 
 	// A bad base_url disables passkeys but must not stop the server: password
 	// and API-key access keep working.

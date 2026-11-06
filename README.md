@@ -131,6 +131,9 @@ Configuration is checked at startup:
 | `ffmpeg_path`        | ffmpeg binary for BPM calculation. Default: `ffmpeg` on `PATH`. Without ffmpeg, BPM calculation is unavailable and everything else works. |
 | `ignored_articles`   | Leading words skipped when indexing and sorting artists in `getArtists`/`getIndexes`, separated by spaces, and announced as `ignoredArticles`. An article ending in `'` (`L'`) matches without a following space. Default `"The El La Las Le Les Los Il L' An A Die Das Ein"`; `""` disables it. |
 | `log_level`          | Minimum level written to the log: `debug`, `info` (default), `warn` or `error`. `--log-level` overrides it. See [Logging](#logging). |
+| `max_streams`        | Audio streams (`stream`, `download`) served at once, across all accounts. Default 64; `0` disables the cap. A stream over the cap gets HTTP 503 with `Retry-After`. |
+| `max_streams_per_user` | Streams one account may hold at once. Default 8; `0` disables the cap. |
+| `trusted_proxies`    | Addresses (IPs or CIDR ranges) of reverse proxies whose `X-Forwarded-For` is believed. Empty by default: the connecting address is the client. See [Sign-in limits](#sign-in-limits). |
 | `[site]` table       | Public description: `name`, `description`, `contact` (email or URL), `repository` (default `https://github.com/ademant/folksonic`) and `impressum_file` (a Markdown file). Empty fields are not shown. See [Public pages](#public-pages). |
 | `[oidc]` table       | Optional single sign-on with an OpenID Connect provider: `issuer`, `client_id` and optional `client_secret`. Needs `base_url`. See [Single sign-on](#single-sign-on). Off unless `issuer` is set. |
 
@@ -500,6 +503,40 @@ QR pairing. The code is in the URL fragment for the web and in the
 `tinysonic://oidc` redirect for the app. The provider's tokens are never stored
 or put in a URL.
 
+## Sign-in limits
+
+Failed password attempts are limited per client address. The first five
+attempts from an address are answered at once. After that, one more is allowed
+each second, and the rest get HTTP 429 with `Retry-After` before any password
+is checked. Each failure also waits 10 ms, doubling for each consecutive
+failure up to 100 ms, so guessing gets no faster. The wait is the same whether
+the username exists or not. Successful sign-ins cost nothing, so a client that
+sends its password with every request is not throttled. Keys and sessions are
+not limited.
+
+Every failed attempt writes one line to the log:
+
+```
+WARN auth failed ip=198.51.100.7 reason=password path=/rest/ping
+```
+
+`reason` is `password`, `unknown-user`, `not-active` or `rate-limit`. The line
+never holds the username, the password or the query string.
+
+Behind a reverse proxy, the address is the proxy's unless you say otherwise.
+List the proxy in `trusted_proxies`, and tinysonic takes the client address
+from the rightmost `X-Forwarded-For` entry that is not itself a trusted proxy.
+The nginx examples in `deploy/` append that header. Only list proxies you
+control: a header from anywhere else is ignored.
+
+`deploy/fail2ban/` has a filter for that line and a jail: 50 failures in a
+minute bans the address for an hour. Apply the ban where clients connect. Behind
+a reverse proxy that is the proxy's host, not the tinysonic host.
+
+```toml
+trusted_proxies = ["127.0.0.1", "::1"]
+```
+
 ## Public pages
 
 Four pages are public, and they describe the server only. The library is never
@@ -701,6 +738,7 @@ internal/
   scanner/                     filepath.WalkDir + tag extraction + cover art
   server/
     server.go                  net/http server, routing, CORS
+    ratelimit.go               sign-in failure limit, stream slots, client address
     site.go                    public pages: info, Impressum, robots.txt, sitemap
     auth.go                    Subsonic password auth (hash check)
     response.go                JSON envelope helpers

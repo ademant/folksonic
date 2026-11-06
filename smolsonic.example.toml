@@ -66,3 +66,11 @@ covers_dir = "covers"
 # contact        = ""                              # email or URL
 # repository     = "https://github.com/ademant/folksonic"
 # impressum_file = ""
+
+# Concurrent audio streams: across all accounts, and per account. 0 disables a cap.
+# max_streams          = 64
+# max_streams_per_user = 8
+
+# Reverse proxies whose X-Forwarded-For is believed when logging and limiting
+# sign-in attempts. IPs or CIDR ranges. Leave empty when clients connect directly.
+# trusted_proxies = ["127.0.0.1", "::1"]

@@ -3,7 +3,9 @@ package server
 import (
 	"encoding/hex"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/tsirysndr/tinysonic/internal/passwords"
 	"github.com/tsirysndr/tinysonic/internal/users"
@@ -44,16 +46,46 @@ func (s *State) resolveCaller(r *http.Request) (users.User, bool) {
 	if name == "" {
 		return users.User{}, false
 	}
+	ip := s.clientIP(r)
+	// Refused before any hashing, so a flood of guesses costs little CPU.
+	if ok, retry := s.auth.allow(ip); !ok {
+		if l := reqLogFrom(ctx); l != nil {
+			l.throttled, l.retryAfter = true, retry
+		}
+		logAuthFailure(ip, "rate-limit", r.URL.Path)
+		return users.User{}, false
+	}
 	u, err := users.ByName(ctx, s.Pool, name)
-	if err != nil || u.Status != users.StatusActive {
+	if err != nil {
 		// Hash anyway, so an unknown username takes as long as a wrong password.
 		passwords.Burn(q.Get("p"))
+		s.authFailed(ip, "unknown-user", r.URL.Path)
+		return users.User{}, false
+	}
+	if u.Status != users.StatusActive {
+		passwords.Burn(q.Get("p"))
+		s.authFailed(ip, "not-active", r.URL.Path)
 		return users.User{}, false
 	}
 	if !authCheck(u.Username, u.PasswordHash, name, q.Get("p")) {
+		s.authFailed(ip, "password", r.URL.Path)
 		return users.User{}, false
 	}
+	s.auth.succeed(ip)
 	return u, true
+}
+
+// authFailed records a failed password attempt and makes the caller wait the
+// progressive delay before it is answered. It is the same for every failure
+// reason, so the timing does not show whether a username exists.
+func (s *State) authFailed(ip, reason, path string) {
+	logAuthFailure(ip, reason, path)
+	time.Sleep(s.auth.fail(ip))
+}
+
+// clientIP is the address failed attempts are attributed to; see clientIP.
+func (s *State) clientIP(r *http.Request) string {
+	return clientIP(r, s.trusted)
 }
 
 // usesTokenAuth reports whether a request tried Subsonic token auth (t and s)
@@ -68,6 +100,11 @@ func usesTokenAuth(r *http.Request) bool {
 // error code tells the client what went wrong: 42 for a removed mechanism,
 // 40 for wrong credentials.
 func (s *State) writeAuthFailure(w http.ResponseWriter, r *http.Request) {
+	if l := reqLogFrom(r.Context()); l != nil && l.throttled {
+		w.Header().Set("Retry-After", strconv.Itoa(retrySeconds(l.retryAfter)))
+		writeErrorStatus(w, http.StatusTooManyRequests, 0, "Too many failed sign-in attempts; wait before trying again")
+		return
+	}
 	if usesTokenAuth(r) {
 		writeError(w, 42, "Authentication mechanism not supported. Use API keys or username and password")
 		return

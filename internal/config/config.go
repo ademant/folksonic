@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -50,10 +51,40 @@ type Config struct {
 	LogLevel string `toml:"log_level"`
 	// Site is shown on the public information page; see Site.
 	Site Site `toml:"site"`
+	// MaxStreams caps the audio streams served at once, across all accounts.
+	// Zero disables the cap. Load sets the default.
+	MaxStreams int `toml:"max_streams"`
+	// MaxStreamsPerUser caps the streams one account may hold at once. Zero
+	// disables the cap. Load sets the default.
+	MaxStreamsPerUser int `toml:"max_streams_per_user"`
+	// TrustedProxies lists the addresses (IPs or CIDR ranges) of reverse
+	// proxies. Only a request from one of them has its X-Forwarded-For header
+	// believed when the client's address is logged and rate limited.
+	TrustedProxies []string `toml:"trusted_proxies"`
 
 	// Warnings holds non-fatal problems found while loading, such as a config
 	// file readable by other users. Callers should log them.
 	Warnings []string `toml:"-"`
+}
+
+// Defaults for the stream limits, used when the key is absent. Zero in the
+// file disables the limit.
+const (
+	DefaultMaxStreams        = 64
+	DefaultMaxStreamsPerUser = 8
+)
+
+// ParseTrustedProxy accepts one trusted_proxies entry: an IP address or a CIDR
+// range.
+func ParseTrustedProxy(s string) (netip.Prefix, error) {
+	if p, err := netip.ParsePrefix(s); err == nil {
+		return p, nil
+	}
+	a, err := netip.ParseAddr(s)
+	if err != nil {
+		return netip.Prefix{}, fmt.Errorf("%q is not an IP address or CIDR range", s)
+	}
+	return netip.PrefixFrom(a, a.BitLen()), nil
 }
 
 // DefaultRepository is the repository link shown when [site] repository is empty.
@@ -132,6 +163,20 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("config: log_level: %w", err)
 	}
 	c.LogLevel = strings.ToLower(lvl.String())
+	if c.MaxStreams < 0 || c.MaxStreamsPerUser < 0 {
+		return nil, errors.New("config: max_streams and max_streams_per_user must not be negative")
+	}
+	if !md.IsDefined("max_streams") {
+		c.MaxStreams = DefaultMaxStreams
+	}
+	if !md.IsDefined("max_streams_per_user") {
+		c.MaxStreamsPerUser = DefaultMaxStreamsPerUser
+	}
+	for _, p := range c.TrustedProxies {
+		if _, err := ParseTrustedProxy(p); err != nil {
+			return nil, fmt.Errorf("config: trusted_proxies: %w", err)
+		}
+	}
 	if c.Site.Repository == "" {
 		c.Site.Repository = DefaultRepository
 	}
