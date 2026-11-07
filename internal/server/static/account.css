@@ -1,0 +1,29 @@
+  :root { --bg:#fff; --fg:#1d1d1f; --muted:#6e6e73; --accent:#0a66c2; --line:#d2d2d7; --danger:#b42318; --panel:#f5f5f7; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#111; --fg:#f5f5f7; --muted:#a1a1a6; --accent:#4ea1ff; --line:#333; --danger:#ff7a6b; --panel:#1b1b1d; } }
+  :root[data-theme="dark"] { --bg:#111; --fg:#f5f5f7; --muted:#a1a1a6; --accent:#4ea1ff; --line:#333; --danger:#ff7a6b; --panel:#1b1b1d; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.4 system-ui, sans-serif; }
+  main { max-width:640px; margin:0 auto; padding:24px 16px 64px; }
+  header { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+  h1 { font-size:1.4rem; margin:0; }
+  h2 { font-size:1.1rem; margin:0 0 .6rem; }
+  section { margin-top:28px; padding:16px; background:var(--panel); border-radius:10px; }
+  p { margin:.4rem 0; color:var(--muted); }
+  label { display:block; margin:.6rem 0 .2rem; color:var(--muted); font-size:.9rem; }
+  input, select { width:100%; box-sizing:border-box; padding:.55rem; font:inherit; color:var(--fg); background:var(--bg); border:1px solid var(--line); border-radius:6px; }
+  button { margin-top:.6rem; padding:.55rem .9rem; font:inherit; color:#fff; background:var(--accent); border:0; border-radius:6px; cursor:pointer; }
+  button.secondary { background:transparent; color:var(--accent); border:1px solid var(--accent); }
+  button.danger { background:transparent; color:var(--danger); border:1px solid var(--danger); }
+  button.small { padding:.3rem .6rem; font-size:.9rem; margin-top:0; }
+  ul { list-style:none; margin:.6rem 0 0; padding:0; }
+  li { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:.5rem 0; border-top:1px solid var(--line); flex-wrap:wrap; }
+  li span.meta { color:var(--muted); font-size:.9rem; }
+  code { font-family:ui-monospace, monospace; word-break:break-all; }
+  #newKey { margin-top:.8rem; padding:.8rem; border:1px dashed var(--accent); border-radius:8px; display:none; }
+  #qr img { display:block; max-width:256px; width:100%; height:auto; background:#fff; padding:8px; border-radius:6px; margin-top:.6rem; }
+  #qr { display:none; }
+  #notice { min-height:1.4em; margin-top:12px; color:var(--muted); }
+  .row { display:grid; grid-template-columns:2fr 1fr; gap:10px; }
+  @media (max-width:480px) { .row { grid-template-columns:1fr; } }
+  [hidden] { display:none !important; }
+
+.self-end{align-self:end}

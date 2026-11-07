@@ -24,7 +24,7 @@ func (s *State) ServeLibraryPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Robots-Tag", "noindex")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self'; script-src 'self'; frame-ancestors 'none'")
 	_, _ = w.Write(libraryPage)
 }
 

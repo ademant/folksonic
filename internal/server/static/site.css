@@ -1,0 +1,12 @@
+body { font: 16px/1.5 system-ui, sans-serif; margin: 0; background: #fbfbfc; color: #1d1f24; }
+main { max-width: 42rem; margin: 0 auto; padding: 2rem 1rem; }
+h1 { font-size: 1.8rem; margin: 0 0 .25rem; }
+.version { color: #6b7080; font-size: .9rem; margin: 0 0 1.5rem; }
+a { color: #2456c8; }
+nav ul { padding-left: 1.2rem; }
+footer { margin-top: 3rem; color: #6b7080; font-size: .85rem; }
+@media (prefers-color-scheme: dark) {
+  body { background: #15161a; color: #e6e7eb; }
+  a { color: #8fb4ff; }
+  .version, footer { color: #9499a8; }
+}

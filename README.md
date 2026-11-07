@@ -133,6 +133,7 @@ Configuration is checked at startup:
 | `log_level`          | Minimum level written to the log: `debug`, `info` (default), `warn` or `error`. `--log-level` overrides it. See [Logging](#logging). |
 | `max_streams`        | Audio streams (`stream`, `download`) served at once, across all accounts. Default 64; `0` disables the cap. A stream over the cap gets HTTP 503 with `Retry-After`. |
 | `max_streams_per_user` | Streams one account may hold at once. Default 8; `0` disables the cap. |
+| `legacy_password_auth` | Allow Subsonic clients to sign in with `u`/`p` on every request. Default `true`. Set `false` to require API keys (or a session) for all Subsonic calls. |
 | `trusted_proxies`    | Addresses (IPs or CIDR ranges) of reverse proxies whose `X-Forwarded-For` is believed. Empty by default: the connecting address is the client. See [Sign-in limits](#sign-in-limits). |
 | `[site]` table       | Public description: `name`, `description`, `contact` (email or URL), `repository` (default `https://github.com/ademant/folksonic`) and `impressum_file` (a Markdown file). Empty fields are not shown. See [Public pages](#public-pages). |
 | `[oidc]` table       | Optional single sign-on with an OpenID Connect provider: `issuer`, `client_id` and optional `client_secret`. Needs `base_url`. See [Single sign-on](#single-sign-on). Off unless `issuer` is set. |
@@ -399,7 +400,9 @@ Every `/rest/*` request is authenticated in this order:
    password sign-in on the web page at `/login`.
 3. **Subsonic username and password**: `u` with `p`, plain or `p=enc:<hex>`.
    Clients that offer a password option use this. Token auth (`t` with `s`) is
-   refused with Subsonic error 42.
+   refused with Subsonic error 42. Set `legacy_password_auth = false` to turn
+   this method off: such requests then get error 42, and API keys are the only
+   way in. Password sign-in on `/login` and `/api/login` is not affected.
 
 Credentials may be sent in the query string or as a form-encoded POST body.
 Only active accounts authenticate; pending and disabled accounts are refused.
@@ -536,6 +539,14 @@ a reverse proxy that is the proxy's host, not the tinysonic host.
 ```toml
 trusted_proxies = ["127.0.0.1", "::1"]
 ```
+
+## Security headers and pages
+
+Every response carries `X-Frame-Options: DENY` and `X-Content-Type-Options:
+nosniff`, so no other site can frame tinysonic, including the sign-in page.
+The web pages have no inline script or style. Their scripts and stylesheets
+are served from `/static/` and the policy is `'self'` only. A reverse proxy
+should not add `'unsafe-inline'` to that policy.
 
 ## Public pages
 
