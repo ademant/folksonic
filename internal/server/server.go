@@ -39,7 +39,9 @@ type State struct {
 	// the default: built-in BPM on FFmpegPath, started by hand.
 	Analysis *analysis.Plan
 	// jobs runs background analysis jobs.
-	jobs     jobRunner
+	jobs jobRunner
+	// dups is the last duplicate search (GET /api/duplicates).
+	dups     duplicateIndex
 	Progress *scanner.Progress
 
 	// BaseURL is the public address clients reach the server at; it is
@@ -145,6 +147,7 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 		Progress:          progress,
 		Analysis:          analysis.NewPlan(cfg.Analysis, cfg.FFmpegPath),
 	}
+	go s.refreshDuplicates()
 	if s.Analysis.Auto {
 		// Scans and watcher updates queue analysis of what they changed; the
 		// first pass also covers a startup scan that finished before this.
@@ -470,6 +473,7 @@ func (s *State) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/library/bpm", s.APILibraryBPM)
 	mux.HandleFunc("POST /api/library/analysis", s.APILibraryAnalysis)
 	mux.HandleFunc("GET /api/analysis", s.APIAnalysis)
+	mux.HandleFunc("GET /api/duplicates", s.APIDuplicates)
 	mux.HandleFunc("POST /api/library/jobs/cancel", s.APILibraryCancel)
 	return mux
 }

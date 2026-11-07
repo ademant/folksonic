@@ -61,7 +61,7 @@ var ExternalAnalysisTools = []string{"folksentia", ToolFFmpeg}
 var ToolFeatures = map[string][]string{
 	ToolBuiltin:  {"bpm"},
 	ToolFFmpeg:   {"loudness"},
-	"folksentia": {"bpm", "beats", "key", "loudness", "silence", "waveform"},
+	"folksentia": {"bpm", "beats", "key", "loudness", "silence", "waveform", "fingerprint"},
 }
 
 // Assignments returns feature → tool for every assigned feature.
