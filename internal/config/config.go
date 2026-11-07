@@ -65,6 +65,9 @@ type Config struct {
 	// proxies. Only a request from one of them has its X-Forwarded-For header
 	// believed when the client's address is logged and rate limited.
 	TrustedProxies []string `toml:"trusted_proxies"`
+	// Analysis assigns the per-track analysis features to tools; see
+	// Analysis.
+	Analysis Analysis `toml:"analysis"`
 
 	// Warnings holds non-fatal problems found while loading, such as a config
 	// file readable by other users. Callers should log them.
@@ -183,6 +186,9 @@ func Load(path string) (*Config, error) {
 		if _, err := ParseTrustedProxy(p); err != nil {
 			return nil, fmt.Errorf("config: trusted_proxies: %w", err)
 		}
+	}
+	if err := c.Analysis.normalise(md.IsDefined("analysis")); err != nil {
+		return nil, err
 	}
 	if c.Site.Repository == "" {
 		c.Site.Repository = DefaultRepository

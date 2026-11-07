@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: tinysonic JSON API
   version: 1.0.0
-  summary: Accounts, API keys, device pairing, passkeys and single sign-on.
+  summary: Accounts, API keys, device pairing, passkeys, single sign-on and track analysis.
   description: |
     JSON endpoints under `/api`, used by the web account page and the Android
     app. They are not part of the Subsonic API: the Subsonic endpoints under
@@ -28,6 +28,11 @@ tags:
   - name: Single sign-on
   - name: Library
     description: Library administration for librarians. Other accounts get 403.
+  - name: Analysis
+    description: >-
+      Per-track audio analysis computed in the background by the tools
+      assigned in the `[analysis]` config table. Advertised as the
+      OpenSubsonic extension `tinysonicAnalysis` (version 1).
 components:
   securitySchemes:
     bearerAuth:
@@ -57,18 +62,68 @@ components:
   schemas:
     LibraryJob:
       type: object
-      description: The running or last BPM job. Only `running` is set before the first job.
+      description: >-
+        The running or last job: `bpm` from the BPM buttons, `analysis` for a
+        recalculation (`recalc`) or the automatic analysis after scans
+        (`pending`). Only `running` is set before the first job.
       properties:
-        kind: {type: string, enum: [bpm]}
-        mode: {type: string, enum: [missing, all]}
+        kind: {type: string, enum: [bpm, analysis]}
+        mode: {type: string, enum: [missing, all, recalc, pending]}
         running: {type: boolean}
         total: {type: integer}
         done: {type: integer}
-        updated: {type: integer, description: Songs that got a BPM.}
+        updated: {type: integer, description: Songs with a changed value.}
         failed: {type: integer}
         startedAt: {type: string, format: date-time}
         finishedAt: {type: string, format: date-time, nullable: true}
         error: {type: string, nullable: true, description: '"stopped" when cancelled.'}
+    Analysis:
+      type: object
+      properties:
+        id: {type: string}
+        fileVersion: {type: string, description: '`sha256:…` of the file the values belong to; changes when the file changes.'}
+        waveform:
+          type: object
+          nullable: true
+          properties:
+            bins: {type: integer}
+            peaks: {type: array, items: {type: integer, minimum: 0, maximum: 255}, description: Peak per bin, the loudest bin is 255.}
+        beats:
+          type: object
+          nullable: true
+          properties:
+            timesMs: {type: array, items: {type: integer}}
+            downbeatIndexes: {type: array, nullable: true, items: {type: integer}, description: Indexes into timesMs of beats that start a bar.}
+        bpm:
+          type: object
+          nullable: true
+          properties:
+            value: {type: number}
+            confidence: {type: number, nullable: true, minimum: 0, maximum: 1, description: '`null` for BPM from tags.'}
+        key:
+          type: object
+          nullable: true
+          properties:
+            tonic: {type: string, examples: [A, F#, Bb]}
+            mode: {type: string, enum: [major, minor]}
+            confidence: {type: number, nullable: true, minimum: 0, maximum: 1}
+        loudness:
+          type: object
+          nullable: true
+          properties:
+            integratedLufs: {type: number, nullable: true}
+            truePeakDbtp: {type: number, nullable: true}
+        silence:
+          type: object
+          nullable: true
+          properties:
+            leadMs: {type: integer, nullable: true}
+            tailMs: {type: integer, nullable: true}
+        fingerprint: {type: string, nullable: true, description: Not computed yet; always null in version 1.}
+        pending:
+          type: array
+          items: {type: string}
+          description: Only in 202 responses.
     Error:
       type: object
       required: [error]
@@ -895,7 +950,7 @@ paths:
                     type: object
                     properties:
                       tag: {type: integer, description: Songs with a BPM from file tags.}
-                      calc: {type: integer, description: Songs with a calculated BPM.}
+                      calc: {type: integer, description: Songs with a BPM from the built-in estimator or an analysis tool.}
                       missing: {type: integer}
                   lastScan: {type: string, format: date-time, nullable: true, description: When the last full scan finished.}
                   scan:
@@ -910,6 +965,21 @@ paths:
                     properties:
                       available: {type: boolean}
                       reason: {type: string, description: Why BPM calculation is unavailable.}
+                  analysis:
+                    type: object
+                    properties:
+                      auto: {type: boolean, description: 'Assigned features are analysed after every scan (the `[analysis]` table is present).'}
+                      features:
+                        type: object
+                        additionalProperties: {type: string}
+                        description: Feature → tool, for example `{"bpm": "folksentia", "loudness": "ffmpeg"}`.
+                      tools:
+                        type: object
+                        additionalProperties:
+                          type: object
+                          properties:
+                            available: {type: boolean}
+                            reason: {type: string, nullable: true}
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -932,10 +1002,12 @@ paths:
       tags: [Library]
       summary: Calculate BPM from the audio
       description: >-
-        Starts a background job that decodes 90 s from the middle of each track
-        with ffmpeg and estimates the tempo. `missing` analyses songs without a
-        BPM; `all` also recalculates calculated values. BPM from file tags is
-        never changed. Refused while a scan or another job runs.
+        Starts a background job with the tool assigned to `bpm` (by default the
+        built-in estimator, which decodes 90 s from the middle of each track
+        with ffmpeg). `missing` analyses songs without a BPM; `all` also
+        recalculates. The built-in estimator never changes BPM from file tags;
+        an external tool assigned to `bpm` replaces it. Refused while a scan or
+        another job runs; 503 when the tool is not available.
       requestBody:
         required: true
         content:
@@ -968,6 +1040,88 @@ paths:
           $ref: '#/components/responses/Conflict'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /api/library/analysis:
+    post:
+      tags: [Library]
+      summary: Recalculate the analysis of tracks
+      description: >-
+        Runs the assigned tools again for the selected tracks, whether or not
+        their files changed. Give either `ids` or `all`. `features` limits the
+        run to some features; each must have a tool assigned. Refused while a
+        scan or another job runs; 503 when a needed tool is not available.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ids: {type: array, items: {type: string}, description: Song ids.}
+                all: {type: boolean}
+                features:
+                  type: array
+                  items: {type: string, enum: [bpm, beats, key, loudness, silence, waveform, fingerprint]}
+      responses:
+        '202':
+          description: Job started.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, enum: [started]}
+                  job:
+                    $ref: '#/components/schemas/LibraryJob'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/analysis:
+    get:
+      tags: [Analysis]
+      summary: Stored analysis of one track
+      description: >-
+        Any signed-in account. Only reads the database: analysis runs in
+        background jobs. Every feature is `null` when unknown or not computed.
+        Values come from file tags (the key) or from the assigned tool, whose
+        result replaces the tag's.
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema: {type: string}
+          description: Song id (`so-…`).
+      responses:
+        '200':
+          description: The analysis.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Analysis'
+        '202':
+          description: >-
+            Automatic analysis is on and some assigned features have no result
+            yet. The body has what is known; `pending` lists the rest. Retry
+            after the `Retry-After` seconds.
+          headers:
+            Retry-After:
+              schema: {type: integer}
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Analysis'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /api/library/jobs/cancel:
     post:
       tags: [Library]

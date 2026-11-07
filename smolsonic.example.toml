@@ -38,6 +38,24 @@ allow_registration = false
 # Default: "ffmpeg" on PATH. Without it, everything else works.
 # ffmpeg_path = "/usr/bin/ffmpeg"
 
+# Per-track analysis (served by GET /api/analysis). Each feature is assigned
+# to one tool; unassigned features are not computed. With this table present,
+# assigned features are analysed in the background after every scan. Without
+# it, only BPM is calculated, by hand on the library page ("builtin").
+# Tools: "builtin" (bpm), "ffmpeg" (loudness, uses ffmpeg_path) and
+# "folksentia" (bpm, beats, key, loudness, silence, waveform).
+# [analysis]
+# bpm      = "folksentia"
+# beats    = "folksentia"
+# key      = "folksentia"
+# loudness = "ffmpeg"
+# silence  = "folksentia"
+# waveform = "folksentia"
+#
+# [analysis.tools.folksentia]
+# command = "/usr/local/bin/folksentia"   # absolute path, never looked up on PATH
+# timeout = "120s"                        # per track
+
 # Lowest log level written: debug, info, warn or error. --log-level overrides it.
 # log_level = "info"
 

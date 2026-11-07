@@ -28,6 +28,19 @@ type Progress struct {
 	running       atomic.Bool
 	count         atomic.Int64
 	watchFailures atomic.Int64
+	// afterChange is called after a scan finishes and after the watcher
+	// added or updated a song, so background analysis can pick up the work.
+	afterChange atomic.Pointer[func()]
+}
+
+// SetAfterChange registers fn to run (in its own goroutine) after a scan
+// and after each song the watcher adds or updates.
+func (p *Progress) SetAfterChange(fn func()) { p.afterChange.Store(&fn) }
+
+func (p *Progress) changed() {
+	if fn := p.afterChange.Load(); fn != nil {
+		go (*fn)()
+	}
 }
 
 func (p *Progress) Running() bool { return p.running.Load() }
@@ -66,6 +79,7 @@ const (
 func Scan(pool *sql.DB, roots []string, coversDir string, songTags []string, progress *Progress) (Stats, error) {
 	progress.running.Store(true)
 	progress.count.Store(0)
+	defer progress.changed() // runs after the slot is released
 	defer progress.running.Store(false)
 
 	if err := os.MkdirAll(coversDir, 0o755); err != nil {
@@ -210,8 +224,9 @@ func processFile(pool *sql.DB, path, coversDir string, songTags []string) (proce
 	mtime := meta.ModTime().Unix()
 	filesize := meta.Size()
 
-	var existingMtime sql.NullInt64
-	err = pool.QueryRow("SELECT mtime FROM songs WHERE path = ?", path).Scan(&existingMtime)
+	var existingMtime, oldSize, oldMtimeMs sql.NullInt64
+	err = pool.QueryRow("SELECT mtime, file_size, file_mtime_ms FROM songs WHERE path = ?", path).
+		Scan(&existingMtime, &oldSize, &oldMtimeMs)
 	switch {
 	case err == nil:
 		if existingMtime.Valid && existingMtime.Int64 == mtime {
@@ -222,6 +237,14 @@ func processFile(pool *sql.DB, path, coversDir string, songTags []string) (proce
 	default:
 		return 0, err
 	}
+
+	// The audio counts as changed unless size and mtime (ms) are known and
+	// equal. Only then are analysis results kept: a re-read forced by a
+	// migration (mtime = 0) or a tag-only edit that keeps both does not cost
+	// the track its analysis. An unknown fingerprint (songs added before it
+	// was recorded) also counts as changed; such songs have no results yet.
+	mtimeMs := meta.ModTime().UnixMilli()
+	audioChanged := !(oldSize.Valid && oldMtimeMs.Valid && oldSize.Int64 == filesize && oldMtimeMs.Int64 == mtimeMs)
 
 	ex, err := extractMetadata(path, filesize, coversDir, songTags)
 	if err != nil {
@@ -290,8 +313,8 @@ func processFile(pool *sql.DB, path, coversDir string, songTags []string) (proce
 		   (id, path, title, artist, artist_id, album, album_id, genre, track_number,
 		    disc_number, year, duration_ms, bitrate, filesize, suffix, content_type, cover_art, mtime, mbid, tags, created_at,
 		    rg_track_gain, rg_album_gain, rg_track_peak, rg_album_peak, rg_base_gain, meter,
-		    bpm, bpm_source, bpm_at)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		    bpm, bpm_source, bpm_at, file_size, file_mtime_ms)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(id) DO UPDATE SET
 		   path = excluded.path,
 		   title = excluded.title,
@@ -319,16 +342,25 @@ func processFile(pool *sql.DB, path, coversDir string, songTags []string) (proce
 		   rg_album_peak = excluded.rg_album_peak,
 		   rg_base_gain = excluded.rg_base_gain,
 		   meter = excluded.meter,
-		   -- A BPM tag always wins. A calculated BPM survives a re-read while
-		   -- the audio length is unchanged (tag edits, forced re-reads), and
-		   -- is cleared when the recording changed.
-		   bpm = CASE WHEN excluded.bpm IS NOT NULL THEN excluded.bpm
+		   file_size = excluded.file_size,
+		   file_mtime_ms = excluded.file_mtime_ms,
+		   -- A BPM from an assigned analysis tool (bpm_source is the tool's
+		   -- name) is kept while the audio is unchanged (?33 is 1 when it
+		   -- changed); the tool runs again otherwise. Apart from that a BPM tag
+		   -- always wins. A calculated BPM survives a re-read while the audio
+		   -- length is unchanged (tag edits, forced re-reads), and is cleared
+		   -- when the recording changed.
+		   bpm = CASE WHEN ?33 = 0 AND songs.bpm_source NOT IN ('tag', 'calc') THEN songs.bpm
+		              WHEN excluded.bpm IS NOT NULL THEN excluded.bpm
 		              WHEN songs.bpm_source = 'calc' AND songs.duration_ms = excluded.duration_ms THEN songs.bpm END,
-		   bpm_source = CASE WHEN excluded.bpm IS NOT NULL THEN 'tag'
+		   bpm_source = CASE WHEN ?33 = 0 AND songs.bpm_source NOT IN ('tag', 'calc') THEN songs.bpm_source
+		              WHEN excluded.bpm IS NOT NULL THEN 'tag'
 		              WHEN songs.bpm_source = 'calc' AND songs.duration_ms = excluded.duration_ms THEN 'calc' END,
-		   bpm_confidence = CASE WHEN excluded.bpm IS NULL AND songs.bpm_source = 'calc'
+		   bpm_confidence = CASE WHEN ?33 = 0 AND songs.bpm_source NOT IN ('tag', 'calc') THEN songs.bpm_confidence
+		              WHEN excluded.bpm IS NULL AND songs.bpm_source = 'calc'
 		              AND songs.duration_ms = excluded.duration_ms THEN songs.bpm_confidence END,
-		   bpm_at = CASE WHEN excluded.bpm IS NOT NULL THEN
+		   bpm_at = CASE WHEN ?33 = 0 AND songs.bpm_source NOT IN ('tag', 'calc') THEN songs.bpm_at
+		              WHEN excluded.bpm IS NOT NULL THEN
 		                   CASE WHEN songs.bpm_source = 'tag' AND songs.bpm = excluded.bpm THEN songs.bpm_at ELSE excluded.bpm_at END
 		              WHEN songs.bpm_source = 'calc' AND songs.duration_ms = excluded.duration_ms THEN songs.bpm_at END`,
 		songID, path, ex.Title, ex.Artist, artistID, ex.Album, albumID,
@@ -336,8 +368,11 @@ func processFile(pool *sql.DB, path, coversDir string, songTags []string) (proce
 		filesize, ex.Suffix, ex.ContentType, ex.CoverFilename, mtime, ex.TrackMBID, ex.Tags,
 		now,
 		au.TrackGain, au.AlbumGain, au.TrackPeak, au.AlbumPeak, au.BaseGain, au.Meter,
-		au.BPM, bpmSource, bpmAt,
+		au.BPM, bpmSource, bpmAt, filesize, mtimeMs, boolInt(audioChanged),
 	); err != nil {
+		return 0, err
+	}
+	if err := storeTagValues(tx, songID, au, existed && audioChanged); err != nil {
 		return 0, err
 	}
 	if err := markModified(tx); err != nil {
@@ -550,4 +585,11 @@ func mimeForSuffix(suffix string) string {
 		return "audio/x-ape"
 	}
 	return "application/octet-stream"
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }

@@ -68,7 +68,8 @@
     }
     $("jobLast").hidden = jobRunning || !job.kind;
     if (!jobRunning && job.kind) {
-      $("jobLast").textContent = "Last run (" + (job.mode === "all" ? "recalculate" : "missing") + "), finished " +
+      var label = {all: "recalculate", missing: "missing", recalc: "recalculate analysis", pending: "analysis after scan"}[job.mode] || job.mode;
+      $("jobLast").textContent = "Last run (" + label + "), finished " +
         when(job.finishedAt) + ": " + num(job.updated) + " stored, " + num(job.failed) + " failed" +
         (job.error ? " — " + job.error : "") + ".";
     }

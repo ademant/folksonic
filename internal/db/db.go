@@ -80,6 +80,9 @@ func migrate(d *sql.DB) error {
 	if err := migrateChangeFeed(d); err != nil {
 		return fmt.Errorf("change feed: %w", err)
 	}
+	if err := migrateAnalysis(d); err != nil {
+		return fmt.Errorf("analysis: %w", err)
+	}
 	return backfillFTS(d)
 }
 
@@ -176,7 +179,7 @@ CREATE TABLE IF NOT EXISTS songs (
     rg_base_gain  REAL,                       -- Opus header output gain in dB
     meter         TEXT,                       -- METER / TIME_SIGNATURE tag text
     bpm           REAL,
-    bpm_source    TEXT,                       -- 'tag' or 'calc'
+    bpm_source    TEXT,                       -- 'tag', 'calc' (built-in) or an analysis tool name
     bpm_confidence REAL,                      -- 0..1, calculated values only
     bpm_at        TEXT,                       -- when bpm was set
     FOREIGN KEY (album_id) REFERENCES albums(id),

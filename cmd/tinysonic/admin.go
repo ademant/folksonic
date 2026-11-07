@@ -33,6 +33,8 @@ func runAdmin(args []string) error {
 		return runInvite(args[1:])
 	case "pair":
 		return runPair(args[1:])
+	case "analysis":
+		return runAnalysis(args[1:])
 	}
 	return fmt.Errorf("unknown command %q", args[0])
 }
@@ -438,7 +440,7 @@ func readPassword(prompt string, confirm bool) (string, error) {
 // them, so `tinysonic user add alice -c cfg.toml` parses like the flags came
 // first. Go's flag package stops at the first positional argument otherwise.
 func reorderFlags(args []string) []string {
-	valueFlags := map[string]bool{"c": true, "user": true, "expires": true, "note": true, "username": true}
+	valueFlags := map[string]bool{"c": true, "user": true, "expires": true, "note": true, "username": true, "features": true}
 	var flags, pos []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]

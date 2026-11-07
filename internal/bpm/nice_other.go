@@ -2,4 +2,5 @@
 
 package bpm
 
-func lowerPriority(int) {}
+// LowerPriority is a no-op outside Linux.
+func LowerPriority(int) {}

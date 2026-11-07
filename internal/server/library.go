@@ -5,11 +5,13 @@ import (
 	"database/sql"
 	_ "embed"
 	"errors"
+	"fmt"
 	"net/http"
+	"slices"
 	"sync"
-	"time"
 
-	"github.com/tsirysndr/tinysonic/internal/bpm"
+	"github.com/tsirysndr/tinysonic/internal/analysis"
+	"github.com/tsirysndr/tinysonic/internal/config"
 	"github.com/tsirysndr/tinysonic/internal/logging"
 	"github.com/tsirysndr/tinysonic/internal/scanner"
 	"github.com/tsirysndr/tinysonic/internal/users"
@@ -43,11 +45,12 @@ func (s *State) requireLibrarian(w http.ResponseWriter, r *http.Request) (users.
 
 // ── Background jobs ─────────────────────────────────────────────────────────
 
-// jobRunner runs one librarian job at a time (BPM calculation). Library
+// jobRunner runs one background job at a time: analysis started by a
+// librarian (the BPM buttons, recalculation) or queued after a scan. Library
 // scans are tracked by scanner.Progress; a job and a scan never overlap.
 type jobRunner struct {
 	mu       sync.Mutex
-	kind     string // "bpm" while running or after the last run
+	kind     string // "bpm" or "analysis", while running or after the last run
 	mode     string
 	active   bool
 	total    int
@@ -58,6 +61,12 @@ type jobRunner struct {
 	finished string
 	errMsg   string
 	cancel   context.CancelFunc
+	// again asks for one more pending-analysis pass once the running job or
+	// scan has finished.
+	again bool
+	// lastUnavailable is the last "tool not available" message logged by
+	// the automatic analysis, so it is not repeated after every scan.
+	lastUnavailable string
 }
 
 func (j *jobRunner) running() bool {
@@ -86,68 +95,108 @@ func nullIfEmpty(s string) any {
 	return s
 }
 
-// bpmCandidate is a song the BPM job will analyse.
-type bpmCandidate struct {
-	id, path   string
-	durationMs int64
-}
-
 // Errors for job starts that are refused.
 var (
-	errBusy     = errors.New("a scan or another job is running")
-	errBadMode  = errors.New(`mode must be "missing" or "all"`)
-	errNoFFmpeg = errors.New("ffmpeg not available")
+	errBusy    = errors.New("a scan or another job is running")
+	errBadMode = errors.New(`mode must be "missing" or "all"`)
+	errNoTool  = analysis.ErrUnavailable
 )
 
+// plan is the analysis plan from the config. Without one (tests, or a State
+// built by hand) it is the default: built-in BPM on ffmpeg_path, by hand.
+func (s *State) plan() *analysis.Plan {
+	if s.Analysis != nil {
+		return s.Analysis
+	}
+	return analysis.NewPlan(config.Analysis{BPM: config.ToolBuiltin}, s.FFmpegPath)
+}
+
 // startBPM starts a BPM job: mode "missing" analyses songs without any BPM,
-// "all" also recalculates calculated values. Tag values are never touched.
+// "all" recalculates with the tool assigned to bpm. The built-in estimator
+// never replaces a tag value; an assigned external tool does.
 func (s *State) startBPM(mode string) error {
-	var where string
-	switch mode {
-	case "missing":
-		where = "bpm IS NULL"
-	case "all":
-		where = "bpm IS NULL OR bpm_source = 'calc'"
-	default:
+	if mode != "missing" && mode != "all" {
 		return errBadMode
 	}
-	ffmpeg, err := bpm.FindFFmpeg(s.FFmpegPath)
-	if err != nil {
-		return errors.Join(errNoFFmpeg, err)
-	}
+	return s.startJob("bpm", mode, analysis.Selection{Features: []string{"bpm"}, MissingBPM: mode == "missing"})
+}
 
+// startJob selects the tasks and starts them in the background.
+func (s *State) startJob(kind, mode string, sel analysis.Selection) error {
+	p := s.plan()
 	j := &s.jobs
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if j.active || (s.Progress != nil && s.Progress.Running()) {
 		return errBusy
 	}
-	rows, err := s.Pool.Query("SELECT id, path, duration_ms FROM songs WHERE " + where + " ORDER BY id")
+	if sel.Features != nil && slices.ContainsFunc(sel.Features, func(f string) bool { return p.Tool(f) == "" }) {
+		return fmt.Errorf("%w: %v", errNotAssigned, sel.Features)
+	}
+	todo, err := p.Select(context.Background(), s.Pool, sel)
 	if err != nil {
 		return err
 	}
-	var todo []bpmCandidate
-	for rows.Next() {
-		var c bpmCandidate
-		if err := rows.Scan(&c.id, &c.path, &c.durationMs); err != nil {
-			rows.Close()
-			return err
-		}
-		todo = append(todo, c)
+	cmds, err := p.Commands(todo)
+	if err != nil {
+		return err
 	}
-	rows.Close()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	// Field by field: the mutex is held and must not be overwritten.
-	j.kind, j.mode, j.active, j.cancel = "bpm", mode, true, cancel
-	j.total, j.done, j.failed, j.updated = len(todo), 0, 0, 0
-	j.started, j.finished, j.errMsg = nowISO8601(), "", ""
-	go s.runBPM(ctx, ffmpeg, todo)
+	s.launch(kind, mode, p, cmds, todo)
 	return nil
 }
 
-// runBPM analyses one track at a time; ffmpeg runs at the lowest priority.
-func (s *State) runBPM(ctx context.Context, ffmpeg string, todo []bpmCandidate) {
+// errNotAssigned is returned for a feature no tool is assigned to.
+var errNotAssigned = errors.New("no analysis tool is assigned to a requested feature")
+
+// launch starts the job; j.mu must be held.
+func (s *State) launch(kind, mode string, p *analysis.Plan, cmds map[string]string, todo []analysis.Task) {
+	j := &s.jobs
+	ctx, cancel := context.WithCancel(context.Background())
+	// Field by field: the mutex is held and must not be overwritten.
+	j.kind, j.mode, j.active, j.cancel = kind, mode, true, cancel
+	j.total, j.done, j.failed, j.updated = len(todo), 0, 0, 0
+	j.started, j.finished, j.errMsg = nowISO8601(), "", ""
+	go s.runJob(ctx, p, cmds, todo)
+}
+
+// queueAnalysis starts analysing pending features when automatic analysis
+// is on. It is called after scans and watcher updates; while a scan or a job
+// runs, the pass is deferred until it ends.
+func (s *State) queueAnalysis() {
+	p := s.plan()
+	if !p.Auto {
+		return
+	}
+	j := &s.jobs
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.active || (s.Progress != nil && s.Progress.Running()) {
+		j.again = true
+		return
+	}
+	todo, err := p.Select(context.Background(), s.Pool, analysis.Selection{Pending: true})
+	if err != nil {
+		logging.Errorf("analysis: selecting pending tracks: %v", err)
+		return
+	}
+	if len(todo) == 0 {
+		return
+	}
+	cmds, err := p.Commands(todo)
+	if err != nil {
+		if err.Error() != j.lastUnavailable {
+			logging.Warnf("analysis: %d tracks pending, not started: %v", len(todo), err)
+			j.lastUnavailable = err.Error()
+		}
+		return
+	}
+	j.lastUnavailable = ""
+	logging.Infof("analysis: %d tracks pending", len(todo))
+	s.launch("analysis", "pending", p, cmds, todo)
+}
+
+// runJob analyses one track at a time; tools run at the lowest priority.
+func (s *State) runJob(ctx context.Context, p *analysis.Plan, cmds map[string]string, todo []analysis.Task) {
 	j := &s.jobs
 	defer func() {
 		j.mu.Lock()
@@ -155,65 +204,32 @@ func (s *State) runBPM(ctx context.Context, ffmpeg string, todo []bpmCandidate) 
 		if ctx.Err() != nil && j.errMsg == "" {
 			j.errMsg = "stopped"
 		}
-		updated := j.updated
+		updated, kind, again := j.updated, j.kind, j.again && ctx.Err() == nil
+		j.again = false
 		j.mu.Unlock()
 		if updated > 0 {
 			markLibraryModified(s.Pool)
 		}
-		logging.Infof("bpm: finished, %d updated", updated)
+		logging.Infof("%s: finished, %d updated", kind, updated)
+		if again {
+			go s.queueAnalysis()
+		}
 	}()
-	for _, c := range todo {
+	for _, t := range todo {
 		if ctx.Err() != nil {
 			return
 		}
-		ok := s.analyseOne(ctx, ffmpeg, c)
+		out := p.RunTask(ctx, s.Pool, cmds, t)
 		j.mu.Lock()
 		j.done++
-		switch ok {
-		case bpmFailed:
+		if out.Failed {
 			j.failed++
-		case bpmStored:
+		}
+		if out.Changed {
 			j.updated++
 		}
 		j.mu.Unlock()
 	}
-}
-
-type bpmResult int
-
-const (
-	bpmFailed bpmResult = iota
-	bpmStored
-	bpmSkipped // the song changed meanwhile (tag added, removed)
-)
-
-func (s *State) analyseOne(ctx context.Context, ffmpeg string, c bpmCandidate) bpmResult {
-	tctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	defer cancel()
-	samples, err := bpm.Decode(tctx, ffmpeg, c.path, float64(c.durationMs)/1000)
-	if err != nil {
-		if ctx.Err() == nil {
-			logging.Warnf("bpm %s: %v", c.id, err)
-		}
-		return bpmFailed
-	}
-	tempo, conf, err := bpm.Estimate(samples)
-	if err != nil {
-		logging.Warnf("bpm %s: %v", c.id, err)
-		return bpmFailed
-	}
-	// The condition keeps tag values safe if a scan added one meanwhile.
-	res, err := s.Pool.ExecContext(ctx,
-		`UPDATE songs SET bpm = ?, bpm_source = 'calc', bpm_confidence = ?, bpm_at = ?
-		 WHERE id = ? AND (bpm IS NULL OR bpm_source = 'calc')`,
-		tempo, conf, nowISO8601(), c.id)
-	if err != nil {
-		return bpmFailed
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return bpmSkipped
-	}
-	return bpmStored
 }
 
 func markLibraryModified(db *sql.DB) {
@@ -236,7 +252,7 @@ func (s *State) APILibraryStats(w http.ResponseWriter, r *http.Request) {
 		(SELECT COUNT(*) FROM artists), (SELECT COUNT(*) FROM albums), COUNT(*),
 		COALESCE(SUM(duration_ms), 0),
 		COUNT(*) FILTER (WHERE bpm_source = 'tag'),
-		COUNT(*) FILTER (WHERE bpm_source = 'calc'),
+		COUNT(*) FILTER (WHERE bpm_source IS NOT NULL AND bpm_source <> 'tag'),
 		COUNT(*) FILTER (WHERE bpm IS NULL),
 		(SELECT value FROM settings WHERE key = ?)
 		FROM songs`, scanner.LastScanKey).Scan(&artists, &albums, &songs, &durMs, &bpmTag, &bpmCalc, &bpmMissing, &lastScan)
@@ -244,9 +260,20 @@ func (s *State) APILibraryStats(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusInternalServerError, "database error")
 		return
 	}
+	// "ffmpeg" is whether the BPM buttons can work: the tool assigned to bpm
+	// (the built-in estimator decodes with ffmpeg) is available.
+	p := s.plan()
+	avail := p.Available()
 	ff := J{"available": true}
-	if _, err := bpm.FindFFmpeg(s.FFmpegPath); err != nil {
-		ff = J{"available": false, "reason": err.Error()}
+	switch tool := p.Tool("bpm"); {
+	case tool == "":
+		ff = J{"available": false, "reason": "no tool is assigned to bpm"}
+	case avail[tool] != "":
+		ff = J{"available": false, "reason": avail[tool]}
+	}
+	tools := J{}
+	for tool, reason := range avail {
+		tools[tool] = J{"available": reason == "", "reason": nullIfEmpty(reason)}
 	}
 	scan := J{"running": false}
 	if s.Progress != nil {
@@ -259,6 +286,7 @@ func (s *State) APILibraryStats(w http.ResponseWriter, r *http.Request) {
 		"scan":     scan,
 		"job":      s.jobs.status(),
 		"ffmpeg":   ff,
+		"analysis": J{"auto": p.Auto, "features": p.Assignments(), "tools": tools},
 	})
 }
 
@@ -300,7 +328,47 @@ func (s *State) APILibraryBPM(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, errBusy):
 		writeAPIError(w, http.StatusConflict, err.Error())
-	case errors.Is(err, errNoFFmpeg):
+	case errors.Is(err, errNoTool), errors.Is(err, errNotAssigned):
+		writeAPIError(w, http.StatusServiceUnavailable, err.Error())
+	default:
+		writeAPIError(w, http.StatusInternalServerError, "database error")
+	}
+}
+
+// APILibraryAnalysis re-runs the assigned tools regardless of earlier
+// results: {"ids": ["so-…"]} or {"all": true}, optionally limited to
+// {"features": ["key", …]}.
+func (s *State) APILibraryAnalysis(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireLibrarian(w, r); !ok {
+		return
+	}
+	var body struct {
+		IDs      []string `json:"ids"`
+		All      bool     `json:"all"`
+		Features []string `json:"features"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	if body.All == (len(body.IDs) > 0) {
+		writeAPIError(w, http.StatusBadRequest, `give either "ids" or "all": true`)
+		return
+	}
+	sel := analysis.Selection{IDs: body.IDs, Features: body.Features}
+	if len(body.Features) == 0 {
+		sel.Features = nil
+	}
+	if body.All {
+		sel.IDs = nil
+	}
+	switch err := s.startJob("analysis", "recalc", sel); {
+	case err == nil:
+		writeJSON(w, http.StatusAccepted, J{"status": "started", "job": s.jobs.status()})
+	case errors.Is(err, errNotAssigned):
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, errBusy):
+		writeAPIError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, errNoTool):
 		writeAPIError(w, http.StatusServiceUnavailable, err.Error())
 	default:
 		writeAPIError(w, http.StatusInternalServerError, "database error")

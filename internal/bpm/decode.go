@@ -45,7 +45,7 @@ func Decode(ctx context.Context, ffmpeg, path string, durationSec float64) ([]fl
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	lowerPriority(cmd.Process.Pid)
+	LowerPriority(cmd.Process.Pid)
 	if err := cmd.Wait(); err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()

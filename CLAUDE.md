@@ -68,10 +68,13 @@ Copy `smolsonic.example.toml` to `smolsonic.toml` for local testing. Don't commi
 | `internal/server/auth.go` | Caller resolution: API key, session, Subsonic credentials |
 | `internal/server/api_users.go` | JSON endpoints for accounts, API keys and pairing |
 | `internal/server/webauthn.go` | Passkey (WebAuthn) registration and sign-in |
-| `internal/server/library.go` | Librarian library page (`/library`, `static/library.html`), `/api/library/*`, BPM job runner |
+| `internal/server/library.go` | Librarian library page (`/library`, `static/library.html`), `/api/library/*`, background analysis job runner |
 | `internal/server/paging.go`, `minimal.go` | `tinysonicPaging` / `tinysonicLibraryInfo` and `tinysonicMinimal` vendor extensions |
 | `internal/logging/` | Leveled logging (`log/slog` handler, `log_level`), journald priority prefixes |
 | `internal/bpm/` | Tempo estimation (pure Go) and ffmpeg decoding for BPM calculation |
+| `internal/analysis/` | Per-track analysis: tool adapters (builtin, ffmpeg, folksentia), job selection, storage in `analysis`/`song_values` |
+| `internal/server/analysis.go` | `GET /api/analysis` (`tinysonicAnalysis`) |
+| `cmd/tinysonic/analysis.go` | `tinysonic analysis pending` and `tinysonic analysis recalc` |
 | `internal/server/login.go` | Password sign-in and the `/login` page (`static/login.html`) |
 | `internal/users/` | Accounts, API keys, invitation codes, pairing tokens, sessions, passkey storage |
 | `cmd/tinysonic/admin.go` | `tinysonic user …`, `tinysonic invite …` and `tinysonic pair` commands |
@@ -81,7 +84,7 @@ Copy `smolsonic.example.toml` to `smolsonic.toml` for local testing. Don't commi
 
 ## Key facts
 
-- **Pure Go, no external services.** Accounts, API keys, pairing tokens and sessions live in the SQLite database (`internal/users`). The optional `username`/`password` in the config only bootstraps the first admin. The one exception is **ffmpeg, an optional runtime dependency used only for BPM calculation** (`internal/bpm`, `ffmpeg_path`); everything must keep working without it, and nothing else may shell out.
+- **Pure Go, no external services.** Accounts, API keys, pairing tokens and sessions live in the SQLite database (`internal/users`). The optional `username`/`password` in the config only bootstraps the first admin. The exceptions are the **optional analysis tools**: ffmpeg (`ffmpeg_path`, BPM decoding and loudness) and the tools configured under `[analysis.tools]` (folksentia). They run only in background jobs (`internal/analysis`), from an explicit configured path (only ffmpeg falls back to `PATH`), through a per-tool adapter in code. Everything must keep working without them, and nothing else may shell out.
 - **DB**: SQLite at `database_path` (default `smolsonic.db`), WAL mode, FTS5 for search.
 - **IDs**: `ar-…` / `al-…` / `so-…`, derived from tag content. Keep them stable — clients store them as bookmarks. Changing the derivation breaks existing clients.
 - **Schema changes**: `schema` in `internal/db/db.go` uses `CREATE TABLE IF NOT EXISTS`. For a change to an existing table, add an explicit, idempotent migration step in `migrate()` rather than editing the `CREATE` statement alone, since existing databases won't pick it up.

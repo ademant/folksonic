@@ -12,6 +12,7 @@ var baseOpenSubsonicExtensions = []J{
 	{"name": "tinysonicMinimal", "versions": []int{1}},           // Prefer: tinysonic-minimal, see minimal.go
 	{"name": "tinysonicMeter", "versions": []int{1}},             // tinysonicMeter on songs from METER/TIME_SIGNATURE tags
 	{"name": "tinysonicLibraryChanges", "versions": []int{1, 2}}, // getLibraryChanges; 2 adds include=items, see changes.go
+	{"name": "tinysonicAnalysis", "versions": []int{1}},          // GET /api/analysis, see analysis.go
 }
 
 // GetOpenSubsonicExtensions lists the extensions above. It deliberately needs no
