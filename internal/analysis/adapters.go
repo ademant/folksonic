@@ -132,6 +132,9 @@ func folksentiaArgs(features []string, path string) []string {
 	if slices.Contains(features, "waveform") {
 		args = append(args, "--waveform="+strconv.Itoa(folksentiaBins))
 	}
+	if slices.Contains(features, "fingerprint") {
+		args = append(args, "--fingerprint")
+	}
 	// "--" so a file name starting with "-" is not read as an option.
 	return append(args, "--", path)
 }
@@ -166,8 +169,9 @@ type folksentiaOutput struct {
 		Bins  int   `json:"bins"`
 		Peaks []int `json:"peaks"`
 	} `json:"waveform"`
-	Beats           []float64 `json:"beats"`
-	DownbeatIndexes []int     `json:"downbeatIndexes"`
+	Beats           []float64    `json:"beats"`
+	DownbeatIndexes []int        `json:"downbeatIndexes"`
+	Fingerprint     *Fingerprint `json:"fingerprint"`
 }
 
 func parseFolksentia(out []byte, features []string) (Values, error) {
@@ -220,6 +224,16 @@ func parseFolksentia(out []byte, features []string) (Values, error) {
 					}
 				}
 				v[f] = &Waveform{Bins: o.Waveform.Bins, Peaks: o.Waveform.Peaks}
+			}
+		case "fingerprint":
+			if fp := o.Fingerprint; fp != nil && fp.Value != "" {
+				if fp.Algorithm != "chromaprint" {
+					return nil, fmt.Errorf("folksentia: unknown fingerprint algorithm %q", fp.Algorithm)
+				}
+				if _, _, err := DecodeFingerprint(fp.Value); err != nil {
+					return nil, fmt.Errorf("folksentia: %w", err)
+				}
+				v[f] = fp
 			}
 		case "beats":
 			if o.Beats != nil {

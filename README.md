@@ -26,7 +26,7 @@ Impressum page is [goldmark](https://github.com/yuin/goldmark), also pure Go.
   [ffmpeg](https://ffmpeg.org/) is an optional runtime dependency for BPM
   calculation and loudness analysis, and
   [folksentia](https://github.com/ademant/folksentia) is an optional analysis
-  tool (beats, key, loudness, silence, waveform). See
+  tool (beats, key, loudness, silence, waveform, fingerprint). See
   [Track analysis](#track-analysis).
 - Built on Go's `net/http` with [ncruces/go-sqlite3](https://pkg.go.dev/github.com/ncruces/go-sqlite3)
   (SQLite compiled to WebAssembly, no cgo, FTS5 enabled).
@@ -132,7 +132,7 @@ Configuration is checked at startup:
 | `allow_registration` | Enables `POST /api/register` without an invitation code. Default `false`. Invitation codes work either way. |
 | `song_tags`          | File tags exposed on songs, such as `["DANCE", "USE"]`. Only these names are read. Each song then carries `tinysonicTags`, and the `tinysonicSongTags` extension is advertised. Default empty. |
 | `ffmpeg_path`        | ffmpeg binary for BPM calculation and the `ffmpeg` analysis tool. Default: `ffmpeg` on `PATH`. Without ffmpeg, BPM calculation is unavailable and everything else works. |
-| `[analysis]` table   | Assigns analysis features (`bpm`, `beats`, `key`, `loudness`, `silence`, `waveform`) to tools, with `[analysis.tools.<name>]` entries (`command`, `timeout`). Without the table, only BPM is calculated, by hand from the library page. See [Track analysis](#track-analysis). |
+| `[analysis]` table   | Assigns analysis features (`bpm`, `beats`, `key`, `loudness`, `silence`, `waveform`, `fingerprint`) to tools, with `[analysis.tools.<name>]` entries (`command`, `timeout`). Without the table, only BPM is calculated, by hand from the library page. See [Track analysis](#track-analysis). |
 | `ignored_articles`   | Leading words skipped when indexing and sorting artists in `getArtists`/`getIndexes`, separated by spaces, and announced as `ignoredArticles`. An article ending in `'` (`L'`) matches without a following space. Default `"The El La Las Le Les Los Il L' An A Die Das Ein"`; `""` disables it. |
 | `log_level`          | Minimum level written to the log: `debug`, `info` (default), `warn` or `error`. `--log-level` overrides it. See [Logging](#logging). |
 | `max_streams`        | Audio streams (`stream`, `download`) served at once, across all accounts. Default 64; `0` disables the cap. A stream over the cap gets HTTP 503 with `Retry-After`. |
@@ -359,8 +359,8 @@ starting point. Each one stores a confidence (0–1).
 `GET /api/analysis?id=<song id>` (any signed-in account, extension
 `tinysonicAnalysis`) returns the stored analysis of a track: beat grid and
 downbeats, BPM with confidence, key and mode, integrated loudness and true
-peak, lead and tail silence, and waveform peaks. Every field is `null` when
-unknown. The schema is in [`docs/openapi.yaml`](docs/openapi.yaml):
+peak, lead and tail silence, waveform peaks and a Chromaprint fingerprint.
+Every field is `null` when unknown. The schema is in [`docs/openapi.yaml`](docs/openapi.yaml):
 
 ```json
 {
@@ -371,14 +371,24 @@ unknown. The schema is in [`docs/openapi.yaml`](docs/openapi.yaml):
   "key": {"tonic": "A", "mode": "minor", "confidence": 0.81},
   "loudness": {"integratedLufs": -9.4, "truePeakDbtp": -0.8},
   "silence": {"leadMs": 350, "tailMs": 1200},
-  "fingerprint": null
+  "fingerprint": {"algorithm": "chromaprint", "version": 2, "durationSec": 120, "value": "AQAD…"}
 }
 ```
 
 The endpoint only reads the database. 404 means no such song. 202 with
 `Retry-After` means automatic analysis is on and some assigned features have
-no result yet; `pending` lists them. `fingerprint` is always `null` for now
-(it waits for [folksentia#5](https://github.com/ademant/folksentia/issues/5)).
+no result yet; `pending` lists them.
+
+`GET /api/duplicates` (any signed-in account) lists groups of songs that hold
+the same recording, `{"groups": [{"songIds": ["so-…", "so-…"], "similarity": 0.94}], …}`.
+Fingerprints are decoded in Go and compared by bit error rate at their best
+alignment; candidate pairs come from an index of sub-fingerprints, so the
+library is not compared pair by pair. Re-encodes and copies on several albums
+match, other recordings of the same tune do not. The search runs in the
+background at startup and after analysis jobs that changed values (about 2 s
+for 5,000 tracks); fingerprints added with the CLI while the server runs are
+included after the next job or restart. 202 with `Retry-After` while the first
+search runs.
 
 Each feature is assigned to one tool in the config. A feature without a tool
 is not computed:
@@ -391,6 +401,7 @@ key      = "folksentia"
 loudness = "ffmpeg"       # or "folksentia"
 silence  = "folksentia"
 waveform = "folksentia"
+fingerprint = "folksentia" # Chromaprint, for /api/duplicates
 
 [analysis.tools.folksentia]
 command = "/usr/local/bin/folksentia"   # absolute path, never looked up on PATH
@@ -401,7 +412,7 @@ timeout = "120s"                        # per track, default 2m
 |---|---|---|
 | `builtin` | `bpm` | The estimator described above. Never replaces a BPM from tags |
 | `ffmpeg` | `loudness` | ffmpeg's `ebur128` filter. Uses `ffmpeg_path`; `[analysis.tools.ffmpeg]` may set `command` and `timeout` |
-| `folksentia` | `bpm`, `beats`, `key`, `loudness`, `silence`, `waveform` | [folksentia](https://github.com/ademant/folksentia) output schema 1. One call per track for all its features |
+| `folksentia` | `bpm`, `beats`, `key`, `loudness`, `silence`, `waveform`, `fingerprint` | [folksentia](https://github.com/ademant/folksentia) output schema 1. One call per track for all its features. `fingerprint` needs folksentia built with libchromaprint |
 
 - **When it runs.** With an `[analysis]` table, every scan and every file the
   watcher adds or changes queues a background job for what has no result
@@ -531,6 +542,7 @@ The JSON endpoints below are described in [`docs/openapi.yaml`](docs/openapi.yam
 | POST | `/api/library/analysis` | librarian | Recalculate analysis, body `{"ids": ["so-…"]}` or `{"all": true}`, optionally `"features": ["key"]` (409 while a scan or job runs; 503 when a tool is not available) |
 | POST | `/api/library/jobs/cancel` | librarian | Stop the running job after the current track |
 | GET | `/api/analysis?id=` | user | Stored analysis of one track; see [Track analysis](#track-analysis) |
+| GET | `/api/duplicates` | user | Groups of songs with matching audio fingerprints; see [Track analysis](#track-analysis) |
 | GET | `/api/oidc/identities` | user | List linked identities |
 | DELETE | `/api/oidc/identities/{id}` | user | Unlink an identity. Refused (409) when it is the account's last sign-in method |
 

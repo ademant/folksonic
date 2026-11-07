@@ -203,6 +203,8 @@ func summary(features []string, vals Values) string {
 			parts = append(parts, "beats="+strconv.Itoa(len(x.TimesMs)), "downbeats="+strconv.Itoa(len(x.DownbeatIndexes)))
 		case *Waveform:
 			parts = append(parts, "waveform_bins="+strconv.Itoa(x.Bins))
+		case *Fingerprint:
+			parts = append(parts, "fingerprint_sec="+strconv.FormatFloat(x.DurationSec, 'f', 0, 64))
 		}
 	}
 	slices.Sort(parts)

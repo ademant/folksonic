@@ -209,6 +209,7 @@ func (s *State) runJob(ctx context.Context, p *analysis.Plan, cmds map[string]st
 		j.mu.Unlock()
 		if updated > 0 {
 			markLibraryModified(s.Pool)
+			s.refreshDuplicates()
 		}
 		logging.Infof("%s: finished, %d updated", kind, updated)
 		if again {

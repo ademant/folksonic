@@ -32,7 +32,8 @@ tags:
     description: >-
       Per-track audio analysis computed in the background by the tools
       assigned in the `[analysis]` config table. Advertised as the
-      OpenSubsonic extension `tinysonicAnalysis` (version 1).
+      OpenSubsonic extension `tinysonicAnalysis`; version 2 adds the
+      fingerprint object and `/api/duplicates`.
 components:
   securitySchemes:
     bearerAuth:
@@ -119,7 +120,15 @@ components:
           properties:
             leadMs: {type: integer, nullable: true}
             tailMs: {type: integer, nullable: true}
-        fingerprint: {type: string, nullable: true, description: Not computed yet; always null in version 1.}
+        fingerprint:
+          type: object
+          nullable: true
+          description: Chromaprint fingerprint of the first 120 s. Only compare fingerprints with the same algorithm and version.
+          properties:
+            algorithm: {type: string, enum: [chromaprint]}
+            version: {type: integer, description: 'Chromaprint algorithm version, 2 for the fpcalc/AcoustID default.'}
+            durationSec: {type: number, description: Seconds of audio fingerprinted.}
+            value: {type: string, description: 'Compressed fingerprint, base64 as fpcalc prints it.'}
         pending:
           type: array
           items: {type: string}
@@ -1122,6 +1131,41 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+  /api/duplicates:
+    get:
+      tags: [Analysis]
+      summary: Groups of songs that hold the same recording
+      description: >-
+        Any signed-in account. Songs are grouped when their audio
+        fingerprints match: the bit error rate at the best alignment is at
+        most 0.15, so re-encodes (FLAC and MP3) and copies on several albums
+        match, other recordings of the same tune do not. The groups come from
+        a background search at startup and after analysis jobs that changed
+        values; songs removed since then are left out.
+      responses:
+        '200':
+          description: The groups.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  groups:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        songIds: {type: array, items: {type: string}, minItems: 2}
+                        similarity: {type: number, minimum: 0, maximum: 1, description: 1 − bit error rate of the least similar matched pair in the group.}
+                  computedAt: {type: string, format: date-time}
+                  fingerprints: {type: integer, description: Fingerprints compared.}
+        '202':
+          description: The first search is still running. Retry after the `Retry-After` seconds.
+          headers:
+            Retry-After:
+              schema: {type: integer}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /api/library/jobs/cancel:
     post:
       tags: [Library]

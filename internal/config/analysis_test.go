@@ -52,10 +52,10 @@ timeout = "90s"
 
 func TestAnalysisRejected(t *testing.T) {
 	for cfg, want := range map[string]string{
-		"[analysis]\nkey = \"builtin\"":     "builtin does not provide key",
-		"[analysis]\nloudness = \"fpcalc\"": "unknown tool",
-		"[analysis]\nkey = \"folksentia\"":  "[analysis.tools.folksentia] is not configured",
-		"[analysis]\nfingerprint = \"folksentia\"\n[analysis.tools.folksentia]\ncommand = \"/x\"": "does not provide fingerprint",
+		"[analysis]\nkey = \"builtin\"":                                     "builtin does not provide key",
+		"[analysis]\nloudness = \"fpcalc\"":                                 "unknown tool",
+		"[analysis]\nkey = \"folksentia\"":                                  "[analysis.tools.folksentia] is not configured",
+		"[analysis]\nfingerprint = \"ffmpeg\"":                              "ffmpeg does not provide fingerprint",
 		"[analysis]\nkey = \"ffmpeg\"":                                      "ffmpeg does not provide key",
 		"[analysis.tools.folksentia]\ncommand = \"folksentia\"":             "absolute path",
 		"[analysis.tools.folksentia]\ncommand = \"/x\"\ntimeout = \"soon\"": "positive duration",
