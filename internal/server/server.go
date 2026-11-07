@@ -16,6 +16,7 @@ import (
 
 	"github.com/go-webauthn/webauthn/webauthn"
 
+	"github.com/tsirysndr/tinysonic/internal/analysis"
 	"github.com/tsirysndr/tinysonic/internal/config"
 	"github.com/tsirysndr/tinysonic/internal/logging"
 	"github.com/tsirysndr/tinysonic/internal/scanner"
@@ -34,7 +35,10 @@ type State struct {
 	CoversDir       string
 	// FFmpegPath is the configured ffmpeg for BPM calculation (ffmpeg_path).
 	FFmpegPath string
-	// jobs runs librarian background jobs (BPM calculation).
+	// Analysis assigns analysis features to tools ([analysis]). Nil means
+	// the default: built-in BPM on FFmpegPath, started by hand.
+	Analysis *analysis.Plan
+	// jobs runs background analysis jobs.
 	jobs     jobRunner
 	Progress *scanner.Progress
 
@@ -139,6 +143,13 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 		FFmpegPath:        cfg.FFmpegPath,
 		CoversDir:         cfg.CoversDir,
 		Progress:          progress,
+		Analysis:          analysis.NewPlan(cfg.Analysis, cfg.FFmpegPath),
+	}
+	if s.Analysis.Auto {
+		// Scans and watcher updates queue analysis of what they changed; the
+		// first pass also covers a startup scan that finished before this.
+		progress.SetAfterChange(s.queueAnalysis)
+		go s.queueAnalysis()
 	}
 
 	go s.preloadSongs(ctx)
@@ -457,6 +468,8 @@ func (s *State) routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/library/stats", s.APILibraryStats)
 	mux.HandleFunc("POST /api/library/scan", s.APILibraryScan)
 	mux.HandleFunc("POST /api/library/bpm", s.APILibraryBPM)
+	mux.HandleFunc("POST /api/library/analysis", s.APILibraryAnalysis)
+	mux.HandleFunc("GET /api/analysis", s.APIAnalysis)
 	mux.HandleFunc("POST /api/library/jobs/cancel", s.APILibraryCancel)
 	return mux
 }

@@ -66,17 +66,17 @@ func handleEvent(w *fsnotify.Watcher, pool *sql.DB, coversDir string, songTags [
 		if info.IsDir() {
 			progress.watchFailures.Add(int64(addRecursive(w, ev.Name)))
 			walkAudio(ev.Name, make(map[string]bool), func(p string) {
-				d.schedule(p, func() { runProcess(pool, coversDir, songTags, p) })
+				d.schedule(p, func() { runProcess(pool, coversDir, songTags, p, progress) })
 			})
 			return
 		}
 		if hasAudioExt(ev.Name) {
-			d.schedule(ev.Name, func() { runProcess(pool, coversDir, songTags, ev.Name) })
+			d.schedule(ev.Name, func() { runProcess(pool, coversDir, songTags, ev.Name, progress) })
 		}
 
 	case ev.Op&fsnotify.Write != 0:
 		if hasAudioExt(ev.Name) {
-			d.schedule(ev.Name, func() { runProcess(pool, coversDir, songTags, ev.Name) })
+			d.schedule(ev.Name, func() { runProcess(pool, coversDir, songTags, ev.Name, progress) })
 		}
 
 	case ev.Op&(fsnotify.Remove|fsnotify.Rename) != 0:
@@ -98,7 +98,7 @@ func handleEvent(w *fsnotify.Watcher, pool *sql.DB, coversDir string, songTags [
 	}
 }
 
-func runProcess(pool *sql.DB, coversDir string, songTags []string, path string) {
+func runProcess(pool *sql.DB, coversDir string, songTags []string, path string, progress *Progress) {
 	// File may have vanished between event and debounce fire.
 	if _, err := os.Stat(path); err != nil {
 		return
@@ -111,8 +111,10 @@ func runProcess(pool *sql.DB, coversDir string, songTags []string, path string) 
 	switch res {
 	case resultInserted:
 		logging.Infof("watch: added %s", path)
+		progress.changed()
 	case resultUpdated:
 		logging.Infof("watch: updated %s", path)
+		progress.changed()
 	}
 }
 

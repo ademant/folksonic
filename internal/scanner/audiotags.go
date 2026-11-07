@@ -2,11 +2,14 @@ package scanner
 
 import (
 	"database/sql"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/dhowden/tag"
+
+	"github.com/tsirysndr/tinysonic/internal/analysis"
 )
 
 // audioTags are the loudness, meter and tempo tags of a file. Unknown
@@ -15,6 +18,9 @@ type audioTags struct {
 	TrackGain, AlbumGain, TrackPeak, AlbumPeak, BaseGain sql.NullFloat64
 	Meter                                                sql.NullString
 	BPM                                                  sql.NullFloat64
+	// Key is the KEY / INITIALKEY / TKEY tag, when it names a key ParseKey
+	// understands.
+	Key *analysis.Key
 }
 
 // Tag names, upper case. MP3 user frames (TXXX) and MP4 freeform atoms use
@@ -29,11 +35,12 @@ var (
 	rgAlbumPeak = "REPLAYGAIN_ALBUM_PEAK"
 	meterTags   = []string{"METER", "TIME_SIGNATURE", "TIMESIGNATURE"}
 	bpmTags     = []string{"BPM", "TBPM", "TMPO", "TEMPO"}
+	keyTags     = []string{"INITIALKEY", "KEY", "TKEY"}
 )
 
 func audioTagAllow() map[string]bool {
 	m := map[string]bool{r128Track: true, r128Album: true, rgTrackGain: true, rgAlbumGain: true, rgTrackPeak: true, rgAlbumPeak: true}
-	for _, n := range append(append([]string{}, meterTags...), bpmTags...) {
+	for _, n := range slices.Concat(meterTags, bpmTags, keyTags) {
 		m[n] = true
 	}
 	return m
@@ -96,6 +103,14 @@ func readAudioTags(path, suffix string, meta tag.Metadata) audioTags {
 		if v, ok := first(n); ok {
 			if b := parseNumber(v); b.Valid && b.Float64 >= 20 && b.Float64 <= 400 {
 				out.BPM = b
+				break
+			}
+		}
+	}
+	for _, n := range keyTags {
+		if v, ok := first(n); ok {
+			if k, ok := analysis.ParseKey(v); ok {
+				out.Key = k
 				break
 			}
 		}

@@ -23,8 +23,11 @@ Impressum page is [goldmark](https://github.com/yuin/goldmark), also pure Go.
 ## Features
 
 - One binary, one TOML file, one SQLite database. No external services.
-  [ffmpeg](https://ffmpeg.org/) is an optional runtime dependency, used only
-  to calculate missing BPM values.
+  [ffmpeg](https://ffmpeg.org/) is an optional runtime dependency for BPM
+  calculation and loudness analysis, and
+  [folksentia](https://github.com/ademant/folksentia) is an optional analysis
+  tool (beats, key, loudness, silence, waveform). See
+  [Track analysis](#track-analysis).
 - Built on Go's `net/http` with [ncruces/go-sqlite3](https://pkg.go.dev/github.com/ncruces/go-sqlite3)
   (SQLite compiled to WebAssembly, no cgo, FTS5 enabled).
 - Library scanner powered by [dhowden/tag](https://pkg.go.dev/github.com/dhowden/tag)
@@ -128,7 +131,8 @@ Configuration is checked at startup:
 | `base_path`         | URL prefix to serve under, such as `/folksonic`. Empty (default) serves from the root. See [Serving under a subpath](#serving-under-a-subpath). |
 | `allow_registration` | Enables `POST /api/register` without an invitation code. Default `false`. Invitation codes work either way. |
 | `song_tags`          | File tags exposed on songs, such as `["DANCE", "USE"]`. Only these names are read. Each song then carries `tinysonicTags`, and the `tinysonicSongTags` extension is advertised. Default empty. |
-| `ffmpeg_path`        | ffmpeg binary for BPM calculation. Default: `ffmpeg` on `PATH`. Without ffmpeg, BPM calculation is unavailable and everything else works. |
+| `ffmpeg_path`        | ffmpeg binary for BPM calculation and the `ffmpeg` analysis tool. Default: `ffmpeg` on `PATH`. Without ffmpeg, BPM calculation is unavailable and everything else works. |
+| `[analysis]` table   | Assigns analysis features (`bpm`, `beats`, `key`, `loudness`, `silence`, `waveform`) to tools, with `[analysis.tools.<name>]` entries (`command`, `timeout`). Without the table, only BPM is calculated, by hand from the library page. See [Track analysis](#track-analysis). |
 | `ignored_articles`   | Leading words skipped when indexing and sorting artists in `getArtists`/`getIndexes`, separated by spaces, and announced as `ignoredArticles`. An article ending in `'` (`L'`) matches without a following space. Default `"The El La Las Le Les Los Il L' An A Die Das Ein"`; `""` disables it. |
 | `log_level`          | Minimum level written to the log: `debug`, `info` (default), `warn` or `error`. `--log-level` overrides it. See [Logging](#logging). |
 | `max_streams`        | Audio streams (`stream`, `download`) served at once, across all accounts. Default 64; `0` disables the cap. A stream over the cap gets HTTP 503 with `Retry-After`. |
@@ -185,6 +189,10 @@ tinysonic invite list [-c FILE]                       list invites and their sta
 tinysonic invite revoke [-c FILE] <id>                withdraw an unused invite
 
 tinysonic pair [-c FILE] --user <username>            print a pairing QR code (valid 5 min, single use)
+
+tinysonic analysis pending [-c FILE]                  analyse what has no result yet (as after a scan)
+tinysonic analysis recalc [-c FILE] [-features key,beats] (-all | <song id>…)
+                                                      run the assigned tools again, even for unchanged files
 ```
 
 Account commands work directly on the database, so run them on the server
@@ -327,7 +335,7 @@ files and never written back:
 | `replayGain.trackGain` / `albumGain` | Opus: `R128_TRACK_GAIN` / `R128_ALBUM_GAIN`; otherwise `REPLAYGAIN_TRACK_GAIN` / `REPLAYGAIN_ALBUM_GAIN` | R128 is Q7.8 relative to −23 LUFS and is converted to the ReplayGain reference of −18 LUFS: `value / 256 + 5` dB |
 | `replayGain.trackPeak` / `albumPeak` | `REPLAYGAIN_TRACK_PEAK` / `REPLAYGAIN_ALBUM_PEAK` | Opus R128 tags carry no peaks |
 | `replayGain.baseGain` | Opus header output gain | Sent when non-zero or together with other gains |
-| `bpm` | `BPM` (Vorbis/FLAC/Opus, MP3 `TXXX`), MP3 `TBPM`, MP4 `tmpo` | Rounded to an integer. Missing values can be calculated on the library page |
+| `bpm` | `BPM` (Vorbis/FLAC/Opus, MP3 `TXXX`), MP3 `TBPM`, MP4 `tmpo` | Rounded to an integer. Missing values can be calculated on the library page; a tool assigned to `bpm` replaces the tag's value (see [Track analysis](#track-analysis)) |
 | `tinysonicMeter` | `METER`, `TIME_SIGNATURE`, `TIMESIGNATURE` (first found) | The tag text as written, e.g. `3/4`, at most 32 characters; never guessed |
 
 MP3 reads the names from `TXXX` frames, M4A from `----:com.apple.iTunes:` atoms.
@@ -345,6 +353,79 @@ cleared when the recording changed. On a folk dance library, about 60% of the
 estimates match the BPM tag within 4%; most others are off by a 3:4 or 2:1
 ratio (cross-rhythms, half or double time), so treat calculated values as a
 starting point. Each one stores a confidence (0–1).
+
+### Track analysis
+
+`GET /api/analysis?id=<song id>` (any signed-in account, extension
+`tinysonicAnalysis`) returns the stored analysis of a track: beat grid and
+downbeats, BPM with confidence, key and mode, integrated loudness and true
+peak, lead and tail silence, and waveform peaks. Every field is `null` when
+unknown. The schema is in [`docs/openapi.yaml`](docs/openapi.yaml):
+
+```json
+{
+  "id": "so-…", "fileVersion": "sha256:…",
+  "waveform": {"bins": 150, "peaks": [0, 12, 255]},
+  "beats": {"timesMs": [0, 500, 1000], "downbeatIndexes": [0]},
+  "bpm": {"value": 124.0, "confidence": 0.92},
+  "key": {"tonic": "A", "mode": "minor", "confidence": 0.81},
+  "loudness": {"integratedLufs": -9.4, "truePeakDbtp": -0.8},
+  "silence": {"leadMs": 350, "tailMs": 1200},
+  "fingerprint": null
+}
+```
+
+The endpoint only reads the database. 404 means no such song. 202 with
+`Retry-After` means automatic analysis is on and some assigned features have
+no result yet; `pending` lists them. `fingerprint` is always `null` for now
+(it waits for [folksentia#5](https://github.com/ademant/folksentia/issues/5)).
+
+Each feature is assigned to one tool in the config. A feature without a tool
+is not computed:
+
+```toml
+[analysis]
+bpm      = "folksentia"   # or "builtin", the pure-Go estimator (needs ffmpeg)
+beats    = "folksentia"
+key      = "folksentia"
+loudness = "ffmpeg"       # or "folksentia"
+silence  = "folksentia"
+waveform = "folksentia"
+
+[analysis.tools.folksentia]
+command = "/usr/local/bin/folksentia"   # absolute path, never looked up on PATH
+timeout = "120s"                        # per track, default 2m
+```
+
+| Tool | Features | Notes |
+|---|---|---|
+| `builtin` | `bpm` | The estimator described above. Never replaces a BPM from tags |
+| `ffmpeg` | `loudness` | ffmpeg's `ebur128` filter. Uses `ffmpeg_path`; `[analysis.tools.ffmpeg]` may set `command` and `timeout` |
+| `folksentia` | `bpm`, `beats`, `key`, `loudness`, `silence`, `waveform` | [folksentia](https://github.com/ademant/folksentia) output schema 1. One call per track for all its features |
+
+- **When it runs.** With an `[analysis]` table, every scan and every file the
+  watcher adds or changes queues a background job for what has no result
+  yet, one track at a time at the lowest CPU priority. It never runs while a
+  request is served. Without the table, behaviour is as before: only BPM,
+  started from the library page.
+- **Tags first.** Values found in tags (BPM, and the key from `INITIALKEY`,
+  `KEY` or `TKEY`) are stored by the scan. A tool's result replaces the
+  stored value of each feature assigned to it. Files are never written.
+- **Rescans.** Each song records its file's size and modification time. A
+  file whose size or mtime changed loses its results, and the tools run
+  again. An unchanged file keeps them, also when its tags are re-read.
+- **Failures** are stored with the error and not retried by later scans. A
+  recalculation retries them.
+- **Recalculation** reruns the tools regardless of earlier results:
+  `POST /api/library/analysis` or `tinysonic analysis recalc`.
+- **Logging.** Each tool run writes one `key=value` line with the song id,
+  tool, version, duration and values (long lists as their length), e.g.
+  `analysis song=so-… tool=folksentia version=schema-1 ms=4210 bpm=124.0 key="A minor" …`.
+  Paths and credentials are not logged.
+
+Values are stored in two tables: `song_values` (song, name, JSON value,
+when it changed) and `analysis` (song, feature, tool, tool version, when it
+ran, error). Both go with the song when it is removed.
 
 **Response conventions** — optional fields without a value are omitted, never
 sent as `null`. A song's `path` is relative to the music directory that holds
@@ -444,10 +525,12 @@ The JSON endpoints below are described in [`docs/openapi.yaml`](docs/openapi.yam
 | GET | `/api/oidc/callback` | state | Provider redirect target. Ends in the sign-in page with a one-time code, or with an error |
 | POST | `/api/oidc/exchange` | one-time code | Trade the code for a session `token` (web) or a device `apiKey` (app) |
 | GET | `/library` | page | Library page for librarians: statistics, rescan, BPM calculation |
-| GET | `/api/library/stats` | librarian | Totals, BPM coverage (tag / calculated / missing), last scan, running scan or job, ffmpeg availability |
+| GET | `/api/library/stats` | librarian | Totals, BPM coverage (tag / calculated / missing), last scan, running scan or job, ffmpeg availability, analysis assignments and tool availability |
 | POST | `/api/library/scan` | librarian | Rescan the music folders (409 while a scan or job runs) |
-| POST | `/api/library/bpm` | librarian | Start BPM calculation, body `{"mode": "missing"}` or `{"mode": "all"}` (all also recalculates calculated values; 503 without ffmpeg) |
-| POST | `/api/library/jobs/cancel` | librarian | Stop the running BPM job after the current track |
+| POST | `/api/library/bpm` | librarian | Start BPM calculation with the tool assigned to `bpm`, body `{"mode": "missing"}` or `{"mode": "all"}` (all also recalculates; 503 when the tool is not available) |
+| POST | `/api/library/analysis` | librarian | Recalculate analysis, body `{"ids": ["so-…"]}` or `{"all": true}`, optionally `"features": ["key"]` (409 while a scan or job runs; 503 when a tool is not available) |
+| POST | `/api/library/jobs/cancel` | librarian | Stop the running job after the current track |
+| GET | `/api/analysis?id=` | user | Stored analysis of one track; see [Track analysis](#track-analysis) |
 | GET | `/api/oidc/identities` | user | List linked identities |
 | DELETE | `/api/oidc/identities/{id}` | user | Unlink an identity. Refused (409) when it is the account's last sign-in method |
 
@@ -644,7 +727,7 @@ sets the lowest one written:
 |---------|------|
 | `debug` | Scan progress (`scan: walking <dir>`), song cache preload |
 | `info`  | One line per request, startup (`listening on`), `scan complete`, migrations, files the watcher adds, updates or removes |
-| `warn`  | Unreadable files or directories, a missing music directory, disabled passkeys, a config with a secret readable by others, BPM failures for single songs, 5xx answers |
+| `warn`  | Unreadable files or directories, a missing music directory, disabled passkeys, a config with a secret readable by others, BPM and analysis failures for single songs, 5xx answers |
 | `error` | Database errors, files that cannot be streamed, failed scans or watcher, startup failures |
 
 Under systemd (detected through `JOURNAL_STREAM`) each line starts with its
@@ -747,6 +830,8 @@ internal/
   models/                      Artist / Album / Song / Playlist row types
   audioinfo/                   per-format duration + bitrate probers
   scanner/                     filepath.WalkDir + tag extraction + cover art
+  bpm/                         built-in tempo estimator, ffmpeg decoding
+  analysis/                    per-track analysis: tool adapters, job selection, storage
   server/
     server.go                  net/http server, routing, CORS
     ratelimit.go               sign-in failure limit, stream slots, client address
