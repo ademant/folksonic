@@ -67,6 +67,11 @@ func runAnalysis(args []string) error {
 	if err != nil {
 		return err
 	}
+	if !sel.Pending {
+		if err := plan.ResetAttempts(ctx, pool, tasks); err != nil {
+			return err
+		}
+	}
 	if sub == "recalc" && len(ids) > 0 && len(tasks) < len(ids) {
 		fmt.Fprintf(os.Stderr, "warning: %d of %d songs not found or not selected for the features\n", len(ids)-len(tasks), len(ids))
 	}

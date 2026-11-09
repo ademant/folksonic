@@ -30,7 +30,8 @@ func (c *capped) Write(p []byte) (int, error) {
 
 // runTool runs command with args at the lowest CPU priority and returns its
 // stdout and stderr. A non-zero exit is an error unless okExit accepts it.
-func runTool(ctx context.Context, command string, args []string, okExit func(int) bool) (stdout, stderr []byte, err error) {
+// memLimit, when positive, caps the child's memory (see applyToolLimits).
+func runTool(ctx context.Context, command string, args []string, okExit func(int) bool, memLimit int64) (stdout, stderr []byte, err error) {
 	cmd := exec.CommandContext(ctx, command, args...)
 	out, errOut := &capped{max: maxToolOutput}, &capped{max: maxToolOutput}
 	cmd.Stdout, cmd.Stderr = out, errOut
@@ -41,6 +42,11 @@ func runTool(ctx context.Context, command string, args []string, okExit func(int
 		return nil, nil, err
 	}
 	bpm.LowerPriority(cmd.Process.Pid)
+	if err := applyToolLimits(cmd.Process.Pid, memLimit); err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return nil, nil, err
+	}
 	err = cmd.Wait()
 	if ctx.Err() != nil {
 		return nil, nil, ctx.Err()

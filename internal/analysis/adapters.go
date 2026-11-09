@@ -20,7 +20,7 @@ import (
 type adapter interface {
 	// version identifies the tool's output, recorded with each value.
 	version(ctx context.Context, command string) string
-	run(ctx context.Context, command, path string, durationSec float64, features []string) (Values, error)
+	run(ctx context.Context, command, path string, durationSec float64, features []string, memLimit int64) (Values, error)
 }
 
 // ── builtin: pure-Go BPM estimate on audio decoded by ffmpeg ───────────────
@@ -29,7 +29,7 @@ type builtinAdapter struct{}
 
 func (builtinAdapter) version(context.Context, string) string { return "1" }
 
-func (builtinAdapter) run(ctx context.Context, ffmpeg, path string, durationSec float64, _ []string) (Values, error) {
+func (builtinAdapter) run(ctx context.Context, ffmpeg, path string, durationSec float64, _ []string, _ int64) (Values, error) {
 	samples, err := bpm.Decode(ctx, ffmpeg, path, durationSec)
 	if err != nil {
 		return nil, err
@@ -46,7 +46,7 @@ func (builtinAdapter) run(ctx context.Context, ffmpeg, path string, durationSec 
 type ffmpegAdapter struct{}
 
 func (ffmpegAdapter) version(ctx context.Context, ffmpeg string) string {
-	out, _, err := runTool(ctx, ffmpeg, []string{"-hide_banner", "-version"}, nil)
+	out, _, err := runTool(ctx, ffmpeg, []string{"-hide_banner", "-version"}, nil, 0)
 	if err != nil {
 		return ""
 	}
@@ -58,11 +58,11 @@ func (ffmpegAdapter) version(ctx context.Context, ffmpeg string) string {
 	return ""
 }
 
-func (ffmpegAdapter) run(ctx context.Context, ffmpeg, path string, _ float64, _ []string) (Values, error) {
+func (ffmpegAdapter) run(ctx context.Context, ffmpeg, path string, _ float64, _ []string, memLimit int64) (Values, error) {
 	_, stderr, err := runTool(ctx, ffmpeg, []string{
 		"-nostdin", "-hide_banner", "-nostats", "-loglevel", "info",
 		"-i", path, "-vn", "-af", "ebur128=peak=true:framelog=verbose", "-f", "null", "-",
-	}, nil)
+	}, nil, memLimit)
 	if err != nil {
 		return nil, fmt.Errorf("ffmpeg: %w", err)
 	}
@@ -139,9 +139,9 @@ func folksentiaArgs(features []string, path string) []string {
 	return append(args, "--", path)
 }
 
-func (folksentiaAdapter) run(ctx context.Context, command, path string, _ float64, features []string) (Values, error) {
+func (folksentiaAdapter) run(ctx context.Context, command, path string, _ float64, features []string, memLimit int64) (Values, error) {
 	// Exit status 1 means "a file failed"; the error object says why.
-	out, _, err := runTool(ctx, command, folksentiaArgs(features, path), func(code int) bool { return code == 1 })
+	out, _, err := runTool(ctx, command, folksentiaArgs(features, path), func(code int) bool { return code == 1 }, memLimit)
 	if err != nil {
 		return nil, fmt.Errorf("folksentia: %w", err)
 	}

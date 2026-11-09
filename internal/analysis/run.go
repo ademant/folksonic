@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -40,6 +41,12 @@ func (p *Plan) Commands(tasks []Task) (map[string]string, error) {
 	return cmds, nil
 }
 
+// maxAttempts is how many runs of one tool on one track may end without a
+// stored result (the process was killed, or folksonic stopped) before the
+// track is given up on. Without it, a track that always kills its tool is
+// retried after every restart, forever (#75).
+const maxAttempts = 2
+
 // RunTask runs the tools of one track and stores their results. It writes
 // one log line per tool run.
 func (p *Plan) RunTask(ctx context.Context, db *sql.DB, cmds map[string]string, t Task) Outcome {
@@ -51,36 +58,117 @@ func (p *Plan) RunTask(ctx context.Context, db *sql.DB, cmds map[string]string, 
 		if ctx.Err() != nil {
 			return out
 		}
+		g := r.Group
+		if g.maxDuration > 0 && time.Duration(t.DurationMs)*time.Millisecond > g.maxDuration {
+			// Recorded as a result, so the track is not selected again; the
+			// file's size and mtime are not stored, since nothing was analysed.
+			reason := fmt.Sprintf("longer than max_duration %s", g.maxDuration)
+			changed, serr := store(ctx, db, t.SongID, r, "", nil, errors.New(reason), nil)
+			if serr != nil {
+				logging.Warnf("analysis song=%s tool=%s store_error=%q", t.SongID, g.Tool, serr.Error())
+				out.Failed = true
+			} else {
+				logging.Infof("analysis song=%s tool=%s skipped: %s", t.SongID, g.Tool, reason)
+			}
+			out.Changed = out.Changed || changed
+			continue
+		}
+		attempts, err := attemptCount(ctx, db, t.SongID, g.Tool)
+		if err != nil {
+			logging.Warnf("analysis song=%s tool=%s attempts_error=%q", t.SongID, g.Tool, err.Error())
+			out.Failed = true
+			continue
+		}
+		if attempts >= maxAttempts {
+			gaveUp := fmt.Sprintf("gave up after %d interrupted attempts", attempts)
+			changed, serr := store(ctx, db, t.SongID, r, "", nil, errors.New(gaveUp), nil)
+			if serr != nil {
+				logging.Warnf("analysis song=%s tool=%s store_error=%q", t.SongID, g.Tool, serr.Error())
+			} else {
+				logging.Warnf("analysis song=%s tool=%s %s", t.SongID, g.Tool, gaveUp)
+			}
+			out.Failed = true
+			out.Changed = out.Changed || changed
+			continue
+		}
+		// The attempt is recorded before the tool starts. If folksonic dies
+		// during the run, the count stays and the next run sees it.
+		if err := setAttemptCount(ctx, db, t.SongID, g.Tool, attempts+1); err != nil {
+			logging.Warnf("analysis song=%s tool=%s attempts_error=%q", t.SongID, g.Tool, err.Error())
+			out.Failed = true
+			continue
+		}
 		start := time.Now()
-		version := p.version(ctx, r.Group, cmds[r.Group.Tool])
+		version := p.version(ctx, g, cmds[g.Tool])
 		var vals Values
-		err := statErr
+		err = statErr
 		if err == nil {
-			tctx, cancel := context.WithTimeout(ctx, r.Group.timeout)
-			vals, err = r.Group.adapter.run(tctx, cmds[r.Group.Tool], t.Path, float64(t.DurationMs)/1000, r.Features)
+			tctx, cancel := context.WithTimeout(ctx, g.timeout)
+			vals, err = g.adapter.run(tctx, cmds[g.Tool], t.Path, float64(t.DurationMs)/1000, r.Features, g.memLimit)
 			if err != nil && tctx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
-				err = fmt.Errorf("timed out after %s", r.Group.timeout)
+				err = fmt.Errorf("timed out after %s", g.timeout)
 			}
 			cancel()
 		}
 		if ctx.Err() != nil {
-			return out // stopped: store nothing, the task stays pending
+			// Stopped on purpose: store nothing, the task stays pending, and
+			// the stopped run does not count as an interrupted attempt.
+			_ = setAttemptCount(context.Background(), db, t.SongID, g.Tool, attempts)
+			return out
 		}
 		changed, serr := store(ctx, db, t.SongID, r, version, vals, err, info)
 		elapsed := time.Since(start).Milliseconds()
 		switch {
 		case serr != nil:
-			logging.Warnf("analysis song=%s tool=%s store_error=%q", t.SongID, r.Group.Tool, serr.Error())
+			logging.Warnf("analysis song=%s tool=%s store_error=%q", t.SongID, g.Tool, serr.Error())
 			out.Failed = true
 		case err != nil:
-			logging.Warnf("analysis song=%s tool=%s version=%s ms=%d error=%q", t.SongID, r.Group.Tool, version, elapsed, err.Error())
+			logging.Warnf("analysis song=%s tool=%s version=%s ms=%d error=%q", t.SongID, g.Tool, version, elapsed, err.Error())
 			out.Failed = true
 		default:
-			logging.Infof("analysis song=%s tool=%s version=%s ms=%d %s", t.SongID, r.Group.Tool, version, elapsed, summary(r.Features, vals))
+			logging.Infof("analysis song=%s tool=%s version=%s ms=%d %s", t.SongID, g.Tool, version, elapsed, summary(r.Features, vals))
 		}
 		out.Changed = out.Changed || changed
 	}
 	return out
+}
+
+// attemptCount returns how many runs of tool on songID ended without a result.
+func attemptCount(ctx context.Context, db *sql.DB, songID, tool string) (int, error) {
+	var n int
+	err := db.QueryRowContext(ctx,
+		"SELECT attempts FROM analysis_attempts WHERE song_id = ? AND tool = ?", songID, tool).Scan(&n)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return n, err
+}
+
+// setAttemptCount sets the count; 0 removes the row.
+func setAttemptCount(ctx context.Context, db *sql.DB, songID, tool string, n int) error {
+	if n <= 0 {
+		_, err := db.ExecContext(ctx, "DELETE FROM analysis_attempts WHERE song_id = ? AND tool = ?", songID, tool)
+		return err
+	}
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO analysis_attempts (song_id, tool, attempts, started_ms) VALUES (?, ?, ?, ?)
+		 ON CONFLICT(song_id, tool) DO UPDATE SET attempts = excluded.attempts, started_ms = excluded.started_ms`,
+		songID, tool, n, time.Now().UnixMilli())
+	return err
+}
+
+// ResetAttempts clears the interrupted-attempt counts of tasks. A recalculation
+// asked for by hand starts those tracks afresh; automatic passes keep the
+// counts.
+func (p *Plan) ResetAttempts(ctx context.Context, db *sql.DB, tasks []Task) error {
+	for _, t := range tasks {
+		for _, r := range t.Runs {
+			if err := setAttemptCount(ctx, db, t.SongID, r.Group.Tool, 0); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // errSongGone is returned by store when the song was removed meanwhile.
@@ -105,6 +193,10 @@ func store(ctx context.Context, db *sql.DB, songID string, r Run, version string
 	var errText sql.NullString
 	if runErr != nil {
 		errText = sql.NullString{String: shortMessage(runErr.Error()), Valid: true}
+	}
+	// The run ended with a result, so it no longer counts as interrupted.
+	if _, err := tx.ExecContext(ctx, "DELETE FROM analysis_attempts WHERE song_id = ? AND tool = ?", songID, r.Group.Tool); err != nil {
+		return false, err
 	}
 	for _, f := range r.Features {
 		if _, err := tx.ExecContext(ctx,

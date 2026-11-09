@@ -20,6 +20,18 @@ CREATE TABLE IF NOT EXISTS analysis (
     PRIMARY KEY (song_id, feature)
 );
 
+-- analysis_attempts counts runs of a tool on a track that started but did not
+-- store a result (the process was killed or the server stopped). A row is
+-- written before each run and removed when the run's result is stored; a
+-- track that reaches the limit is recorded as failed instead of retried.
+CREATE TABLE IF NOT EXISTS analysis_attempts (
+    song_id   TEXT NOT NULL REFERENCES songs(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    tool      TEXT NOT NULL,
+    attempts  INTEGER NOT NULL,
+    started_ms INTEGER NOT NULL,
+    PRIMARY KEY (song_id, tool)
+);
+
 CREATE TABLE IF NOT EXISTS song_values (
     song_id    TEXT NOT NULL REFERENCES songs(id) ON DELETE CASCADE ON UPDATE CASCADE,
     name       TEXT NOT NULL,

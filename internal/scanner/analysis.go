@@ -9,14 +9,15 @@ import (
 
 // storeTagValues keeps the analysis tables in step with a re-read file.
 //
-// When the audio changed, every analysis result of the song is dropped, so
-// the assigned tools run again. Values read from tags (the key) are then
+// When the audio changed, every analysis result and interrupted-attempt count
+// of the song is dropped, so the assigned tools run again from scratch. Values read from tags (the key) are then
 // stored with tool 'tag', unless an assigned tool already produced the
 // feature for this audio: a tool's result replaces the tag's.
 func storeTagValues(tx *sql.Tx, songID string, au audioTags, audioChanged bool) error {
 	if audioChanged {
 		for _, q := range []string{
 			"DELETE FROM analysis WHERE song_id = ?",
+			"DELETE FROM analysis_attempts WHERE song_id = ?",
 			"DELETE FROM song_values WHERE song_id = ?",
 		} {
 			if _, err := tx.Exec(q, songID); err != nil {
