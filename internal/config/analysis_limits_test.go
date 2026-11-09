@@ -15,14 +15,14 @@ func TestParseByteSize(t *testing.T) {
 		" 1G ": 1 << 30,
 	}
 	for in, want := range ok {
-		got, err := parseByteSize(in)
+		got, err := ParseByteSize(in)
 		if err != nil || got != want {
-			t.Errorf("parseByteSize(%q) = %d, %v; want %d", in, got, err, want)
+			t.Errorf("ParseByteSize(%q) = %d, %v; want %d", in, got, err, want)
 		}
 	}
 	for _, in := range []string{"", "0", "-5M", "10T", "M", "12MB", "99999999999G"} {
-		if _, err := parseByteSize(in); err == nil {
-			t.Errorf("parseByteSize(%q) accepted", in)
+		if _, err := ParseByteSize(in); err == nil {
+			t.Errorf("ParseByteSize(%q) accepted", in)
 		}
 	}
 }

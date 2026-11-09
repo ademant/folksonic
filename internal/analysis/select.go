@@ -37,6 +37,9 @@ type Selection struct {
 	// MissingBPM selects songs without any BPM for the bpm feature, the
 	// library page's "calculate missing" button. Earlier failures are retried.
 	MissingBPM bool
+	// Tool selects the tasks of one tool served by analysis workers. Empty
+	// selects the tools this server runs itself, and never the worker tools.
+	Tool string
 }
 
 // Select returns the tasks for sel, ordered by song id.
@@ -44,6 +47,9 @@ func (p *Plan) Select(ctx context.Context, db *sql.DB, sel Selection) ([]Task, e
 	byID := map[string]*Task{}
 	var order []string
 	for _, g := range p.Groups {
+		if g.worker != (sel.Tool != "") || (sel.Tool != "" && g.Tool != sel.Tool) {
+			continue
+		}
 		features := g.Features
 		if sel.Features != nil {
 			features = slices.DeleteFunc(slices.Clone(features), func(f string) bool { return !slices.Contains(sel.Features, f) })

@@ -225,7 +225,12 @@ func corsMiddleware(h http.Handler) http.Handler {
 // edits), so anything larger is rejected before it is read into memory.
 func limitBody(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		limit := int64(1 << 20)
+		// A worker's result carries the tool's whole output (waveform, beats).
+		if strings.HasSuffix(r.URL.Path, "/api/worker/results") {
+			limit = workerResultLimit
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, limit)
 		h.ServeHTTP(w, r)
 	})
 }
@@ -473,6 +478,8 @@ func (s *State) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/library/bpm", s.APILibraryBPM)
 	mux.HandleFunc("POST /api/library/analysis", s.APILibraryAnalysis)
 	mux.HandleFunc("GET /api/library/analysis/failed", s.APILibraryFailed)
+	mux.HandleFunc("POST /api/worker/jobs", s.APIWorkerJobs)
+	mux.HandleFunc("POST /api/worker/results", s.APIWorkerResults)
 	mux.HandleFunc("GET /api/analysis", s.APIAnalysis)
 	mux.HandleFunc("GET /api/duplicates", s.APIDuplicates)
 	mux.HandleFunc("POST /api/library/jobs/cancel", s.APILibraryCancel)

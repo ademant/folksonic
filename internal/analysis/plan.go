@@ -23,7 +23,9 @@ type Group struct {
 	// memLimit and maxDuration come from the tool's config; 0 means none.
 	memLimit    int64
 	maxDuration time.Duration
-	adapter     adapter
+	// worker: the tool runs on analysis workers, never on this server.
+	worker  bool
+	adapter adapter
 	// command is the configured path; for builtin and ffmpeg it may be empty,
 	// meaning ffmpeg_path (resolved when a job starts).
 	command string
@@ -57,6 +59,7 @@ func NewPlan(a config.Analysis, ffmpegPath string) *Plan {
 			if t, ok := a.Tools[tool]; ok {
 				g.command, g.timeout = t.Command, t.TimeoutDur
 				g.memLimit, g.maxDuration = t.MemoryLimitBytes, t.MaxDurationDur
+				g.worker = t.Worker
 			}
 			switch tool {
 			case config.ToolBuiltin:
@@ -119,6 +122,10 @@ func (p *Plan) resolve(g *Group) (string, error) {
 func (p *Plan) Available() map[string]string {
 	m := map[string]string{}
 	for _, g := range p.Groups {
+		if g.worker {
+			m[g.Tool] = "served by analysis workers"
+			continue
+		}
 		if _, err := p.resolve(g); err != nil {
 			m[g.Tool] = strings.TrimPrefix(err.Error(), ErrUnavailable.Error()+": ")
 		} else {
@@ -139,4 +146,14 @@ func (p *Plan) version(ctx context.Context, g *Group, command string) string {
 	v := g.adapter.version(vctx, command)
 	p.versions[g.Tool] = v
 	return v
+}
+
+// group returns the group of tool, or nil.
+func (p *Plan) group(tool string) *Group {
+	for _, g := range p.Groups {
+		if g.Tool == tool {
+			return g
+		}
+	}
+	return nil
 }

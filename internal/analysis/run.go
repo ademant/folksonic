@@ -117,7 +117,7 @@ func (p *Plan) RunTask(ctx context.Context, db *sql.DB, cmds map[string]string, 
 			_ = setAttemptCount(context.Background(), db, t.SongID, g.Tool, attempts)
 			return out
 		}
-		changed, serr := store(ctx, db, t.SongID, r, version, vals, err, info)
+		changed, serr := store(ctx, db, t.SongID, r, version, vals, err, stampOf(info))
 		elapsed := time.Since(start).Milliseconds()
 		switch {
 		case serr != nil:
@@ -177,7 +177,7 @@ var errSongGone = fmt.Errorf("song no longer in the library")
 
 // store records one tool run: an analysis row per feature, and the values
 // that are known. A failed run records the error and keeps the values.
-func store(ctx context.Context, db *sql.DB, songID string, r Run, version string, vals Values, runErr error, info os.FileInfo) (changed bool, err error) {
+func store(ctx context.Context, db *sql.DB, songID string, r Run, version string, vals Values, runErr error, stamp *Stamp) (changed bool, err error) {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -195,9 +195,15 @@ func store(ctx context.Context, db *sql.DB, songID string, r Run, version string
 	if runErr != nil {
 		errText = sql.NullString{String: shortMessage(runErr.Error()), Valid: true}
 	}
-	// The run ended with a result, so it no longer counts as interrupted.
-	if _, err := tx.ExecContext(ctx, "DELETE FROM analysis_attempts WHERE song_id = ? AND tool = ?", songID, r.Group.Tool); err != nil {
-		return false, err
+	// The run ended with a result, so it no longer counts as interrupted, and
+	// a worker's lease on it is over.
+	for _, q := range []string{
+		"DELETE FROM analysis_attempts WHERE song_id = ? AND tool = ?",
+		"DELETE FROM analysis_leases WHERE song_id = ? AND tool = ?",
+	} {
+		if _, err := tx.ExecContext(ctx, q, songID, r.Group.Tool); err != nil {
+			return false, err
+		}
 	}
 	for _, f := range r.Features {
 		if _, err := tx.ExecContext(ctx,
@@ -238,9 +244,9 @@ func store(ctx context.Context, db *sql.DB, songID string, r Run, version string
 			changed = true
 		}
 	}
-	if info != nil {
+	if stamp != nil {
 		if _, err := tx.ExecContext(ctx, "UPDATE songs SET file_size = ?, file_mtime_ms = ? WHERE id = ?",
-			info.Size(), info.ModTime().UnixMilli(), songID); err != nil {
+			stamp.Size, stamp.MtimeMs, songID); err != nil {
 			return false, err
 		}
 	}

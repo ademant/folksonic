@@ -83,6 +83,9 @@ func migrate(d *sql.DB) error {
 	if err := migrateAnalysis(d); err != nil {
 		return fmt.Errorf("analysis: %w", err)
 	}
+	if err := migrateKeyScope(d); err != nil {
+		return fmt.Errorf("key scope: %w", err)
+	}
 	return backfillFTS(d)
 }
 
@@ -299,7 +302,8 @@ CREATE TABLE IF NOT EXISTS api_keys (
     created_at   TEXT NOT NULL,
     expires_at   TEXT,
     last_used_at TEXT,
-    revoked_at   TEXT
+    revoked_at   TEXT,
+    scope        TEXT NOT NULL DEFAULT ''   -- '' for a full key, 'worker' for an analysis worker
 );
 
 CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
@@ -308,7 +312,8 @@ CREATE TABLE IF NOT EXISTS pairing_tokens (
     token_hash TEXT PRIMARY KEY,
     user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     expires_at TEXT NOT NULL,
-    used_at    TEXT
+    used_at    TEXT,
+    scope      TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
