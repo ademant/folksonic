@@ -18,8 +18,9 @@ import (
 
 // Outcome is the result of one task.
 type Outcome struct {
-	Failed  bool // at least one tool failed
-	Changed bool // a stored value changed
+	Failed  bool   // at least one tool failed
+	Changed bool   // a stored value changed
+	Err     string // the last failure, as "tool: message"; "" when none
 }
 
 // Commands resolves the command of every tool the tasks need. It fails when
@@ -76,7 +77,7 @@ func (p *Plan) RunTask(ctx context.Context, db *sql.DB, cmds map[string]string, 
 		attempts, err := attemptCount(ctx, db, t.SongID, g.Tool)
 		if err != nil {
 			logging.Warnf("analysis song=%s tool=%s attempts_error=%q", t.SongID, g.Tool, err.Error())
-			out.Failed = true
+			out.Failed, out.Err = true, g.Tool+": "+err.Error()
 			continue
 		}
 		if attempts >= maxAttempts {
@@ -87,7 +88,7 @@ func (p *Plan) RunTask(ctx context.Context, db *sql.DB, cmds map[string]string, 
 			} else {
 				logging.Warnf("analysis song=%s tool=%s %s", t.SongID, g.Tool, gaveUp)
 			}
-			out.Failed = true
+			out.Failed, out.Err = true, g.Tool+": "+gaveUp
 			out.Changed = out.Changed || changed
 			continue
 		}
@@ -95,7 +96,7 @@ func (p *Plan) RunTask(ctx context.Context, db *sql.DB, cmds map[string]string, 
 		// during the run, the count stays and the next run sees it.
 		if err := setAttemptCount(ctx, db, t.SongID, g.Tool, attempts+1); err != nil {
 			logging.Warnf("analysis song=%s tool=%s attempts_error=%q", t.SongID, g.Tool, err.Error())
-			out.Failed = true
+			out.Failed, out.Err = true, g.Tool+": "+err.Error()
 			continue
 		}
 		start := time.Now()
@@ -121,10 +122,10 @@ func (p *Plan) RunTask(ctx context.Context, db *sql.DB, cmds map[string]string, 
 		switch {
 		case serr != nil:
 			logging.Warnf("analysis song=%s tool=%s store_error=%q", t.SongID, g.Tool, serr.Error())
-			out.Failed = true
+			out.Failed, out.Err = true, g.Tool+": "+serr.Error()
 		case err != nil:
 			logging.Warnf("analysis song=%s tool=%s version=%s ms=%d error=%q", t.SongID, g.Tool, version, elapsed, err.Error())
-			out.Failed = true
+			out.Failed, out.Err = true, g.Tool+": "+shortMessage(err.Error())
 		default:
 			logging.Infof("analysis song=%s tool=%s version=%s ms=%d %s", t.SongID, g.Tool, version, elapsed, summary(r.Features, vals))
 		}

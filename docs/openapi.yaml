@@ -78,6 +78,10 @@ components:
         startedAt: {type: string, format: date-time}
         finishedAt: {type: string, format: date-time, nullable: true}
         error: {type: string, nullable: true, description: '"stopped" when cancelled.'}
+        pending: {type: integer, description: Tracks not yet done while running.}
+        current: {type: string, nullable: true, description: Song id being analysed while running.}
+        songsPerMinute: {type: number, description: Rate while running.}
+        lastError: {type: string, nullable: true, description: 'Last failure while running or after the run: `song tool: message`.'}
     Analysis:
       type: object
       properties:
@@ -1091,6 +1095,45 @@ paths:
           $ref: '#/components/responses/Conflict'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /api/library/analysis/failed:
+    get:
+      tags: [Library]
+      summary: Tracks whose last analysis failed
+      description: >-
+        Newest first, one entry per track and tool. `total` counts the tracks.
+        Server paths in messages are replaced by `<music>`. Retry them with
+        `POST /api/library/analysis`.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1, maximum: 1000, default: 200}
+      responses:
+        '200':
+          description: Failed tracks.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: {type: integer, description: Tracks with a failed analysis.}
+                  songs:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: {type: string}
+                        title: {type: string}
+                        artist: {type: string}
+                        tool: {type: string}
+                        error: {type: string}
+                        analysedAt: {type: string, format: date-time}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /api/analysis:
     get:
       tags: [Analysis]
