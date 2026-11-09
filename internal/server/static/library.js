@@ -66,6 +66,13 @@
       $("jobText").textContent = num(job.done) + " of " + num(job.total) + " tracks analysed, " +
         num(job.updated) + " stored, " + num(job.failed) + " failed";
     }
+    $("jobDetail").hidden = !jobRunning;
+    if (jobRunning) {
+      var detail = num(job.pending) + " pending, " + job.songsPerMinute + " songs/min";
+      if (job.current) detail += ", current " + job.current;
+      if (job.lastError) detail += ". Last error: " + job.lastError;
+      $("jobDetail").textContent = detail;
+    }
     $("jobLast").hidden = jobRunning || !job.kind;
     if (!jobRunning && job.kind) {
       var label = {all: "recalculate", missing: "missing", recalc: "recalculate analysis", pending: "analysis after scan"}[job.mode] || job.mode;
@@ -74,8 +81,48 @@
         (job.error ? " — " + job.error : "") + ".";
     }
 
+    var failedSongs = st.failedSongs || 0;
+    $("failed").hidden = failedSongs === 0;
+    if (failedSongs !== shownFailed) {
+      shownFailed = failedSongs;
+      loadFailed();
+    }
+
     clearTimeout(timer);
     timer = setTimeout(refresh, busy ? 2000 : 30000);
+  }
+
+  // The failed list is loaded when its count changes, not on every poll.
+  var shownFailed = -1, listed = [];
+  async function loadFailed() {
+    try {
+      var res = await api("GET", "library/analysis/failed?limit=200");
+      listed = res.songs || [];
+      $("failedCount").textContent = num(res.total) + " track" + (res.total === 1 ? "" : "s") + " failed.";
+      var body = $("failedBody");
+      while (body.firstChild) body.removeChild(body.firstChild);
+      listed.forEach(function (row) {
+        var tr = document.createElement("tr");
+        var track = document.createElement("td");
+        track.textContent = row.artist + " — " + row.title;
+        var tool = document.createElement("td");
+        tool.textContent = row.tool;
+        var msg = document.createElement("td");
+        msg.className = "err";
+        msg.textContent = row.error;
+        var actCell = document.createElement("td");
+        var btn = document.createElement("button");
+        btn.className = "secondary";
+        btn.textContent = "Retry";
+        btn.addEventListener("click", function () {
+          act(function () { return api("POST", "library/analysis", { ids: [row.id] }); }, "Retrying " + row.title + ".");
+        });
+        actCell.appendChild(btn);
+        tr.append(track, tool, msg, actCell);
+        body.appendChild(tr);
+      });
+      $("retryFailed").disabled = listed.length === 0;
+    } catch (e) { say(e.message); }
   }
   async function refresh() {
     try { render(await api("GET", "library/stats")); }
@@ -95,6 +142,11 @@
   $("bpmAllBtn").addEventListener("click", function () {
     if (!confirm("Recalculate every calculated BPM and fill in missing ones? Values from file tags are kept. This takes about a second per track.")) return;
     act(function () { return api("POST", "library/bpm", { mode: "all" }); }, "Recalculating BPM.");
+  });
+  $("retryFailed").addEventListener("click", function () {
+    var ids = listed.map(function (r) { return r.id; });
+    if (ids.length === 0) return;
+    act(function () { return api("POST", "library/analysis", { ids: ids }); }, "Retrying " + ids.length + " tracks.");
   });
   $("stop").addEventListener("click", function () {
     act(function () { return api("POST", "library/jobs/cancel"); }, "Stopping after the current track.");

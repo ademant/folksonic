@@ -453,6 +453,14 @@ chooses it before folksonic or another service when memory runs out.
   A recalculation starts the track afresh.
 - **Recalculation** reruns the tools regardless of earlier results:
   `POST /api/library/analysis` or `tinysonic analysis recalc`.
+- **Progress.** A running job logs one line every 100 tracks or every 10
+  minutes, with done, failed and pending counts, the rate and the track just
+  done, e.g. `analysis: 1200 done, 3 failed, 4138 pending, 4.1 songs/min,
+  current=so-…`. A job ends with a summary line (done, failed, updated, time,
+  and `stopped` when cancelled). The library page shows the same numbers while
+  a job runs, with the last error, and lists failed tracks with a retry button.
+  `GET /api/library/stats` returns `job` (including `pending`, `current`,
+  `songsPerMinute`, `lastError`) and `failedSongs`.
 - **Logging.** Each tool run writes one `key=value` line with the song id,
   tool, version, duration and values (long lists as their length), e.g.
   `analysis song=so-… tool=folksentia version=schema-1 ms=4210 bpm=124.0 key="A minor" …`.
@@ -566,6 +574,7 @@ The JSON endpoints below are described in [`docs/openapi.yaml`](docs/openapi.yam
 | POST | `/api/library/scan` | librarian | Rescan the music folders (409 while a scan or job runs) |
 | POST | `/api/library/bpm` | librarian | Start BPM calculation with the tool assigned to `bpm`, body `{"mode": "missing"}` or `{"mode": "all"}` (all also recalculates; 503 when the tool is not available) |
 | POST | `/api/library/analysis` | librarian | Recalculate analysis, body `{"ids": ["so-…"]}` or `{"all": true}`, optionally `"features": ["key"]` (409 while a scan or job runs; 503 when a tool is not available) |
+| GET | `/api/library/analysis/failed` | librarian | Tracks whose last analysis failed, with tool and error; `?limit=` up to 1000 (default 200). Retry with the POST above |
 | POST | `/api/library/jobs/cancel` | librarian | Stop the running job after the current track |
 | GET | `/api/analysis?id=` | user | Stored analysis of one track; see [Track analysis](#track-analysis) |
 | GET | `/api/duplicates` | user | Groups of songs with matching audio fingerprints; see [Track analysis](#track-analysis) |

@@ -29,3 +29,9 @@
 .fill-ok{background:var(--ok)}
 .fill-accent{background:var(--accent)}
 .fill-line{background:var(--line)}
+
+table.failed { width:100%; border-collapse:collapse; font-size:.9rem; margin-top:.6rem; }
+table.failed th, table.failed td { text-align:left; vertical-align:top; padding:6px 6px 6px 0; border-bottom:1px solid var(--line); }
+table.failed td.err { color:var(--danger); word-break:break-word; }
+table.failed button { margin:0; padding:.3rem .6rem; }
+.visually-hidden { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }

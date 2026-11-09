@@ -6,9 +6,13 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/tsirysndr/tinysonic/internal/analysis"
 	"github.com/tsirysndr/tinysonic/internal/config"
@@ -60,7 +64,12 @@ type jobRunner struct {
 	started  string
 	finished string
 	errMsg   string
-	cancel   context.CancelFunc
+	// startedAt, current and lastErr are for progress: when the job began,
+	// the track being analysed, and the last failure ("song tool: message").
+	startedAt time.Time
+	current   string
+	lastErr   string
+	cancel    context.CancelFunc
 	// again asks for one more pending-analysis pass once the running job or
 	// scan has finished.
 	again bool
@@ -81,11 +90,44 @@ func (j *jobRunner) status() J {
 	if j.kind == "" {
 		return J{"running": false}
 	}
-	return J{
+	out := J{
 		"kind": j.kind, "mode": j.mode, "running": j.active,
 		"total": j.total, "done": j.done, "failed": j.failed, "updated": j.updated,
 		"startedAt": j.started, "finishedAt": nullIfEmpty(j.finished), "error": nullIfEmpty(j.errMsg),
+		"lastError": nullIfEmpty(j.lastErr),
 	}
+	if j.active {
+		out["pending"] = max(0, j.total-j.done)
+		out["current"] = nullIfEmpty(j.current)
+		out["songsPerMinute"] = songsPerMinute(j.done, time.Since(j.startedAt))
+	}
+	return out
+}
+
+// songsPerMinute is the rate of a job, one decimal place; 0 before the first
+// minute has passed, so the first estimate is not a spike.
+func songsPerMinute(done int, elapsed time.Duration) float64 {
+	if done == 0 || elapsed < time.Second {
+		return 0
+	}
+	return math.Round(float64(done)/elapsed.Minutes()*10) / 10
+}
+
+// progressLine is the log line of a running job. It is written every 100
+// tracks or every 10 minutes, whichever comes first.
+func progressLine(kind string, done, failed, pending int, rate float64, current string) string {
+	return fmt.Sprintf("%s: %d done, %d failed, %d pending, %.1f songs/min, current=%s",
+		kind, done, failed, pending, rate, current)
+}
+
+// summaryLine is the last log line of a job.
+func summaryLine(kind string, done, failed, updated int, elapsed time.Duration, reason string) string {
+	line := fmt.Sprintf("%s: finished, %d done, %d failed, %d updated in %s",
+		kind, done, failed, updated, elapsed.Round(time.Second))
+	if reason != "" {
+		line += " (" + reason + ")"
+	}
+	return line
 }
 
 func nullIfEmpty(s string) any {
@@ -162,6 +204,7 @@ func (s *State) launch(kind, mode string, p *analysis.Plan, cmds map[string]stri
 	j.kind, j.mode, j.active, j.cancel = kind, mode, true, cancel
 	j.total, j.done, j.failed, j.updated = len(todo), 0, 0, 0
 	j.started, j.finished, j.errMsg = nowISO8601(), "", ""
+	j.startedAt, j.current, j.lastErr = time.Now(), "", ""
 	go s.runJob(ctx, p, cmds, todo)
 }
 
@@ -201,23 +244,26 @@ func (s *State) queueAnalysis() {
 	s.launch("analysis", "pending", p, cmds, todo)
 }
 
-// runJob analyses one track at a time; tools run at the lowest priority.
+// runJob analyses one track at a time; tools run at the lowest priority. It
+// logs progress every 100 tracks or every 10 minutes, and a summary at the end.
 func (s *State) runJob(ctx context.Context, p *analysis.Plan, cmds map[string]string, todo []analysis.Task) {
 	j := &s.jobs
+	started, lastLog := time.Now(), time.Now()
 	defer func() {
 		j.mu.Lock()
-		j.active, j.finished, j.cancel = false, nowISO8601(), nil
+		j.active, j.finished, j.cancel, j.current = false, nowISO8601(), nil, ""
 		if ctx.Err() != nil && j.errMsg == "" {
 			j.errMsg = "stopped"
 		}
 		updated, kind, again := j.updated, j.kind, j.again && ctx.Err() == nil
+		done, failed, reason := j.done, j.failed, j.errMsg
 		j.again = false
 		j.mu.Unlock()
 		if updated > 0 {
 			markLibraryModified(s.Pool)
 			s.refreshDuplicates()
 		}
-		logging.Infof("%s: finished, %d updated", kind, updated)
+		logging.Infof("%s", summaryLine(kind, done, failed, updated, time.Since(started), reason))
 		if again {
 			go s.queueAnalysis()
 		}
@@ -226,16 +272,27 @@ func (s *State) runJob(ctx context.Context, p *analysis.Plan, cmds map[string]st
 		if ctx.Err() != nil {
 			return
 		}
+		j.mu.Lock()
+		j.current = t.SongID
+		j.mu.Unlock()
 		out := p.RunTask(ctx, s.Pool, cmds, t)
 		j.mu.Lock()
 		j.done++
 		if out.Failed {
 			j.failed++
 		}
+		if out.Err != "" {
+			j.lastErr = t.SongID + " " + out.Err
+		}
 		if out.Changed {
 			j.updated++
 		}
+		done, failed, kind := j.done, j.failed, j.kind
 		j.mu.Unlock()
+		if done%100 == 0 || time.Since(lastLog) >= 10*time.Minute {
+			lastLog = time.Now()
+			logging.Infof("%s", progressLine(kind, done, failed, len(todo)-done, songsPerMinute(done, time.Since(started)), t.SongID))
+		}
 	}
 }
 
@@ -282,18 +339,25 @@ func (s *State) APILibraryStats(w http.ResponseWriter, r *http.Request) {
 	for tool, reason := range avail {
 		tools[tool] = J{"available": reason == "", "reason": nullIfEmpty(reason)}
 	}
+	var failed int
+	if err := s.Pool.QueryRowContext(r.Context(),
+		"SELECT COUNT(DISTINCT song_id) FROM analysis WHERE error IS NOT NULL").Scan(&failed); err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "database error")
+		return
+	}
 	scan := J{"running": false}
 	if s.Progress != nil {
 		scan = J{"running": s.Progress.Running(), "count": s.Progress.Count()}
 	}
 	writeJSON(w, http.StatusOK, J{
 		"artists": artists, "albums": albums, "songs": songs, "duration": durMs / 1000,
-		"bpm":      J{"tag": bpmTag, "calc": bpmCalc, "missing": bpmMissing},
-		"lastScan": nsToAny(lastScan),
-		"scan":     scan,
-		"job":      s.jobs.status(),
-		"ffmpeg":   ff,
-		"analysis": J{"auto": p.Auto, "features": p.Assignments(), "tools": tools},
+		"bpm":         J{"tag": bpmTag, "calc": bpmCalc, "missing": bpmMissing},
+		"lastScan":    nsToAny(lastScan),
+		"scan":        scan,
+		"job":         s.jobs.status(),
+		"failedSongs": failed,
+		"ffmpeg":      ff,
+		"analysis":    J{"auto": p.Auto, "features": p.Assignments(), "tools": tools},
 	})
 }
 
@@ -380,6 +444,67 @@ func (s *State) APILibraryAnalysis(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeAPIError(w, http.StatusInternalServerError, "database error")
 	}
+}
+
+// APILibraryFailed lists the tracks whose last analysis failed, newest first,
+// with the tool and its error. `total` counts the tracks; the list has at most
+// `limit` entries (default 200). Retry them with POST /api/library/analysis.
+// Server paths in error messages are replaced by "<music>".
+func (s *State) APILibraryFailed(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireLibrarian(w, r); !ok {
+		return
+	}
+	limit := 200
+	if v := queryFirst(r, "limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 1000 {
+			writeAPIError(w, http.StatusBadRequest, "limit must be between 1 and 1000")
+			return
+		}
+		limit = n
+	}
+	ctx := r.Context()
+	var total int
+	if err := s.Pool.QueryRowContext(ctx,
+		"SELECT COUNT(DISTINCT song_id) FROM analysis WHERE error IS NOT NULL").Scan(&total); err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	rows, err := s.Pool.QueryContext(ctx, `SELECT a.song_id, s.title, s.artist, a.tool, MAX(a.error), MAX(a.analysed_ms)
+		FROM analysis a JOIN songs s ON s.id = a.song_id
+		WHERE a.error IS NOT NULL
+		GROUP BY a.song_id, a.tool
+		ORDER BY MAX(a.analysed_ms) DESC, a.song_id, a.tool
+		LIMIT ?`, limit)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	defer rows.Close()
+	songs := []J{}
+	for rows.Next() {
+		var id, title, artist, tool, msg string
+		var ms int64
+		if err := rows.Scan(&id, &title, &artist, &tool, &msg, &ms); err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "database error")
+			return
+		}
+		for _, dir := range s.MusicDirs {
+			// With the separator, so that /music does not match /musical.
+			if d := strings.TrimSuffix(dir, "/"); d != "" {
+				msg = strings.ReplaceAll(msg, d+"/", "<music>/")
+			}
+		}
+		songs = append(songs, J{
+			"id": id, "title": title, "artist": artist, "tool": tool, "error": msg,
+			"analysedAt": time.UnixMilli(ms).UTC().Format("2006-01-02T15:04:05Z"),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	writeJSON(w, http.StatusOK, J{"total": total, "songs": songs})
 }
 
 // APILibraryCancel stops the running job. Scans cannot be stopped.

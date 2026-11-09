@@ -47,9 +47,21 @@
     <div id="job" hidden>
       <progress id="jobBar" max="1" value="0"></progress>
       <p id="jobText"></p>
+      <p id="jobDetail"></p>
       <button id="stop" class="danger">Stop</button>
     </div>
     <p id="jobLast" hidden></p>
+  </section>
+
+  <section aria-labelledby="h-failed" id="failed" hidden>
+    <h2 id="h-failed">Failed analysis</h2>
+    <p id="failedCount"></p>
+    <p>Tracks whose last analysis failed. Retrying runs the assigned tools on them again; the file is never changed.</p>
+    <table class="failed">
+      <thead><tr><th scope="col">Track</th><th scope="col">Tool</th><th scope="col">Error</th><th scope="col"><span class="visually-hidden">Action</span></th></tr></thead>
+      <tbody id="failedBody"></tbody>
+    </table>
+    <button id="retryFailed" class="secondary">Retry listed tracks</button>
   </section>
 </main>
 <script src="static/library.js"></script>

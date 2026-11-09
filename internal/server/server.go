@@ -472,6 +472,7 @@ func (s *State) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/library/scan", s.APILibraryScan)
 	mux.HandleFunc("POST /api/library/bpm", s.APILibraryBPM)
 	mux.HandleFunc("POST /api/library/analysis", s.APILibraryAnalysis)
+	mux.HandleFunc("GET /api/library/analysis/failed", s.APILibraryFailed)
 	mux.HandleFunc("GET /api/analysis", s.APIAnalysis)
 	mux.HandleFunc("GET /api/duplicates", s.APIDuplicates)
 	mux.HandleFunc("POST /api/library/jobs/cancel", s.APILibraryCancel)
