@@ -20,7 +20,10 @@ type Group struct {
 	Tool     string
 	Features []string
 	timeout  time.Duration
-	adapter  adapter
+	// memLimit and maxDuration come from the tool's config; 0 means none.
+	memLimit    int64
+	maxDuration time.Duration
+	adapter     adapter
 	// command is the configured path; for builtin and ffmpeg it may be empty,
 	// meaning ffmpeg_path (resolved when a job starts).
 	command string
@@ -53,6 +56,7 @@ func NewPlan(a config.Analysis, ffmpegPath string) *Plan {
 			g = &Group{Tool: tool, timeout: config.DefaultToolTimeout}
 			if t, ok := a.Tools[tool]; ok {
 				g.command, g.timeout = t.Command, t.TimeoutDur
+				g.memLimit, g.maxDuration = t.MemoryLimitBytes, t.MaxDurationDur
 			}
 			switch tool {
 			case config.ToolBuiltin:

@@ -137,6 +137,12 @@ func (s *State) startJob(kind, mode string, sel analysis.Selection) error {
 	if err != nil {
 		return err
 	}
+	if !sel.Pending {
+		// A recalculation asked for by hand starts these tracks afresh.
+		if err := p.ResetAttempts(context.Background(), s.Pool, todo); err != nil {
+			return err
+		}
+	}
 	cmds, err := p.Commands(todo)
 	if err != nil {
 		return err

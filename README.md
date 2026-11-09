@@ -406,6 +406,8 @@ fingerprint = "folksentia" # Chromaprint, for /api/duplicates
 [analysis.tools.folksentia]
 command = "/usr/local/bin/folksentia"   # absolute path, never looked up on PATH
 timeout = "120s"                        # per track, default 2m
+memory_limit = "2G"                     # optional, see below
+max_duration = "45m"                    # optional, see below
 ```
 
 | Tool | Features | Notes |
@@ -413,6 +415,21 @@ timeout = "120s"                        # per track, default 2m
 | `builtin` | `bpm` | The estimator described above. Never replaces a BPM from tags |
 | `ffmpeg` | `loudness` | ffmpeg's `ebur128` filter. Uses `ffmpeg_path`; `[analysis.tools.ffmpeg]` may set `command` and `timeout` |
 | `folksentia` | `bpm`, `beats`, `key`, `loudness`, `silence`, `waveform`, `fingerprint` | [folksentia](https://github.com/ademant/folksentia) output schema 1. One call per track for all its features. `fingerprint` needs folksentia built with libchromaprint |
+
+`[analysis.tools.<name>]` accepts two limits for tools run as child processes
+(`folksentia`, and `ffmpeg` for loudness):
+
+- `memory_limit` caps the memory the tool may allocate, as a size: `500M`,
+  `2G` or plain bytes (binary units). On Linux it is `RLIMIT_DATA`, so a track
+  the tool cannot handle fails with an error instead of pushing the host into
+  the OOM killer. The limit is set just after the tool starts. The built-in
+  BPM decoder is not limited.
+- `max_duration` skips tracks longer than this for this tool, e.g. `"45m"`. A
+  skipped track gets a stored reason (`longer than max_duration 45m0s`) and is
+  not retried; raising the limit later does not analyse it until a recalculation.
+
+Each tool child also gets `oom_score_adj` 1000 on Linux, so the kernel
+chooses it before folksonic or another service when memory runs out.
 
 - **When it runs.** With an `[analysis]` table, every scan and every file the
   watcher adds or changes queues a background job for what has no result
@@ -427,6 +444,13 @@ timeout = "120s"                        # per track, default 2m
   again. An unchanged file keeps them, also when its tags are re-read.
 - **Failures** are stored with the error and not retried by later scans. A
   recalculation retries them.
+- **Interrupted runs.** Before a tool starts, the attempt is counted in
+  `analysis_attempts`, and the count is removed when the result is stored. A
+  run that ends without a result, because the tool was killed or folksonic
+  stopped, leaves the count behind. After two such attempts the track is
+  recorded as failed (`gave up after 2 interrupted attempts`) and not retried
+  by later scans. A stop on purpose (shutdown, cancelled job) does not count.
+  A recalculation starts the track afresh.
 - **Recalculation** reruns the tools regardless of earlier results:
   `POST /api/library/analysis` or `tinysonic analysis recalc`.
 - **Logging.** Each tool run writes one `key=value` line with the song id,
@@ -434,9 +458,11 @@ timeout = "120s"                        # per track, default 2m
   `analysis song=so-… tool=folksentia version=schema-1 ms=4210 bpm=124.0 key="A minor" …`.
   Paths and credentials are not logged.
 
-Values are stored in two tables: `song_values` (song, name, JSON value,
-when it changed) and `analysis` (song, feature, tool, tool version, when it
-ran, error). Both go with the song when it is removed.
+Values are stored in `song_values` (song, name, JSON value, when it changed)
+and `analysis` (song, feature, tool, tool version, when it
+ran, error), and `analysis_attempts` (interrupted runs, see above). All go
+with the song when it is removed, and the attempts are cleared when its audio
+changes.
 
 **Response conventions** — optional fields without a value are omitted, never
 sent as `null`. A song's `path` is relative to the music directory that holds

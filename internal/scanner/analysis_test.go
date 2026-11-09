@@ -107,12 +107,20 @@ func TestScanKeepsAnalysisOfUnchangedAudio(t *testing.T) {
 		t.Fatalf("analysis after re-read: %v", m)
 	}
 
-	// The file changed: results are dropped and tag values come back.
+	// The file changed: results are dropped and tag values come back. A track
+	// that gave up on the old audio starts afresh with the new one.
+	if _, err := pool.Exec(`INSERT INTO analysis_attempts (song_id, tool, attempts, started_ms) SELECT id, 'folksentia', 2, 1 FROM songs`); err != nil {
+		t.Fatal(err)
+	}
 	ts := time.Now().Add(time.Hour)
 	if err := os.Chtimes(f, ts, ts); err != nil {
 		t.Fatal(err)
 	}
 	scan()
+	var attempts int
+	if err := pool.QueryRow("SELECT COUNT(*) FROM analysis_attempts").Scan(&attempts); err != nil || attempts != 0 {
+		t.Fatalf("interrupted-attempt counts after the file changed: %d %v", attempts, err)
+	}
 	if b, src := bpm(); b != 128 || src != "tag" {
 		t.Fatalf("BPM after the file changed: %v %s", b, src)
 	}

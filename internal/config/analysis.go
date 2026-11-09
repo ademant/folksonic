@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -52,6 +54,21 @@ type AnalysisTool struct {
 	Timeout string `toml:"timeout"`
 	// TimeoutDur is Timeout parsed by Load.
 	TimeoutDur time.Duration `toml:"-"`
+	// MemoryLimit caps the memory the tool may allocate, as a size such as
+	// "500M" (K, M or G, binary; plain bytes without a suffix). Empty means no
+	// limit. It is applied with RLIMIT_DATA on Linux, so a tool that needs more
+	// fails with an error for that track instead of pushing the host into the
+	// OOM killer. Set after the tool starts, so a tool that allocates heavily
+	// during its first moments is not limited.
+	MemoryLimit string `toml:"memory_limit"`
+	// MemoryLimitBytes is MemoryLimit parsed by Load; 0 means no limit.
+	MemoryLimitBytes int64 `toml:"-"`
+	// MaxDuration skips tracks longer than this for this tool, as a Go duration
+	// such as "45m". The skipped track gets a stored reason. Empty means no
+	// limit.
+	MaxDuration string `toml:"max_duration"`
+	// MaxDurationDur is MaxDuration parsed by Load; 0 means no limit.
+	MaxDurationDur time.Duration `toml:"-"`
 }
 
 // ExternalAnalysisTools are the tool names an [analysis.tools] entry may use.
@@ -97,6 +114,20 @@ func (a *Analysis) normalise(defined bool) error {
 			}
 			t.TimeoutDur = d
 		}
+		if t.MemoryLimit != "" {
+			n, err := parseByteSize(t.MemoryLimit)
+			if err != nil {
+				return fmt.Errorf("config: analysis.tools.%s.memory_limit %q: %v (use a size such as \"500M\")", name, t.MemoryLimit, err)
+			}
+			t.MemoryLimitBytes = n
+		}
+		if t.MaxDuration != "" {
+			d, err := time.ParseDuration(t.MaxDuration)
+			if err != nil || d <= 0 {
+				return fmt.Errorf("config: analysis.tools.%s.max_duration %q is not a positive duration such as \"45m\"", name, t.MaxDuration)
+			}
+			t.MaxDurationDur = d
+		}
 		a.Tools[name] = t
 	}
 	for feature, tool := range a.Assignments() {
@@ -112,4 +143,29 @@ func (a *Analysis) normalise(defined bool) error {
 		}
 	}
 	return nil
+}
+
+// parseByteSize reads a size such as "500M", "2G" or "1048576". K, M and G
+// are binary (multiples of 1024).
+func parseByteSize(s string) (int64, error) {
+	mult := int64(1)
+	v := strings.TrimSpace(s)
+	if n := len(v); n > 0 {
+		switch v[n-1] {
+		case 'k', 'K':
+			mult, v = 1<<10, v[:n-1]
+		case 'm', 'M':
+			mult, v = 1<<20, v[:n-1]
+		case 'g', 'G':
+			mult, v = 1<<30, v[:n-1]
+		}
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("not a positive size")
+	}
+	if n > (1<<62)/mult {
+		return 0, fmt.Errorf("too large")
+	}
+	return n * mult, nil
 }
