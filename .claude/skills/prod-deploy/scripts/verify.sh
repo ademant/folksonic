@@ -11,6 +11,21 @@ echo "--- service"
 systemctl is-active tinysonic
 ps -o rss=,etime= -C tinysonic | awk '{printf "rss %d MB, up %s\n", $1/1024, $2}'
 
+# NRestarts counts automatic restarts. RESTARTS_BEFORE, when set (the value
+# read before the deploy), makes any restart since then a failure. Result must
+# be "success" unless the unit was stopped on purpose.
+restarts=$(systemctl show tinysonic -p NRestarts --value)
+result=$(systemctl show tinysonic -p Result --value)
+echo "NRestarts=$restarts Result=$result"
+if [ "$result" != success ]; then
+	echo "WARN: tinysonic's last result is $result"
+fi
+failed=0
+if [ -n "${RESTARTS_BEFORE:-}" ] && [ "$restarts" -gt "$RESTARTS_BEFORE" ]; then
+	echo "FAIL: tinysonic restarted $((restarts - RESTARTS_BEFORE)) time(s) since the deploy"
+	failed=1
+fi
+
 echo "--- log since last start"
 since=$(systemctl show tinysonic -p ActiveEnterTimestamp --value)
 sudo journalctl -u tinysonic --since "$since" --no-pager -o cat |
@@ -19,3 +34,5 @@ sudo journalctl -u tinysonic --since "$since" --no-pager -o cat |
 
 echo "--- accounts"
 (cd / && sudo -u tinysonic /usr/local/bin/tinysonic user list -c /etc/tinysonic/tinysonic.toml 2>/dev/null)
+
+exit "$failed"

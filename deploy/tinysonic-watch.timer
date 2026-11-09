@@ -1,0 +1,12 @@
+# Runs tinysonic-watch.service every 10 minutes.
+
+[Unit]
+Description=Check tinysonic for restarts and OOM kills
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=10min
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

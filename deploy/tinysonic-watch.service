@@ -1,0 +1,24 @@
+# Reports restarts and OOM kills of tinysonic.service (see tinysonic-watch.sh).
+# Install with the other units; the timer starts it.
+#   install -m 0755 deploy/tinysonic-watch.sh /usr/local/bin/tinysonic-watch
+#   install -m 0644 deploy/tinysonic-watch.service deploy/tinysonic-watch.timer /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now tinysonic-watch.timer
+# Delivery: set NOTIFY_CMD with a systemctl edit drop-in, e.g.
+#   [Service]
+#   Environment=NOTIFY_CMD=/usr/local/bin/notify-me
+
+[Unit]
+Description=Report restarts and OOM kills of tinysonic
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/tinysonic-watch
+Environment=UNIT=tinysonic.service
+Environment=STATE=/var/lib/tinysonic-watch/state
+StateDirectory=tinysonic-watch
+# Reads service state only; a dynamic user is enough.
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
