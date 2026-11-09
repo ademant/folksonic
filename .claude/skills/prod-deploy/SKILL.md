@@ -30,27 +30,37 @@ Never restart Apache for a tinysonic deploy; if the vhost ever needs editing, ba
    ```
    A new required config key must be added to `/etc/tinysonic/tinysonic.toml` before installing. Migrations that rewrite every row (e.g. `UPDATE songs …`) can take tens of seconds on this host because each song update also rewrites the FTS index through a trigger.
 
-3. **Check and build.** The Makefile sets the low-memory Go flags itself (this host OOM-kills the compiler otherwise):
+3. **Analysis tools and memory.** Before a deploy that enables or changes an analysis tool (`[analysis.tools]`, `bpm`/`beats`/`key`/… assignments), run the tool once on the longest file in the library and measure its peak memory:
+   ```bash
+   longest=$(sudo find /srv/music -type f \( -name '*.flac' -o -name '*.mp3' -o -name '*.ogg' -o -name '*.m4a' \) -printf '%s %p\n' | sort -n | tail -1 | cut -d' ' -f2-)
+   /usr/bin/time -v <tool> <args> "$longest" 2>&1 | grep -E "Maximum resident|Elapsed"
+   grep MemAvailable /proc/meminfo
+   ```
+   Compare the peak with `MemAvailable` after Nextcloud and Navidrome are counted in. Enable heavy features one at a time, and only when the peak leaves a clear margin. Record the figures in the deploy report.
+
+4. **Check and build.** The Makefile sets the low-memory Go flags itself (this host OOM-kills the compiler otherwise):
    ```bash
    make check && make build
    ```
    Don't deploy if anything fails.
 
-4. **Try the binary on a copy of the live database** whenever the diff touches `internal/db/` or `internal/users/`. It costs a minute and catches failed or slow migrations before production sees them:
+5. **Try the binary on a copy of the live database** whenever the diff touches `internal/db/` or `internal/users/`. It costs a minute and catches failed or slow migrations before production sees them:
    ```bash
    TMPDIR=<scratchpad> .claude/skills/prod-deploy/scripts/copy-instance.sh dist/tinysonic
    ```
    Note the reported startup time. Check what the change is about (e.g. `curl` a new page, `dist/tinysonic user list -c <dir>/c.toml`), then `kill "$(cat <dir>/pid)" && rm -rf <dir>`.
 
-5. **Deploy:**
+6. **Deploy:**
    ```bash
    .claude/skills/prod-deploy/scripts/deploy-local.sh dist/tinysonic
    ```
    It stops the service, copies the DB to `/var/lib/tinysonic/backup-<UTC>-pre-<sha>/`, keeps the old binary as `.prev`, installs, starts and waits up to 180 s (`WAIT=…` to change) for `/folksonic/rest/ping`. On failure it restores binary and database together and exits 1. Downtime is normally ~2 s plus migration time.
 
-6. **Verify:** `.claude/skills/prod-deploy/scripts/verify.sh` — all five URLs should be 200 (`/navidrome/app/` included, to show Navidrome is unaffected), the log should show `listening on` and `scan complete` without errors, and the accounts should be unchanged.
+7. **Verify:** `RESTARTS_BEFORE=<NRestarts before the deploy> .claude/skills/prod-deploy/scripts/verify.sh` — all five URLs should be 200 (`/navidrome/app/` included, to show Navidrome is unaffected), the log should show `listening on` and `scan complete` without errors, the accounts should be unchanged, and the script should exit 0. It exits 1 when the service restarted since the deploy or the last result is not `success`. Read `NRestarts` before the deploy with `systemctl show tinysonic -p NRestarts --value`.
 
-7. **Report** what was deployed (commit), downtime, the backup directory, and anything not verified. Old `backup-*` directories are kept; mention them occasionally so the user can prune.
+   If the deploy starts background analysis jobs, check again 30–60 minutes later: `systemctl show tinysonic -p NRestarts,Result --value`, the journal for `oom-kill`, and the `tinysonic-watch` lines (`journalctl -t tinysonic-watch`). The watcher timer (`deploy/tinysonic-watch.timer`) reports restarts and OOM kills every 10 minutes; check that it is active with `systemctl list-timers tinysonic-watch.timer`.
+
+8. **Report** what was deployed (commit), downtime, the backup directory, and anything not verified. Old `backup-*` directories are kept; mention them occasionally so the user can prune.
 
 ## Rolling back by hand
 

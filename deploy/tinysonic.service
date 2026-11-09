@@ -34,6 +34,19 @@ WorkingDirectory=/var/lib/tinysonic
 Restart=on-failure
 RestartSec=5s
 
+# Analysis tools (folksentia, ffmpeg) can need a lot of memory for a long
+# track. When the kernel kills one, the kill is recorded as a failed run and
+# the server keeps serving. Without this, systemd's default (stop) stops the
+# whole service, and a restart loop follows (see #75).
+OOMPolicy=continue
+
+# Optional caps for the whole service, including its tools. Set them to leave
+# room for other services on the host. MemoryHigh slows the service down when
+# it is reached; MemoryMax makes the kernel kill processes in the unit when
+# exceeded, which OOMPolicy=continue survives. Example values for a 4 GB host:
+#MemoryHigh=1500M
+#MemoryMax=2G
+
 # Hardening. The music directories must be readable by the service user;
 # add them to ReadOnlyPaths if they live outside the default system paths.
 NoNewPrivileges=yes

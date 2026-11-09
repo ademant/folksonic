@@ -710,7 +710,18 @@ Example files are in [`deploy/`](deploy/):
 
 - `tinysonic.service`: systemd unit with a dedicated `tinysonic` user, a state
   directory under `/var/lib/tinysonic`, and sandboxing. Verify with
-  `systemd-analyze verify deploy/tinysonic.service`.
+  `systemd-analyze verify deploy/tinysonic.service`. It sets
+  `OOMPolicy=continue`, so when the kernel kills an analysis tool for memory,
+  the kill is recorded as a failed run and the server keeps running. Without
+  it, systemd stops the whole service. `MemoryHigh=` and `MemoryMax=` are
+  commented out; they cap the service and its tools together, so set them
+  only with room for the other services on the host.
+- `tinysonic-watch.sh`, `tinysonic-watch.service`, `tinysonic-watch.timer`:
+  a timer that runs every 10 minutes and logs a `tinysonic-watch` line at
+  priority crit when `tinysonic.service` restarts or its last result changes
+  (for example to `oom-kill`). Set `NOTIFY_CMD` in a drop-in to send the same
+  message elsewhere, such as by mail or ntfy. Check with
+  `journalctl -t tinysonic-watch`.
 - `folksonic.toml`: config for serving under `/folksonic` of an existing site
   (`base_path`, `host = "127.0.0.1"`, `port = 4534`, state under
   `/var/lib/tinysonic`).
