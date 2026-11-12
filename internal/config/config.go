@@ -65,6 +65,17 @@ type Config struct {
 	// proxies. Only a request from one of them has its X-Forwarded-For header
 	// believed when the client's address is logged and rate limited.
 	TrustedProxies []string `toml:"trusted_proxies"`
+	// APIKeyTTLDays is how long a new API key lives, in days, unless the
+	// request gives its own expires_days. Every key expires. Load sets the
+	// default (365).
+	APIKeyTTLDays int `toml:"api_key_ttl_days"`
+	// APIKeyIdleDays revokes a key that has not been used for this many days.
+	// Load sets the default (180).
+	APIKeyIdleDays int `toml:"api_key_idle_days"`
+	// RequireHTTPS refuses plain HTTP on every endpoint. Unset, it is on when
+	// base_url is a public name and off for a private or loopback address; see
+	// HTTPSRequired.
+	RequireHTTPS *bool `toml:"require_https"`
 	// Analysis assigns the per-track analysis features to tools; see
 	// Analysis.
 	Analysis Analysis `toml:"analysis"`
@@ -79,6 +90,10 @@ type Config struct {
 const (
 	DefaultMaxStreams        = 64
 	DefaultMaxStreamsPerUser = 8
+	// DefaultAPIKeyTTLDays and DefaultAPIKeyIdleDays are the key lifetimes
+	// used when the file does not set them.
+	DefaultAPIKeyTTLDays  = 365
+	DefaultAPIKeyIdleDays = 180
 )
 
 // ParseTrustedProxy accepts one trusted_proxies entry: an IP address or a CIDR
@@ -124,10 +139,12 @@ type Site struct {
 // `tinysonic user …`.
 func Load(path string) (*Config, error) {
 	c := &Config{
-		Port:         4533,
-		Host:         "0.0.0.0",
-		DatabasePath: "smolsonic.db",
-		CoversDir:    "covers",
+		Port:           4533,
+		Host:           "0.0.0.0",
+		DatabasePath:   "smolsonic.db",
+		CoversDir:      "covers",
+		APIKeyTTLDays:  DefaultAPIKeyTTLDays,
+		APIKeyIdleDays: DefaultAPIKeyIdleDays,
 		// Same list as server.DefaultIgnoredArticles.
 		IgnoredArticles: "The El La Las Le Les Los Il L' An A Die Das Ein",
 	}
@@ -186,6 +203,12 @@ func Load(path string) (*Config, error) {
 		if _, err := ParseTrustedProxy(p); err != nil {
 			return nil, fmt.Errorf("config: trusted_proxies: %w", err)
 		}
+	}
+	if c.APIKeyTTLDays < 1 || c.APIKeyTTLDays > 3650 {
+		return nil, errors.New("config: api_key_ttl_days must be between 1 and 3650")
+	}
+	if c.APIKeyIdleDays < 1 || c.APIKeyIdleDays > 3650 {
+		return nil, errors.New("config: api_key_idle_days must be between 1 and 3650")
 	}
 	if err := c.Analysis.normalise(md.IsDefined("analysis")); err != nil {
 		return nil, err
@@ -349,4 +372,36 @@ func (c *Config) normaliseSongTags() error {
 	}
 	c.SongTags = out
 	return nil
+}
+
+// HTTPSRequired reports whether plain HTTP is refused on every endpoint. An
+// explicit require_https wins. Otherwise it is on when base_url names a public
+// host, and off for a private or loopback address, where TLS would be a burden
+// on a home network. A base_url that is not set counts as private.
+func (c *Config) HTTPSRequired() bool {
+	if c.RequireHTTPS != nil {
+		return *c.RequireHTTPS
+	}
+	return !privateBaseHost(c.BaseURL)
+}
+
+// privateBaseHost reports whether base_url names a loopback, private or
+// link-local address, or a name that resolves only on the local network.
+func privateBaseHost(baseURL string) bool {
+	if baseURL == "" {
+		return true
+	}
+	u, err := url.Parse(baseURL)
+	if err != nil || u.Hostname() == "" {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".lan") {
+		return true
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	return addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast()
 }

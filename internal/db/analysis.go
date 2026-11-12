@@ -97,3 +97,24 @@ func migrateKeyScope(d *sql.DB) error {
 	}
 	return nil
 }
+
+// migrateKeyLifetime adds the columns for key lifetimes and idle revocation to
+// databases created before them. Existing keys get their lifetime and expiry
+// from internal/users (BackfillKeyLifetimes), which runs at start.
+func migrateKeyLifetime(d *sql.DB) error {
+	for _, col := range []struct{ name, typ string }{
+		{"ttl_seconds", "INTEGER"},
+		{"revoked_reason", "TEXT"},
+	} {
+		found, _, err := tableColumn(d, "api_keys", col.name)
+		if err != nil {
+			return err
+		}
+		if !found {
+			if _, err := d.Exec(fmt.Sprintf("ALTER TABLE api_keys ADD COLUMN %s %s", col.name, col.typ)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}

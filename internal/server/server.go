@@ -64,6 +64,8 @@ type State struct {
 	maxStreamsPerUser int
 	// trusted lists the reverse proxies whose X-Forwarded-For is believed.
 	trusted []netip.Prefix
+	// httpsRequired refuses plain HTTP on every endpoint; see httpsGate.
+	httpsRequired bool
 	// legacyPasswordOff refuses Subsonic u+p sign-in (legacy_password_auth).
 	// The zero value allows it, as the default does.
 	legacyPasswordOff bool
@@ -158,6 +160,16 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 	go s.preloadSongs(ctx)
 	s.impressumHTML, s.impressumOK = renderImpressum(cfg.Site.ImpressumFile)
 	s.legacyPasswordOff = !cfg.LegacyPasswordAuth
+	s.httpsRequired = cfg.HTTPSRequired()
+	if s.httpsRequired && len(cfg.TrustedProxies) == 0 {
+		logging.Warnf("require_https is on but trusted_proxies is empty: requests from a reverse proxy are refused; list the proxy's address there")
+	}
+	users.KeyTTL = time.Duration(cfg.APIKeyTTLDays) * 24 * time.Hour
+	users.KeyIdle = time.Duration(cfg.APIKeyIdleDays) * 24 * time.Hour
+	if err := users.BackfillKeyLifetimes(ctx, pool, users.KeyTTL); err != nil {
+		return fmt.Errorf("api key lifetimes: %w", err)
+	}
+	go s.maintainKeys(ctx)
 	s.maxStreams = cfg.MaxStreams
 	s.maxStreamsPerUser = cfg.MaxStreamsPerUser
 	for _, p := range cfg.TrustedProxies {
@@ -183,7 +195,7 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           requestLogger(securityHeaders(corsMiddleware(limitBody(handler)))),
+		Handler:           requestLogger(s.httpsGate(securityHeaders(corsMiddleware(limitBody(handler))))),
 		ReadHeaderTimeout: 15 * time.Second,
 		ErrorLog:          logging.StdLogger(slog.LevelWarn),
 	}
@@ -515,4 +527,30 @@ func mountAt(prefix string, h http.Handler) http.Handler {
 		http.Redirect(w, r, prefix+"/", http.StatusMovedPermanently)
 	})
 	return outer
+}
+
+// maintainKeys revokes keys that have gone unused for KeyIdle, at start and once
+// a day, and logs each one so an administrator can see it.
+func (s *State) maintainKeys(ctx context.Context) {
+	sweep := func() {
+		revoked, err := users.RevokeIdleKeys(ctx, s.Pool, users.KeyIdle)
+		if err != nil {
+			logging.Warnf("api key idle check failed: %v", err)
+			return
+		}
+		for _, k := range revoked {
+			logging.Infof("api key revoked: idle id=%d label=%q", k.ID, k.Label)
+		}
+	}
+	sweep()
+	t := time.NewTicker(24 * time.Hour)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			sweep()
+		}
+	}
 }

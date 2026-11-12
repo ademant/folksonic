@@ -139,6 +139,9 @@ Configuration is checked at startup:
 | `max_streams_per_user` | Streams one account may hold at once. Default 8; `0` disables the cap. |
 | `legacy_password_auth` | Allow Subsonic clients to sign in with `u`/`p` on every request. Default `true`. Set `false` to require API keys (or a session) for all Subsonic calls. |
 | `trusted_proxies`    | Addresses (IPs or CIDR ranges) of reverse proxies whose `X-Forwarded-For` is believed. Empty by default: the connecting address is the client. See [Sign-in limits](#sign-in-limits). |
+| `api_key_ttl_days`   | Lifetime of an API key, in days (1–3650). Default 365. Every key expires; a key in use within its last 30 days is renewed to a full lifetime. A request can ask for its own `expires_days`. |
+| `api_key_idle_days`  | A key unused for this many days is revoked (1–3650). Default 180. Revoked keys are logged as `api key revoked: idle`. |
+| `require_https`      | Refuse plain HTTP on every endpoint. Default: on when `base_url` is a public name, off for a private or loopback address. See [Running over HTTPS](#running-over-https). |
 | `[site]` table       | Public description: `name`, `description`, `contact` (email or URL), `repository` (default `https://github.com/ademant/folksonic`) and `impressum_file` (a Markdown file). Empty fields are not shown. See [Public pages](#public-pages). |
 | `[oidc]` table       | Optional single sign-on with an OpenID Connect provider: `issuer`, `client_id` and optional `client_secret`. Needs `base_url`. See [Single sign-on](#single-sign-on). Off unless `issuer` is set. |
 
@@ -188,7 +191,7 @@ tinysonic invite create [-c FILE] [--expires 7d] [--librarian] [--note TEXT] [--
 tinysonic invite list [-c FILE]                       list invites and their state (never the codes)
 tinysonic invite revoke [-c FILE] <id>                withdraw an unused invite
 
-tinysonic pair [-c FILE] --user <username>            print a pairing QR code (valid 5 min, single use)
+tinysonic pair [-c FILE] --user <username>            print a pairing QR code (valid 15 min, single use)
 
 tinysonic worker key [-c FILE] --user <username> --out <file>
                                                       write a worker config with a new worker key (mode 0600)
@@ -541,7 +544,7 @@ Two ways to provision a worker:
 # On the server: write a config file with a new key, then copy it over (ssh/scp).
 tinysonic worker key --user worker -c /etc/tinysonic/tinysonic.toml --out worker.toml
 
-# Or: a one-time token the worker redeems itself (valid 5 min, single use).
+# Or: a one-time token the worker redeems itself (valid 15 min, single use).
 tinysonic worker pair --user worker -c /etc/tinysonic/tinysonic.toml
 ```
 
@@ -580,7 +583,9 @@ Every `/rest/*` request is authenticated in this order:
    such as DanceSonic), or as the `apiKey=<key>` parameter (Subsonic clients and
    the Android app). The header keeps the key out of URLs and access logs. Keys
    are created by scanning a pairing QR code, or with `POST /api/keys`. A key has the same
-   rights as its user and can be revoked.
+   rights as its user and can be revoked. Every key expires after
+   `api_key_ttl_days` (365 by default), is renewed when it is used in its last 30
+   days, and is revoked after `api_key_idle_days` (180) without use.
 2. **Session token** (`Authorization: Bearer <token>`): issued by a passkey or
    password sign-in on the web page at `/login`.
 3. **Subsonic username and password**: `u` with `p`, plain or `p=enc:<hex>`.
@@ -610,7 +615,7 @@ The JSON endpoints below are described in [`docs/openapi.yaml`](docs/openapi.yam
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |
 | POST | `/api/register` | none | Create an account. With `invite` and `password`: active and signed in (returns a session `token`). Without an invite: pending, needs `allow_registration`, and needs a password |
-| POST | `/api/keys` | user | Create an API key (shown once) |
+| POST | `/api/keys` | user | Create an API key (shown once). `expires_days` sets its lifetime; without it the key lives `api_key_ttl_days` |
 | GET | `/api/keys` | user | List own keys |
 | DELETE | `/api/keys/{id}` | user | Revoke an own key |
 | POST | `/api/pair/start` | user | Create a pairing token and QR payload |
@@ -801,11 +806,31 @@ affected, since the RP ID is the hostname only.
 
 ## Running over HTTPS
 
-tinysonic serves plain HTTP. Subsonic clients send the password on every
-request, and passkeys require HTTPS. Put tinysonic
-behind a TLS-terminating reverse proxy (nginx, Caddy, Traefik) when it is
-reachable from outside a trusted network, bind it to `127.0.0.1` so only the
-proxy can reach it, and set `base_url` to the proxy's public address.
+tinysonic serves plain HTTP and needs a TLS-terminating reverse proxy (nginx,
+Caddy or Apache; templates in `deploy/`) for HTTPS. Passkeys require HTTPS.
+Bind tinysonic to `127.0.0.1` so only the proxy can reach it, set `base_url` to
+the proxy's public address, and list the proxy in `trusted_proxies`.
+
+**Enforcement.** `require_https` refuses plain HTTP on every endpoint. It
+defaults to on when `base_url` is a public name, and to off for a private LAN
+or loopback address, where TLS is not worth the setup. A request counts as
+HTTPS if it arrived over TLS, or if a trusted proxy says
+`X-Forwarded-Proto: https`. Refused requests get:
+
+- `/api/*`: HTTP 426 with `{"error": "https_required", …}`;
+- `/rest/*`: HTTP 426 with the Subsonic envelope, error 0;
+- browser pages (GET): HTTP 301 to the same path on the `base_url` address.
+
+A request from the server itself (loopback, with no `X-Forwarded-For` header,
+as the deploy health check sends) is allowed. A request a proxy passed on
+carries `X-Forwarded-For`, so it is never treated as local.
+
+**Rollout on an existing public server.** Before turning enforcement on, the
+proxy must send `X-Forwarded-Proto` (the Apache snippet does, with
+`RequestHeader set`) and `trusted_proxies` must list it. Otherwise every
+request through the proxy is refused, and the server logs a warning at start.
+Every proxy template sends `Strict-Transport-Security`, so browsers keep to
+HTTPS once they have used it.
 
 Request logs record the path only; credentials in the query string or form
 body are never written to the log.
@@ -875,21 +900,36 @@ credentials. A request that has an `id` parameter also shows it (`id=so-…`), s
 stream lines name their track; only a plain token is shown.
 
 A refused credential is logged as `auth failed ip=… reason=… path=…`, which the
-Fail2ban filter in `deploy/fail2ban` reads. The reasons are:
+Fail2ban filter in `deploy/fail2ban` reads. The reason is one of the refusal
+codes below. A revoked key is logged at warn, the others at info; a password
+failure keeps its existing reasons (`password`, `unknown-user`, `not-active`,
+`rate-limit`) at warn.
 
-| Reason | Level | Meaning |
-|---|---|---|
-| `unknown-key`, `invalid-key` | info | An API key that does not match any key |
-| `revoked-key` | warn | A key that was revoked (someone is still using it) |
-| `expired-key` | info | A key past its expiry |
-| `disabled-user` | info | The key's or session's account is disabled |
-| `unknown-session`, `expired-session`, `invalid-session` | info | A bearer session token that is unknown, expired or otherwise refused |
-| `worker-key-scope` | info | A worker key used outside `/api/worker/*` |
-| `password`, `unknown-user`, `not-active`, `rate-limit` | warn | Subsonic `u`/`p` sign-in (existing) |
-
-For a revoked or expired key the line also names the key's id and label
+For a revoked, idle or expired key the line also names the key's id and label
 (`key=7 label="old phone"`), so an administrator can find it with
 `tinysonic user keys`. The key itself is never logged.
+
+### Refusal codes
+
+A refused request says why, with a code clients can branch on. On the JSON
+API the body is `{"error": "<code>", "message": "<text>"}`. On Subsonic
+endpoints the answer keeps the envelope with error 40 and the message. The
+message text is for people; apps should not parse it.
+
+| Code | Meaning |
+|---|---|
+| `credentials_required` | No credentials were sent |
+| `key_unknown` | The API key does not match any key |
+| `key_revoked` | The key was revoked |
+| `key_idle` | The key was revoked for going unused (`api_key_idle_days`) |
+| `key_expired` | The key is past its lifetime |
+| `session_unknown`, `session_expired` | The web session token is unknown or expired |
+| `user_disabled` | The account is disabled |
+| `scope_forbidden` | The key may not be used for this request (worker keys) |
+| `password_invalid`, `rate_limited` | Subsonic `u`/`p` sign-in failed, or too many failures |
+| `pairing_expired`, `pairing_invalid` | A pairing code is past its 15 minutes, or unknown or already used |
+| `invite_expired`, `invite_invalid` | An invitation code is past its 7 days, or unknown, used or revoked |
+| `https_required` | Plain HTTP while `require_https` is on |
 
 Access logs written by Apache leave out query strings too. See the comments in
 `deploy/apache-subpath.conf`, which also say which host settings are needed.

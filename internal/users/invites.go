@@ -202,7 +202,7 @@ func RegisterWithInvite(ctx context.Context, db *sql.DB, code, username, passwor
 		 RETURNING id, role`,
 		now, hashToken(body), now, username).Scan(&inviteID, &role)
 	if errors.Is(err, sql.ErrNoRows) {
-		return User{}, ErrInviteInvalid
+		return User{}, inviteRefusal(ctx, db, body, now)
 	}
 	if err != nil {
 		return User{}, err
@@ -233,4 +233,22 @@ func RegisterWithInvite(ctx context.Context, db *sql.DB, code, username, passwor
 		return User{}, err
 	}
 	return ByID(ctx, db, userID)
+}
+
+// ErrInviteExpired is returned for a code past its time limit and never used.
+// It matches ErrInviteInvalid.
+var ErrInviteExpired = fmt.Errorf("%w: expired", ErrInviteInvalid)
+
+// inviteRefusal says why a code was not redeemed: expired, or invalid for any
+// other reason (unknown, used, revoked or for another name).
+func inviteRefusal(ctx context.Context, db *sql.DB, body string, now string) error {
+	var n int
+	err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM invites
+		 WHERE code_hash = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at <= ?`,
+		hashToken(body), now).Scan(&n)
+	if err == nil && n > 0 {
+		return ErrInviteExpired
+	}
+	return ErrInviteInvalid
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tsirysndr/tinysonic/internal/logging"
+	"github.com/tsirysndr/tinysonic/internal/users"
 )
 
 // Limits on password guessing and on how many audio streams are open at once.
@@ -241,7 +242,7 @@ func logAuthFailure(ip, reason, path string) {
 // are routine (an old phone, an expired key) and log at info.
 func logCredentialFailure(ip, reason, path, extra string) {
 	level := slog.LevelInfo
-	if reason == "revoked-key" {
+	if reason == users.CodeKeyRevoked {
 		level = slog.LevelWarn
 	}
 	logging.Logf(level, "auth failed ip=%s reason=%s path=%s%s", ip, reason, path, extra)

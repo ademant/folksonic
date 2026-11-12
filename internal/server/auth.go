@@ -44,7 +44,7 @@ func (s *State) resolveCaller(r *http.Request) (users.User, bool) {
 		// A worker key works only in the X-Api-Key header and only on the
 		// worker endpoints; everywhere else it is no key at all.
 		if info.Scope == users.ScopeWorker && !(fromHeader && strings.HasPrefix(r.URL.Path, "/api/worker/")) {
-			s.logRefused(r, "worker-key-scope", info.ID, "")
+			s.logRefused(r, users.CodeScopeForbidden, info.ID, "")
 			return users.User{}, false
 		}
 		return u, true
@@ -68,6 +68,7 @@ func (s *State) resolveCaller(r *http.Request) (users.User, bool) {
 		if l := reqLogFrom(ctx); l != nil {
 			l.throttled, l.retryAfter = true, retry
 		}
+		setRefusal(r, codeRateLimited)
 		logAuthFailure(ip, "rate-limit", r.URL.Path)
 		return users.User{}, false
 	}
@@ -75,16 +76,16 @@ func (s *State) resolveCaller(r *http.Request) (users.User, bool) {
 	if err != nil {
 		// Hash anyway, so an unknown username takes as long as a wrong password.
 		passwords.Burn(q.Get("p"))
-		s.authFailed(ip, "unknown-user", r.URL.Path)
+		s.authFailed(r, ip, "unknown-user", r.URL.Path)
 		return users.User{}, false
 	}
 	if u.Status != users.StatusActive {
 		passwords.Burn(q.Get("p"))
-		s.authFailed(ip, "not-active", r.URL.Path)
+		s.authFailed(r, ip, "not-active", r.URL.Path)
 		return users.User{}, false
 	}
 	if !authCheck(u.Username, u.PasswordHash, name, q.Get("p")) {
-		s.authFailed(ip, "password", r.URL.Path)
+		s.authFailed(r, ip, "password", r.URL.Path)
 		return users.User{}, false
 	}
 	s.auth.succeed(ip)
@@ -99,14 +100,29 @@ func (s *State) logRefused(r *http.Request, reason string, keyID int64, label st
 	if keyID != 0 {
 		extra = fmt.Sprintf(" key=%d label=%s", keyID, strconv.Quote(label))
 	}
+	setRefusal(r, reason)
 	logCredentialFailure(s.clientIP(r), reason, r.URL.Path, extra)
+}
+
+// setRefusal records the code of a refused credential on the request.
+func setRefusal(r *http.Request, code string) {
+	if l := reqLogFrom(r.Context()); l != nil {
+		l.refusal = code
+	}
 }
 
 // authFailed records a failed password attempt and makes the caller wait the
 // progressive delay before it is answered. It is the same for every failure
 // reason, so the timing does not show whether a username exists.
-func (s *State) authFailed(ip, reason, path string) {
+func (s *State) authFailed(r *http.Request, ip, reason, path string) {
 	logAuthFailure(ip, reason, path)
+	// The refusal code for the answer. A disabled account says so; every other
+	// password failure reads the same, so an unknown user is not revealed.
+	code := codePasswordBad
+	if reason == "not-active" {
+		code = users.CodeUserDisabled
+	}
+	setRefusal(r, code)
 	time.Sleep(s.auth.fail(ip))
 }
 
@@ -138,6 +154,10 @@ func (s *State) writeAuthFailure(w http.ResponseWriter, r *http.Request) {
 	}
 	if usesTokenAuth(r) {
 		writeError(w, 42, "Authentication mechanism not supported. Use API keys or username and password")
+		return
+	}
+	if l := reqLogFrom(r.Context()); l != nil && l.refusal != "" {
+		writeError(w, 40, refusalMessage(l.refusal))
 		return
 	}
 	writeError(w, 40, "Wrong username or password")
