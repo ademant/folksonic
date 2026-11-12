@@ -141,7 +141,8 @@ Configuration is checked at startup:
 | `trusted_proxies`    | Addresses (IPs or CIDR ranges) of reverse proxies whose `X-Forwarded-For` is believed. Empty by default: the connecting address is the client. See [Sign-in limits](#sign-in-limits). |
 | `api_key_ttl_days`   | Lifetime of an API key, in days (1–3650). Default 365. Every key expires; a key in use within its last 30 days is renewed to a full lifetime. A request can ask for its own `expires_days`. |
 | `api_key_idle_days`  | A key unused for this many days is revoked (1–3650). Default 180. Revoked keys are logged as `api key revoked: idle`. |
-| `require_https`      | Refuse plain HTTP on every endpoint. Default: on when `base_url` is a public name, off for a private or loopback address. See [Running over HTTPS](#running-over-https). |
+| `require_https`      | Refuse plain HTTP on every endpoint. Default on, for a LAN install too. Set `false` only on a trusted test network. See [Running over HTTPS](#running-over-https). |
+| `tls_cert`, `tls_key` | PEM certificate and private key: serve HTTPS directly, without a proxy. Both or neither. `tinysonic cert` makes them. When set, the server accepts only HTTPS. |
 | `[site]` table       | Public description: `name`, `description`, `contact` (email or URL), `repository` (default `https://github.com/ademant/folksonic`) and `impressum_file` (a Markdown file). Empty fields are not shown. See [Public pages](#public-pages). |
 | `[oidc]` table       | Optional single sign-on with an OpenID Connect provider: `issuer`, `client_id` and optional `client_secret`. Needs `base_url`. See [Single sign-on](#single-sign-on). Off unless `issuer` is set. |
 
@@ -199,6 +200,9 @@ tinysonic worker pair [-c FILE] --user <username>     print a one-time token tha
 tinysonic worker run [-c FILE] [--pair <token>]       run an analysis worker (on the worker machine)
 
 tinysonic stream rotate [-c FILE]                     new key for signed stream URLs; links made with the old key stop at the next restart
+
+tinysonic cert [-c FILE] [--dir DIR] [--force]        make a self-signed certificate for the host in base_url (10 years, mode 0600 key)
+tinysonic cert fingerprint [-c FILE]                  print the pin (sha256/…) of tls_cert, to confirm in the app
 
 tinysonic analysis pending [-c FILE]                  analyse what has no result yet (as after a scan)
 tinysonic analysis recalc [-c FILE] [-features key,beats] (-all | <song id>…)
@@ -628,9 +632,10 @@ a Subsonic client cannot ask for a short-lived, per-track link. Our own apps can
 (see item 3 under [How auth works](#how-auth-works)), but Subsonic clients stay
 on the long-lived key. For a server reachable from the internet:
 
-1. **Serve HTTPS only.** `base_url` set to a public name turns on `require_https`
-   (see [Running over HTTPS](#running-over-https)). Plain HTTP then gets 426 on
-   `/rest` and `/api`, so no key or password crosses the network in the clear.
+1. **Serve HTTPS only.** `require_https` is on by default, so plain HTTP gets 426
+   on `/rest` and `/api`. A LAN install gets HTTPS too, with `tls_cert` and
+   `tls_key` (see [Running over HTTPS](#running-over-https)), so no key or
+   password crosses the network in the clear.
 2. **Turn off password sign-in for Subsonic clients:** `legacy_password_auth = false`.
    A request with `u` and `p` then gets Subsonic error 42, and only API keys (or a
    session) work. A password would otherwise be sent on every call.
@@ -874,16 +879,36 @@ affected, since the RP ID is the hostname only.
 
 ## Running over HTTPS
 
-tinysonic serves plain HTTP and needs a TLS-terminating reverse proxy (nginx,
-Caddy or Apache; templates in `deploy/`) for HTTPS. Passkeys require HTTPS.
-Bind tinysonic to `127.0.0.1` so only the proxy can reach it, set `base_url` to
-the proxy's public address, and list the proxy in `trusted_proxies`.
+HTTPS can come from a reverse proxy (nginx, Caddy or Apache; templates in
+`deploy/`) or from tinysonic itself. Passkeys require HTTPS.
 
-**Enforcement.** `require_https` refuses plain HTTP on every endpoint. It
-defaults to on when `base_url` is a public name, and to off for a private LAN
-or loopback address, where TLS is not worth the setup. A request counts as
-HTTPS if it arrived over TLS, or if a trusted proxy says
-`X-Forwarded-Proto: https`. Refused requests get:
+**On a LAN, tinysonic serves HTTPS itself.** Run `tinysonic cert`. It makes a
+self-signed certificate for the host in `base_url` with its own key, which is
+not shared with other installs, and prints the lines to add to the config:
+
+```toml
+base_url = "https://192.168.1.10:4533"
+tls_cert = "/etc/tinysonic/tls/cert.pem"
+tls_key  = "/etc/tinysonic/tls/key.pem"
+```
+
+Browsers and other clients do not trust a self-signed certificate. The pairing
+QR code carries the certificate's pin (`pin=sha256/…`), so the app trusts this
+server and no other certificate. A device set up by typing an address and
+password has no pin: run `tinysonic cert fingerprint` and confirm the value in
+the app before trusting the server. The certificate lasts 10 years; renewing it
+changes the pin, so devices pair again. Use `--force` only for that.
+
+With `tls_cert` set, the server accepts only HTTPS. A plain HTTP request gets
+the TLS listener's own refusal, not a 426.
+
+**Behind a proxy.** Bind tinysonic to `127.0.0.1` so only the proxy can reach
+it, set `base_url` to the proxy's public address, and list the proxy in
+`trusted_proxies`. Leave `tls_cert` unset.
+
+**Enforcement.** `require_https` refuses plain HTTP on every endpoint. It is on
+by default. A request counts as HTTPS if it arrived over TLS, or if a trusted
+proxy says `X-Forwarded-Proto: https`. Refused requests get:
 
 - `/api/*`: HTTP 426 with `{"error": "https_required", …}`;
 - `/rest/*`: HTTP 426 with the Subsonic envelope, error 0;

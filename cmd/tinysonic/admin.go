@@ -18,6 +18,7 @@ import (
 	"github.com/tsirysndr/tinysonic/internal/config"
 	"github.com/tsirysndr/tinysonic/internal/db"
 	"github.com/tsirysndr/tinysonic/internal/server"
+	"github.com/tsirysndr/tinysonic/internal/tlscert"
 	"github.com/tsirysndr/tinysonic/internal/users"
 )
 
@@ -39,6 +40,8 @@ func runAdmin(args []string) error {
 		return runWorkerCommand(args[1:])
 	case "stream":
 		return runStream(args[1:])
+	case "cert":
+		return runCert(args[1:])
 	}
 	return fmt.Errorf("unknown command %q", args[0])
 }
@@ -414,7 +417,11 @@ func runPair(args []string) error {
 		fmt.Fprintln(os.Stderr, "warning: base_url is not set; the QR code uses", base,
 			"which the phone may not reach. Set base_url in the config.")
 	}
-	uri := server.PairURI(base, token)
+	pin, err := tlscert.Pin(cfg.TLSCert)
+	if err != nil {
+		return fmt.Errorf("tls_cert: %w", err)
+	}
+	uri := server.PairURI(base, token, pin)
 	code, err := qrcode.New(uri, qrcode.Medium)
 	if err != nil {
 		return err

@@ -93,7 +93,7 @@ func (s *State) APIPairQR(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusInternalServerError, "database error")
 		return
 	}
-	code, err := qrcode.New(PairURI(s.serverURL(r), token), qrcode.Medium)
+	code, err := qrcode.New(PairURI(s.serverURL(r), token, s.tlsPin), qrcode.Medium)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "could not encode the pairing code")
 		return

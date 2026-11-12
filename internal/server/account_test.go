@@ -150,7 +150,7 @@ func TestAccountPageServedWithoutSessionCheck(t *testing.T) {
 // against go-qrcode's rendering checks the bitmap orientation and the path
 // coordinates without a QR decoder.
 func TestQRSVGMatchesRenderedImage(t *testing.T) {
-	code, err := qrcode.New(PairURI("https://music.example.org", "tsp_example"), qrcode.Medium)
+	code, err := qrcode.New(PairURI("https://music.example.org", "tsp_example", ""), qrcode.Medium)
 	if err != nil {
 		t.Fatal(err)
 	}

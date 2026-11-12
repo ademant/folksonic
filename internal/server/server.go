@@ -20,6 +20,7 @@ import (
 	"github.com/tsirysndr/tinysonic/internal/config"
 	"github.com/tsirysndr/tinysonic/internal/logging"
 	"github.com/tsirysndr/tinysonic/internal/scanner"
+	"github.com/tsirysndr/tinysonic/internal/tlscert"
 	"github.com/tsirysndr/tinysonic/internal/users"
 )
 
@@ -29,6 +30,9 @@ type State struct {
 	MusicDirs []string
 	// stream caches the key that signs stream URLs; see streamurl.go.
 	stream streamSecretCache
+	// tlsPin is the pin of the served certificate, empty over plain HTTP; the
+	// pairing QR carries it (PairURI).
+	tlsPin string
 	// SongTags is the allowlist of file tags exposed on songs (song_tags).
 	SongTags []string
 	// IgnoredArticles are the leading words skipped when indexing artists
@@ -209,6 +213,18 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 		_ = srv.Shutdown(shutdownCtx)
 	}()
 
+	if cfg.TLSCert != "" {
+		pin, err := tlscert.Pin(cfg.TLSCert)
+		if err != nil {
+			return fmt.Errorf("tls_cert: %w", err)
+		}
+		s.tlsPin = pin
+		logging.Infof("listening on %s (HTTPS, certificate pin %s)", addr, pin)
+		if err := srv.ListenAndServeTLS(cfg.TLSCert, cfg.TLSKey); err != nil && err != http.ErrServerClosed {
+			return err
+		}
+		return nil
+	}
 	logging.Infof("listening on %s", addr)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return err
