@@ -19,6 +19,7 @@ servers:
     description: Server root (or the base_path prefix, when set)
 security:
   - bearerAuth: []
+  - apiKeyHeader: []
   - apiKeyQuery: []
 tags:
   - name: Accounts
@@ -41,11 +42,16 @@ components:
       type: http
       scheme: bearer
       description: 'Session token from `/api/login`, a passkey sign-in, a registration, or `/api/oidc/exchange` (web). Sent as `Authorization: Bearer <token>`.'
+    apiKeyHeader:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+      description: Device API key (`tsk_…`) in the `X-Api-Key` header. Preferred: the key stays out of URLs and access logs. Not accepted for worker keys (use `workerKey`).
     apiKeyQuery:
       type: apiKey
       in: query
       name: apiKey
-      description: Device API key (`tsk_…`), from `/api/keys`, pairing or single sign-on (app). Also accepted as a form field. Not accepted for worker keys.
+      description: Device API key (`tsk_…`) as the `apiKey` parameter, for Subsonic clients. Also accepted as a form field. Not accepted for worker keys.
     workerKey:
       type: apiKey
       in: header
