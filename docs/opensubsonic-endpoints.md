@@ -144,3 +144,4 @@ Advertised by `getOpenSubsonicExtensions`; details in the README.
 | `tinysonicLibraryChanges` v1 | Endpoint `getLibraryChanges?since=<ms>`: ids of artists, albums, songs, playlists and starred items changed since `since` (`{id, updated}`), and `deleted` tombstones (`{type, id, deleted}`), kept 90 days. `full: true` when `since` is missing or older than the floor, or the library was reset. `size` and `cursor` page one snapshot. Playlists and starred items are per account. `serverTime` lags the clock by 2 s. |
 | `tinysonicMeter` v1 | `tinysonicMeter` on songs: the text of the `METER` / `TIME_SIGNATURE` / `TIMESIGNATURE` tag, e.g. `3/4`. Kept in minimal mode. |
 | `tinysonicSongTags` v1 | `tinysonicTags` on songs, when `song_tags` is configured. |
+| `tinysonicStreamUrl` v1 | `GET /api/stream-url?id=` (session only) returns a signed `/rest/stream.view` link for one song, valid 2 hours. Accepted only on `stream` and `download`. |

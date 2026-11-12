@@ -37,8 +37,33 @@ func runAdmin(args []string) error {
 		return runAnalysis(args[1:])
 	case "worker":
 		return runWorkerCommand(args[1:])
+	case "stream":
+		return runStream(args[1:])
 	}
 	return fmt.Errorf("unknown command %q", args[0])
+}
+
+// runStream rotates the key that signs stream URLs. Links made with the old
+// key stop working when the server next starts.
+func runStream(args []string) error {
+	fs := flag.NewFlagSet("stream", flag.ContinueOnError)
+	cfgPath := fs.String("c", "smolsonic.toml", "path to the TOML config file")
+	if len(args) == 0 || args[0] != "rotate" {
+		return errors.New("usage: tinysonic stream rotate [-c config]")
+	}
+	if err := fs.Parse(reorderFlags(args[1:])); err != nil {
+		return err
+	}
+	_, pool, err := openDB(*cfgPath)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	if _, err := users.RotateStreamSecret(context.Background(), pool); err != nil {
+		return err
+	}
+	fmt.Println("stream URL key rotated; restart the server so it takes effect")
+	return nil
 }
 
 func openDB(cfgPath string) (*config.Config, *sql.DB, error) {

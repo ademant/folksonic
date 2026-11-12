@@ -58,6 +58,12 @@ func (s *State) resolveCaller(r *http.Request) (users.User, bool) {
 		return u, true
 	}
 
+	// A signed stream URL (streamurl.go). A presented signature that fails
+	// does not fall through to username and password.
+	if q.Get("sig") != "" {
+		return s.verifySignedStream(r, q)
+	}
+
 	name := q.Get("u")
 	if name == "" || s.legacyPasswordOff {
 		return users.User{}, false
@@ -154,6 +160,10 @@ func (s *State) writeAuthFailure(w http.ResponseWriter, r *http.Request) {
 	}
 	if usesTokenAuth(r) {
 		writeError(w, 42, "Authentication mechanism not supported. Use API keys or username and password")
+		return
+	}
+	if l := reqLogFrom(r.Context()); l != nil && (l.refusal == users.CodeStreamURLExpired || l.refusal == users.CodeStreamURLInvalid) {
+		writeErrorStatus(w, http.StatusForbidden, 40, refusalMessage(l.refusal))
 		return
 	}
 	if l := reqLogFrom(r.Context()); l != nil && l.refusal != "" {

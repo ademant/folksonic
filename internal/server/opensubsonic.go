@@ -20,6 +20,8 @@ var baseOpenSubsonicExtensions = []J{
 // out which features to use.
 func (s *State) GetOpenSubsonicExtensions(w http.ResponseWriter, r *http.Request) {
 	list := append([]J{}, baseOpenSubsonicExtensions...)
+	// Vendor extension: GET /api/stream-url mints signed stream URLs, see streamurl.go.
+	list = append(list, J{"name": "tinysonicStreamUrl", "versions": []int{1}})
 	if len(s.SongTags) > 0 {
 		// Vendor extension: song responses carry tinysonicTags, see songToChild.
 		list = append(list, J{"name": "tinysonicSongTags", "versions": []int{1}})
