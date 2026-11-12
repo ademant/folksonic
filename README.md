@@ -576,8 +576,10 @@ work, including Substreamer, play:sub, Symfonium, Tempo, and Sonixd.
 
 Every `/rest/*` request is authenticated in this order:
 
-1. **API key** (`apiKey=<key>`): the Android app uses this. Keys are created by
-   scanning a pairing QR code, or with `POST /api/keys`. A key has the same
+1. **API key**: sent in the `X-Api-Key: <key>` header (preferred, for API clients
+   such as DanceSonic), or as the `apiKey=<key>` parameter (Subsonic clients and
+   the Android app). The header keeps the key out of URLs and access logs. Keys
+   are created by scanning a pairing QR code, or with `POST /api/keys`. A key has the same
    rights as its user and can be revoked.
 2. **Session token** (`Authorization: Bearer <token>`): issued by a passkey or
    password sign-in on the web page at `/login`.
