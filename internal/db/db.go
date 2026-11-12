@@ -321,6 +321,32 @@ CREATE TABLE IF NOT EXISTS pairing_tokens (
     scope      TEXT NOT NULL DEFAULT ''
 );
 
+-- Paired apps (#101). A device holds a key in its Keystore; only the public key
+-- thumbprint (jkt) is stored. device_pairings is pending until approved.
+CREATE TABLE IF NOT EXISTS devices (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name         TEXT NOT NULL,
+    jkt          TEXT NOT NULL UNIQUE,
+    created_at   TEXT NOT NULL,
+    last_used_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS device_pairings (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name       TEXT NOT NULL,
+    jkt        TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
+
+-- jtis of DPoP proofs seen recently, so a captured proof cannot be replayed.
+CREATE TABLE IF NOT EXISTS dpop_proofs (
+    jti     TEXT PRIMARY KEY,
+    seen_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS sessions (
     token_hash TEXT PRIMARY KEY,
     user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

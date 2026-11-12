@@ -22,7 +22,7 @@ import (
 
 func main() {
 	// Account, invite, pairing and analysis commands run directly against the database and exit.
-	if len(os.Args) > 1 && (os.Args[1] == "user" || os.Args[1] == "invite" || os.Args[1] == "pair" || os.Args[1] == "analysis" || os.Args[1] == "worker" || os.Args[1] == "cert" || os.Args[1] == "stream") {
+	if len(os.Args) > 1 && (os.Args[1] == "user" || os.Args[1] == "invite" || os.Args[1] == "pair" || os.Args[1] == "analysis" || os.Args[1] == "worker" || os.Args[1] == "cert" || os.Args[1] == "stream" || os.Args[1] == "device") {
 		if err := runAdmin(os.Args[1:]); err != nil {
 			if !errors.Is(err, flag.ErrHelp) {
 				fmt.Fprintf(os.Stderr, "tinysonic: %v\n", err)

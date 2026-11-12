@@ -8,6 +8,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/tsirysndr/tinysonic/internal/users"
 )
 
 // reqLog collects what the request log line reports beyond method, path,
@@ -26,6 +28,9 @@ type reqLog struct {
 	// refusal is the error code of a refused credential (see refusal.go); it
 	// becomes the response's code when the request is answered.
 	refusal string
+	// device is the paired app that made the request, set when its DPoP proof
+	// was verified (see devices.go).
+	device *users.Device
 }
 
 type reqLogKey struct{}

@@ -336,6 +336,10 @@ const (
 	CodeInviteInvalid       = "invite_invalid"
 	CodeStreamURLExpired    = "stream_url_expired"
 	CodeStreamURLInvalid    = "stream_url_invalid"
+	CodeProofInvalid        = "proof_invalid"
+	CodeProofReplayed       = "proof_replayed"
+	CodePairingPending      = "pairing_pending"
+	CodeDeviceUnknown       = "device_unknown"
 	// RevokedIdle is the revoked_reason of a key the idle sweep revoked.
 	RevokedIdle = "idle"
 )

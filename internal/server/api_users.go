@@ -39,7 +39,8 @@ func (s *State) requireSession(w http.ResponseWriter, r *http.Request) (users.Us
 	if !ok {
 		return u, false
 	}
-	if key, _ := apiKeyOf(r); key != "" {
+	// A device proof is not a session either: a paired app may not manage the account.
+	if key, _ := apiKeyOf(r); key != "" || r.Header.Get("DPoP") != "" {
 		writeCoded(w, http.StatusForbidden, users.CodeSessionRequired)
 		return users.User{}, false
 	}
@@ -264,11 +265,15 @@ func (s *State) APIPairStart(w http.ResponseWriter, r *http.Request) {
 
 // APIPairComplete is unauthenticated: the single-use token is the credential.
 func (s *State) APIPairComplete(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Token  string `json:"token"`
-		Device string `json:"device"`
-	}
+	var in devicePairRequest
 	if !decodeBody(w, r, &in) {
+		return
+	}
+	// A pairing that sends the app's public key makes a device that waits for
+	// approval (devices.go). The legacy form, without a key, still returns an API
+	// key for apps that predate device keys; see README.
+	if in.JWK != nil {
+		s.completeDevicePairing(w, r, in)
 		return
 	}
 	key, u, err := users.RedeemPairingToken(r.Context(), s.Pool, in.Token, in.Device)
