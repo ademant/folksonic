@@ -64,10 +64,13 @@
   if (location.search) { try { history.replaceState(null, "", location.pathname); } catch (e) {} }
 
   // API keys
+  // Keys unused the longest come first, so the stale ones are easy to spot.
+  function lastActivity(k) { return k.lastUsedAt || k.createdAt || ""; }
   function renderKeys(keys) {
     var list = $("keys");
     list.textContent = "";
     if (!keys.length) list.appendChild(el("li", "No API keys yet.", "meta"));
+    keys = keys.slice().sort(function (a, b) { return lastActivity(a) < lastActivity(b) ? -1 : lastActivity(a) > lastActivity(b) ? 1 : 0; });
     keys.forEach(function (k) {
       var li = el("li");
       var info = el("div");
@@ -75,7 +78,7 @@
       info.appendChild(el("span", "  " + k.prefix + "…", "meta"));
       info.appendChild(el("div", "Created " + when(k.createdAt) +
         (k.lastUsedAt ? " · last used " + when(k.lastUsedAt) : " · never used") +
-        (k.expiresAt ? " · expires " + when(k.expiresAt) : " · no expiry"), "meta"));
+        (k.expiresAt ? " · expires " + when(k.expiresAt) : ""), "meta"));
       li.appendChild(info);
       var b = el("button", "Revoke", "danger small");
       b.addEventListener("click", async function () {
@@ -86,6 +89,15 @@
     });
   }
   async function loadKeys() { renderKeys((await api("GET", "keys")).keys || []); }
+  $("revokeAllKeys").addEventListener("click", async function () {
+    if (!confirm("Revoke every API key on this account? Apps and players using them will have to pair again.")) return;
+    try {
+      var keys = (await api("GET", "keys")).keys || [];
+      for (var i = 0; i < keys.length; i++) await api("DELETE", "keys/" + keys[i].id);
+      say("All keys revoked.");
+      await loadKeys();
+    } catch (e) { say(e.message); }
+  });
   $("createKey").addEventListener("click", async function () {
     var label = $("keyLabel").value.trim();
     var days = parseInt($("keyExpiry").value, 10) || 0;

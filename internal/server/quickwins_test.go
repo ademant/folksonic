@@ -149,9 +149,9 @@ func TestCredentialProblemReasons(t *testing.T) {
 		key, want string
 		id        int64
 	}{
-		{"tsk_never-issued", "unknown-key", 0},
-		{revoked, "revoked-key", idOf["revoked phone"]},
-		{expired, "expired-key", idOf["old tablet"]},
+		{"tsk_never-issued", users.CodeKeyUnknown, 0},
+		{revoked, users.CodeKeyRevoked, idOf["revoked phone"]},
+		{expired, users.CodeKeyExpired, idOf["old tablet"]},
 	} {
 		reason, id, _ := users.APIKeyProblem(ctx, s.Pool, c.key)
 		if reason != c.want || id != c.id {
@@ -159,7 +159,7 @@ func TestCredentialProblemReasons(t *testing.T) {
 		}
 	}
 
-	if got := users.SessionProblem(ctx, s.Pool, "not-a-session"); got != "unknown-session" {
+	if got := users.SessionProblem(ctx, s.Pool, "not-a-session"); got != users.CodeSessionUnknown {
 		t.Errorf("SessionProblem unknown: %q", got)
 	}
 	tok, err := users.CreateSession(ctx, s.Pool, bob)
@@ -169,7 +169,7 @@ func TestCredentialProblemReasons(t *testing.T) {
 	if _, err := s.Pool.Exec("UPDATE sessions SET expires_at = '2020-01-01T00:00:00Z'"); err != nil {
 		t.Fatal(err)
 	}
-	if got := users.SessionProblem(ctx, s.Pool, tok); got != "expired-session" {
+	if got := users.SessionProblem(ctx, s.Pool, tok); got != users.CodeSessionExpired {
 		t.Errorf("SessionProblem expired: %q", got)
 	}
 }
@@ -196,8 +196,8 @@ func TestRefusedKeyIsLoggedWithReasonAndNoSecret(t *testing.T) {
 		t.Fatalf("status %d, want 401", rec.Code)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "WARN auth failed") || !strings.Contains(out, "reason=revoked-key") {
-		t.Errorf("log line missing revoked-key warning: %q", out)
+	if !strings.Contains(out, "WARN auth failed") || !strings.Contains(out, "reason=key_revoked") {
+		t.Errorf("log line missing key_revoked warning: %q", out)
 	}
 	if !strings.Contains(out, `label="old phone"`) {
 		t.Errorf("log line lacks the key label: %q", out)

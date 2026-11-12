@@ -11,6 +11,11 @@ music.example.com {
     # and images are already compressed; Caddy skips those types itself.
     encode zstd gzip
 
+    # HSTS: browsers that reached the site over HTTPS keep using HTTPS for a
+    # year. Apps do not read this header; they rely on the server refusing
+    # plain HTTP for tokens and signed stream URLs (#93).
+    header Strict-Transport-Security "max-age=31536000"
+
     # Caps request bodies at 1 MiB, matching tinysonic.
     request_body {
         max_size 1MB

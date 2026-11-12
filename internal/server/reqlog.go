@@ -23,6 +23,9 @@ type reqLog struct {
 	// the failure limit; retryAfter is how long to wait.
 	throttled  bool
 	retryAfter time.Duration
+	// refusal is the error code of a refused credential (see refusal.go); it
+	// becomes the response's code when the request is answered.
+	refusal string
 }
 
 type reqLogKey struct{}

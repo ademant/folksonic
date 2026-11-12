@@ -53,7 +53,7 @@ func (s *State) APILogin(w http.ResponseWriter, r *http.Request) {
 		case u.Status != users.StatusActive:
 			reason = "not-active"
 		}
-		s.authFailed(ip, reason, r.URL.Path)
+		s.authFailed(r, ip, reason, r.URL.Path)
 		writeAPIError(w, http.StatusUnauthorized, "wrong username or password")
 		return
 	}

@@ -83,6 +83,9 @@ func migrate(d *sql.DB) error {
 	if err := migrateAnalysis(d); err != nil {
 		return fmt.Errorf("analysis: %w", err)
 	}
+	if err := migrateKeyLifetime(d); err != nil {
+		return err
+	}
 	if err := migrateKeyScope(d); err != nil {
 		return fmt.Errorf("key scope: %w", err)
 	}
@@ -303,7 +306,9 @@ CREATE TABLE IF NOT EXISTS api_keys (
     expires_at   TEXT,
     last_used_at TEXT,
     revoked_at   TEXT,
-    scope        TEXT NOT NULL DEFAULT ''   -- '' for a full key, 'worker' for an analysis worker
+    scope        TEXT NOT NULL DEFAULT '',  -- '' for a full key, 'worker' for an analysis worker
+    ttl_seconds    INTEGER,                 -- the key's lifetime, renewed to the same length
+    revoked_reason TEXT                     -- 'idle' when the idle sweep revoked it
 );
 
 CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);

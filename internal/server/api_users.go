@@ -22,7 +22,7 @@ func writeAPIError(w http.ResponseWriter, status int, msg string) {
 func (s *State) requireUser(w http.ResponseWriter, r *http.Request) (users.User, bool) {
 	u, ok := s.authenticate(r)
 	if !ok {
-		writeAPIError(w, http.StatusUnauthorized, "unauthorized")
+		s.writeRefusal(w, r)
 		return users.User{}, false
 	}
 	return u, true
@@ -106,9 +106,13 @@ func (s *State) APIRegister(w http.ResponseWriter, r *http.Request) {
 func (s *State) registerWithInvite(w http.ResponseWriter, r *http.Request, username, password, code string) {
 	u, err := users.RegisterWithInvite(r.Context(), s.Pool, code, username, password)
 	switch {
+	case errors.Is(err, users.ErrInviteExpired):
+		time.Sleep(200 * time.Millisecond) // slow down online guessing
+		writeCoded(w, http.StatusForbidden, users.CodeInviteExpired)
+		return
 	case errors.Is(err, users.ErrInviteInvalid):
 		time.Sleep(200 * time.Millisecond) // slow down online guessing
-		writeAPIError(w, http.StatusForbidden, err.Error())
+		writeCoded(w, http.StatusForbidden, users.CodeInviteInvalid)
 		return
 	case errors.Is(err, users.ErrExists):
 		writeAPIError(w, http.StatusConflict, err.Error())
@@ -136,7 +140,8 @@ func (s *State) APICreateKey(w http.ResponseWriter, r *http.Request) {
 	}
 	var in struct {
 		Label string `json:"label"`
-		// ExpiresDays limits the key's lifetime. Zero means no expiry.
+		// ExpiresDays sets the key's lifetime in days. Zero means the
+		// server's default (api_key_ttl_days); every key expires.
 		ExpiresDays int `json:"expires_days"`
 	}
 	if !decodeBody(w, r, &in) {
@@ -147,15 +152,15 @@ func (s *State) APICreateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ttl := time.Duration(in.ExpiresDays) * 24 * time.Hour
+	if ttl <= 0 {
+		ttl = users.KeyTTL
+	}
 	key, err := users.CreateAPIKey(r.Context(), s.Pool, u.ID, in.Label, ttl)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "database error")
 		return
 	}
-	resp := J{"apiKey": key, "label": in.Label, "expiresAt": nil}
-	if ttl > 0 {
-		resp["expiresAt"] = time.Now().Add(ttl).UTC().Format(time.RFC3339)
-	}
+	resp := J{"apiKey": key, "label": in.Label, "expiresAt": time.Now().Add(ttl).UTC().Format(time.RFC3339)}
 	writeJSON(w, http.StatusCreated, resp)
 }
 
@@ -234,8 +239,12 @@ func (s *State) APIPairComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key, u, err := users.RedeemPairingToken(r.Context(), s.Pool, in.Token, in.Device)
+	if errors.Is(err, users.ErrPairingExpired) {
+		writeCoded(w, http.StatusUnauthorized, users.CodePairingExpired)
+		return
+	}
 	if errors.Is(err, users.ErrNotFound) {
-		writeAPIError(w, http.StatusUnauthorized, "invalid or expired pairing token")
+		writeCoded(w, http.StatusUnauthorized, users.CodePairingInvalid)
 		return
 	}
 	if err != nil {

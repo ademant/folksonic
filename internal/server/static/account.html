@@ -32,10 +32,9 @@
       <div>
         <label for="keyExpiry">Expires</label>
         <select id="keyExpiry">
-          <option value="0">Never</option>
           <option value="30">In 30 days</option>
           <option value="90">In 90 days</option>
-          <option value="365">In a year</option>
+          <option value="365" selected>In a year</option>
         </select>
       </div>
     </div>
@@ -47,6 +46,7 @@
       <button id="dismissKey" class="secondary small">Dismiss</button>
     </div>
     <ul id="keys"></ul>
+    <p><button id="revokeAllKeys" class="danger">Revoke all keys</button></p>
   </section>
 
   <section aria-labelledby="h-pk">

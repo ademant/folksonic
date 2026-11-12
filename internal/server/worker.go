@@ -39,16 +39,18 @@ type workerCaller struct {
 func (s *State) requireWorker(w http.ResponseWriter, r *http.Request) (workerCaller, bool) {
 	key := r.Header.Get("X-Api-Key")
 	if key == "" {
-		writeAPIError(w, http.StatusUnauthorized, "unauthorized")
+		s.writeRefusal(w, r)
 		return workerCaller{}, false
 	}
 	u, info, err := users.LookupAPIKeyInfo(r.Context(), s.Pool, key)
 	if err != nil {
-		writeAPIError(w, http.StatusUnauthorized, "unauthorized")
+		reason, keyID, label := users.APIKeyProblem(r.Context(), s.Pool, key)
+		s.logRefused(r, reason, keyID, label)
+		s.writeRefusal(w, r)
 		return workerCaller{}, false
 	}
 	if info.Scope != users.ScopeWorker {
-		writeAPIError(w, http.StatusForbidden, "not a worker key")
+		writeCoded(w, http.StatusForbidden, users.CodeScopeForbidden)
 		return workerCaller{}, false
 	}
 	return workerCaller{User: u, KeyID: info.ID}, true
