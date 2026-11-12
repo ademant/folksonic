@@ -177,7 +177,7 @@ func (s *State) APIOIDCBegin(w http.ResponseWriter, r *http.Request) {
 	switch in.Mode {
 	case "signin":
 	case "link":
-		u, ok := s.requireUser(w, r)
+		u, ok := s.requireSession(w, r)
 		if !ok {
 			return
 		}
@@ -376,7 +376,7 @@ func (s *State) APIOIDCExchange(w http.ResponseWriter, r *http.Request) {
 
 // APIListIdentities lists the single sign-on identities linked to the caller.
 func (s *State) APIListIdentities(w http.ResponseWriter, r *http.Request) {
-	u, ok := s.requireUser(w, r)
+	u, ok := s.requireSession(w, r)
 	if !ok {
 		return
 	}
@@ -395,7 +395,7 @@ func (s *State) APIListIdentities(w http.ResponseWriter, r *http.Request) {
 // APIUnlinkIdentity removes one linked identity, unless it is the account's
 // last way to sign in.
 func (s *State) APIUnlinkIdentity(w http.ResponseWriter, r *http.Request) {
-	u, ok := s.requireUser(w, r)
+	u, ok := s.requireSession(w, r)
 	if !ok {
 		return
 	}

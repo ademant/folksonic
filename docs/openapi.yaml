@@ -46,7 +46,7 @@ components:
       type: apiKey
       in: header
       name: X-Api-Key
-      description: Device API key (`tsk_…`) in the `X-Api-Key` header. Preferred: the key stays out of URLs and access logs. Not accepted for worker keys (use `workerKey`).
+      description: 'Device API key (`tsk_…`) in the `X-Api-Key` header. Preferred: the key stays out of URLs and access logs. Not accepted for worker keys (use `workerKey`).'
     apiKeyQuery:
       type: apiKey
       in: query
@@ -386,6 +386,8 @@ paths:
                     enum: ['signed out']
   /api/keys:
     get:
+      security:
+        - bearerAuth: []
       tags: [API keys]
       summary: List the caller's API keys
       responses:
@@ -403,6 +405,8 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
     post:
+      security:
+        - bearerAuth: []
       tags: [API keys]
       summary: Create an API key
       description: The key is returned once. The Android app and other clients use it as the `apiKey` parameter.
@@ -436,6 +440,8 @@ paths:
     parameters:
       - $ref: '#/components/parameters/Id'
     delete:
+      security:
+        - bearerAuth: []
       tags: [API keys]
       summary: Revoke one of the caller's keys
       responses:
@@ -455,6 +461,8 @@ paths:
           $ref: '#/components/responses/NotFound'
   /api/pair/start:
     post:
+      security:
+        - bearerAuth: []
       tags: [Device pairing]
       summary: Create a pairing token and its QR payload
       description: The token is single-use and expires after 5 minutes. The app redeems it at `/api/pair/complete`.
@@ -510,6 +518,8 @@ paths:
                 $ref: '#/components/schemas/Error'
   /api/pair/qr:
     post:
+      security:
+        - bearerAuth: []
       tags: [Device pairing]
       summary: Create a pairing token and return its QR code
       description: |
@@ -532,6 +542,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/passkeys:
     get:
+      security:
+        - bearerAuth: []
       tags: [Passkeys]
       summary: List the caller's passkeys
       responses:
@@ -552,6 +564,8 @@ paths:
     parameters:
       - $ref: '#/components/parameters/Id'
     delete:
+      security:
+        - bearerAuth: []
       tags: [Passkeys]
       summary: Remove one of the caller's passkeys
       description: Refused when it would leave the account with no sign-in method (no password, no other passkey and no linked identity).
@@ -574,6 +588,8 @@ paths:
           $ref: '#/components/responses/Conflict'
   /api/passkey/register/begin:
     post:
+      security:
+        - bearerAuth: []
       tags: [Passkeys]
       summary: Start adding a passkey to the signed-in account
       responses:
@@ -589,6 +605,8 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
   /api/passkey/register/finish:
     post:
+      security:
+        - bearerAuth: []
       tags: [Passkeys]
       summary: Store the passkey created in the browser
       parameters:
@@ -915,6 +933,8 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
   /api/oidc/identities:
     get:
+      security:
+        - bearerAuth: []
       tags: [Single sign-on]
       summary: List the identities linked to the caller
       responses:
@@ -935,6 +955,8 @@ paths:
     parameters:
       - $ref: '#/components/parameters/Id'
     delete:
+      security:
+        - bearerAuth: []
       tags: [Single sign-on]
       summary: Unlink one of the caller's identities
       description: Refused when it would leave the account with no sign-in method.
@@ -957,6 +979,8 @@ paths:
           $ref: '#/components/responses/Conflict'
   /api/library/stats:
     get:
+      security:
+        - bearerAuth: []
       tags: [Library]
       summary: Library statistics, BPM coverage and running jobs
       responses:
@@ -997,7 +1021,7 @@ paths:
                       features:
                         type: object
                         additionalProperties: {type: string}
-                        description: Feature → tool, for example `{"bpm": "folksentia", "loudness": "ffmpeg"}`.
+                        description: 'Feature → tool, for example `{"bpm": "folksentia", "loudness": "ffmpeg"}`.'
                       tools:
                         type: object
                         additionalProperties:
@@ -1011,6 +1035,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
   /api/library/scan:
     post:
+      security:
+        - bearerAuth: []
       tags: [Library]
       summary: Rescan the music folders
       responses:
@@ -1024,6 +1050,8 @@ paths:
           $ref: '#/components/responses/Conflict'
   /api/library/bpm:
     post:
+      security:
+        - bearerAuth: []
       tags: [Library]
       summary: Calculate BPM from the audio
       description: >-
@@ -1067,6 +1095,8 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
   /api/library/analysis:
     post:
+      security:
+        - bearerAuth: []
       tags: [Library]
       summary: Recalculate the analysis of tracks
       description: >-
@@ -1205,6 +1235,8 @@ paths:
           description: Database error.
   /api/library/analysis/failed:
     get:
+      security:
+        - bearerAuth: []
       tags: [Library]
       summary: Tracks whose last analysis failed
       description: >-
@@ -1319,6 +1351,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /api/library/jobs/cancel:
     post:
+      security:
+        - bearerAuth: []
       tags: [Library]
       summary: Stop the running job after the current track
       responses:

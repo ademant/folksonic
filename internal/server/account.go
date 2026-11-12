@@ -33,7 +33,7 @@ func (s *State) ServeAccountPage(w http.ResponseWriter, r *http.Request) {
 
 // APIListPasskeys lists the caller's passkeys without their key material.
 func (s *State) APIListPasskeys(w http.ResponseWriter, r *http.Request) {
-	u, ok := s.requireUser(w, r)
+	u, ok := s.requireSession(w, r)
 	if !ok {
 		return
 	}
@@ -52,7 +52,7 @@ func (s *State) APIListPasskeys(w http.ResponseWriter, r *http.Request) {
 // APIRemovePasskey deletes one of the caller's passkeys, unless it is the
 // account's last way to sign in.
 func (s *State) APIRemovePasskey(w http.ResponseWriter, r *http.Request) {
-	u, ok := s.requireUser(w, r)
+	u, ok := s.requireSession(w, r)
 	if !ok {
 		return
 	}
@@ -84,7 +84,7 @@ func (s *State) APIRemovePasskey(w http.ResponseWriter, r *http.Request) {
 // ?format=png. The token is single-use and expires after PairingTTL, like the
 // token behind /api/pair/start.
 func (s *State) APIPairQR(w http.ResponseWriter, r *http.Request) {
-	u, ok := s.requireUser(w, r)
+	u, ok := s.requireSession(w, r)
 	if !ok {
 		return
 	}

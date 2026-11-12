@@ -151,14 +151,15 @@ func TestPasskeyRegisterAndLogin(t *testing.T) {
 	s := passkeyState(t)
 	ctx := context.Background()
 	admin, _ := users.ByName(ctx, s.Pool, "admin")
-	key, err := users.CreateAPIKey(ctx, s.Pool, admin.ID, "test", 0)
+	key, err := users.CreateSession(ctx, s.Pool, admin.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	auth := newSoftAuthenticator(t, "http://localhost:4598", "localhost")
 
 	// Enrol.
-	req := httptest.NewRequest(http.MethodPost, "/api/passkey/register/begin?apiKey="+key, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/passkey/register/begin", nil)
+	req.Header.Set("Authorization", "Bearer "+key)
 	rec := httptest.NewRecorder()
 	s.APIPasskeyRegisterBegin(rec, req)
 	if rec.Code != http.StatusOK {
@@ -176,7 +177,8 @@ func TestPasskeyRegisterAndLogin(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := auth.registration(t, begin.Options.PublicKey.Challenge)
-	req = httptest.NewRequest(http.MethodPost, "/api/passkey/register/finish?apiKey="+key+"&ceremony="+begin.Ceremony, strings.NewReader(string(body)))
+	req = httptest.NewRequest(http.MethodPost, "/api/passkey/register/finish?ceremony="+begin.Ceremony, strings.NewReader(string(body)))
+	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Content-Type", "application/json")
 	rec = httptest.NewRecorder()
 	s.APIPasskeyRegisterFinish(rec, req)
@@ -227,10 +229,11 @@ func TestPasskeyRejectsForeignKey(t *testing.T) {
 	s := passkeyState(t)
 	ctx := context.Background()
 	admin, _ := users.ByName(ctx, s.Pool, "admin")
-	key, _ := users.CreateAPIKey(ctx, s.Pool, admin.ID, "test", 0)
+	key, _ := users.CreateSession(ctx, s.Pool, admin.ID)
 	enrolled := newSoftAuthenticator(t, "http://localhost:4598", "localhost")
 
-	req := httptest.NewRequest(http.MethodPost, "/api/passkey/register/begin?apiKey="+key, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/passkey/register/begin", nil)
+	req.Header.Set("Authorization", "Bearer "+key)
 	rec := httptest.NewRecorder()
 	s.APIPasskeyRegisterBegin(rec, req)
 	var begin struct {
@@ -242,8 +245,9 @@ func TestPasskeyRejectsForeignKey(t *testing.T) {
 		} `json:"options"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &begin)
-	req = httptest.NewRequest(http.MethodPost, "/api/passkey/register/finish?apiKey="+key+"&ceremony="+begin.Ceremony,
+	req = httptest.NewRequest(http.MethodPost, "/api/passkey/register/finish?ceremony="+begin.Ceremony,
 		strings.NewReader(string(enrolled.registration(t, begin.Options.PublicKey.Challenge))))
+	req.Header.Set("Authorization", "Bearer "+key)
 	rec = httptest.NewRecorder()
 	s.APIPasskeyRegisterFinish(rec, req)
 	if rec.Code != http.StatusCreated {

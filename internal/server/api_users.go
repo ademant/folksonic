@@ -28,6 +28,24 @@ func (s *State) requireUser(w http.ResponseWriter, r *http.Request) (users.User,
 	return u, true
 }
 
+// requireSession admits only a signed-in session for account and device
+// management. An API key may be used for the Subsonic API and the analysis
+// reads, but not to create, list or revoke keys, pair devices, manage passkeys
+// or identities, or run library jobs: a leaked key must not be able to mint a
+// new one. resolveCaller takes the key before any bearer token, so a request
+// with an API key is a key request, whatever else it carries.
+func (s *State) requireSession(w http.ResponseWriter, r *http.Request) (users.User, bool) {
+	u, ok := s.requireUser(w, r)
+	if !ok {
+		return u, false
+	}
+	if key, _ := apiKeyOf(r); key != "" {
+		writeCoded(w, http.StatusForbidden, users.CodeSessionRequired)
+		return users.User{}, false
+	}
+	return u, true
+}
+
 func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid JSON body")
@@ -134,7 +152,7 @@ func (s *State) registerWithInvite(w http.ResponseWriter, r *http.Request, usern
 
 // APICreateKey issues an API key for the caller. The key is returned once.
 func (s *State) APICreateKey(w http.ResponseWriter, r *http.Request) {
-	u, ok := s.requireUser(w, r)
+	u, ok := s.requireSession(w, r)
 	if !ok {
 		return
 	}
@@ -165,7 +183,7 @@ func (s *State) APICreateKey(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *State) APIListKeys(w http.ResponseWriter, r *http.Request) {
-	u, ok := s.requireUser(w, r)
+	u, ok := s.requireSession(w, r)
 	if !ok {
 		return
 	}
@@ -189,7 +207,7 @@ func (s *State) APIListKeys(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *State) APIRevokeKey(w http.ResponseWriter, r *http.Request) {
-	u, ok := s.requireUser(w, r)
+	u, ok := s.requireSession(w, r)
 	if !ok {
 		return
 	}
@@ -212,7 +230,7 @@ func (s *State) APIRevokeKey(w http.ResponseWriter, r *http.Request) {
 // APIPairStart issues a short-lived pairing token and the QR payload that
 // encodes it. The app redeems the token once for a long-lived API key.
 func (s *State) APIPairStart(w http.ResponseWriter, r *http.Request) {
-	u, ok := s.requireUser(w, r)
+	u, ok := s.requireSession(w, r)
 	if !ok {
 		return
 	}

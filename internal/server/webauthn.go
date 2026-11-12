@@ -138,7 +138,7 @@ func (s *State) APIPasskeyRegisterBegin(w http.ResponseWriter, r *http.Request) 
 	if !s.requireWebAuthn(w) {
 		return
 	}
-	caller, ok := s.requireUser(w, r)
+	caller, ok := s.requireSession(w, r)
 	if !ok {
 		return
 	}
@@ -163,7 +163,7 @@ func (s *State) APIPasskeyRegisterFinish(w http.ResponseWriter, r *http.Request)
 	if !s.requireWebAuthn(w) {
 		return
 	}
-	caller, ok := s.requireUser(w, r)
+	caller, ok := s.requireSession(w, r)
 	if !ok {
 		return
 	}

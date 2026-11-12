@@ -583,7 +583,10 @@ Every `/rest/*` request is authenticated in this order:
    such as DanceSonic), or as the `apiKey=<key>` parameter (Subsonic clients and
    the Android app). The header keeps the key out of URLs and access logs. Keys
    are created by scanning a pairing QR code, or with `POST /api/keys`. A key has the same
-   rights as its user and can be revoked. Every key expires after
+   rights as its user and can be revoked. A key may call the Subsonic API, the
+   analysis reads and the worker endpoints, but not manage the account: creating,
+   listing or revoking keys, pairing devices, passkeys, identities and library
+   jobs need a signed-in session (`session_required`). Every key expires after
    `api_key_ttl_days` (365 by default), is renewed when it is used in its last 30
    days, and is revoked after `api_key_idle_days` (180) without use.
 2. **Session token** (`Authorization: Bearer <token>`): issued by a passkey or
@@ -615,37 +618,37 @@ The JSON endpoints below are described in [`docs/openapi.yaml`](docs/openapi.yam
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |
 | POST | `/api/register` | none | Create an account. With `invite` and `password`: active and signed in (returns a session `token`). Without an invite: pending, needs `allow_registration`, and needs a password |
-| POST | `/api/keys` | user | Create an API key (shown once). `expires_days` sets its lifetime; without it the key lives `api_key_ttl_days` |
-| GET | `/api/keys` | user | List own keys |
-| DELETE | `/api/keys/{id}` | user | Revoke an own key |
-| POST | `/api/pair/start` | user | Create a pairing token and QR payload |
+| POST | `/api/keys` | session | Create an API key (shown once). `expires_days` sets its lifetime; without it the key lives `api_key_ttl_days` |
+| GET | `/api/keys` | session | List own keys |
+| DELETE | `/api/keys/{id}` | session | Revoke an own key |
+| POST | `/api/pair/start` | session | Create a pairing token and QR payload |
 | POST | `/api/pair/complete` | token | App redeems a pairing token for an API key |
-| POST | `/api/passkey/register/begin` · `/finish` | user | Enrol a passkey |
+| POST | `/api/passkey/register/begin` · `/finish` | session | Enrol a passkey |
 | POST | `/api/passkey/login/begin` · `/finish` | none | Sign in with a passkey |
 | POST | `/api/register/passkey/begin` · `/finish` | none | Sign up with an invite and a passkey, no password. The account is created only after the passkey is verified |
 | POST | `/api/login` | none | Sign in with username and password |
 | POST | `/api/logout` | Bearer | End a session |
 | GET | `/account` | page | Account page: API keys, pairing QR, passkeys and linked identities. Redirects to sign-in when there is no session |
-| POST | `/api/pair/qr` | user | Create a pairing token and return its QR code, SVG by default; PNG with `Accept: image/png` or `?format=png` |
-| GET | `/api/passkeys` | user | List own passkeys (`id`, `label`, `createdAt`) |
-| DELETE | `/api/passkeys/{id}` | user | Remove an own passkey. Refused (409) when it is the account's last sign-in method |
+| POST | `/api/pair/qr` | session | Create a pairing token and return its QR code, SVG by default; PNG with `Accept: image/png` or `?format=png` |
+| GET | `/api/passkeys` | session | List own passkeys (`id`, `label`, `createdAt`) |
+| DELETE | `/api/passkeys/{id}` | session | Remove an own passkey. Refused (409) when it is the account's last sign-in method |
 | GET | `/api/oidc/status` | none | `{"enabled": bool}`, so the page knows whether to offer single sign-on |
 | POST | `/api/oidc/begin` | none (`link` needs user) | Start single sign-on. Body: `mode` (`signin`, `link` or `invite`), `client` (`web` or `app`), and `invite` and `username` for `invite`. Returns the provider's `url` |
 | GET | `/api/oidc/callback` | state | Provider redirect target. Ends in the sign-in page with a one-time code, or with an error |
 | POST | `/api/oidc/exchange` | one-time code | Trade the code for a session `token` (web) or a device `apiKey` (app) |
 | GET | `/library` | page | Library page for librarians: statistics, rescan, BPM calculation |
-| GET | `/api/library/stats` | librarian | Totals, BPM coverage (tag / calculated / missing), last scan, running scan or job, ffmpeg availability, analysis assignments and tool availability |
-| POST | `/api/library/scan` | librarian | Rescan the music folders (409 while a scan or job runs) |
-| POST | `/api/library/bpm` | librarian | Start BPM calculation with the tool assigned to `bpm`, body `{"mode": "missing"}` or `{"mode": "all"}` (all also recalculates; 503 when the tool is not available) |
-| POST | `/api/library/analysis` | librarian | Recalculate analysis, body `{"ids": ["so-…"]}` or `{"all": true}`, optionally `"features": ["key"]` (409 while a scan or job runs; 503 when a tool is not available) |
-| GET | `/api/library/analysis/failed` | librarian | Tracks whose last analysis failed, with tool and error; `?limit=` up to 1000 (default 200). Retry with the POST above |
-| POST | `/api/library/jobs/cancel` | librarian | Stop the running job after the current track |
+| GET | `/api/library/stats` | session | Totals, BPM coverage (tag / calculated / missing), last scan, running scan or job, ffmpeg availability, analysis assignments and tool availability |
+| POST | `/api/library/scan` | session | Rescan the music folders (409 while a scan or job runs) |
+| POST | `/api/library/bpm` | session | Start BPM calculation with the tool assigned to `bpm`, body `{"mode": "missing"}` or `{"mode": "all"}` (all also recalculates; 503 when the tool is not available) |
+| POST | `/api/library/analysis` | session | Recalculate analysis, body `{"ids": ["so-…"]}` or `{"all": true}`, optionally `"features": ["key"]` (409 while a scan or job runs; 503 when a tool is not available) |
+| GET | `/api/library/analysis/failed` | session | Tracks whose last analysis failed, with tool and error; `?limit=` up to 1000 (default 200). Retry with the POST above |
+| POST | `/api/library/jobs/cancel` | session | Stop the running job after the current track |
 | GET | `/api/analysis?id=` | user | Stored analysis of one track; see [Track analysis](#track-analysis) |
 | GET | `/api/duplicates` | user | Groups of songs with matching audio fingerprints; see [Track analysis](#track-analysis) |
 | POST | `/api/worker/jobs` | worker key | Lease up to 20 tracks for a worker tool (`{"tool": "folksentia", "limit": 5}`); see [Analysis workers](#analysis-workers) |
 | POST | `/api/worker/results` | worker key | Store a worker's output for a leased track; 409 when the lease or the file is gone |
-| GET | `/api/oidc/identities` | user | List linked identities |
-| DELETE | `/api/oidc/identities/{id}` | user | Unlink an identity. Refused (409) when it is the account's last sign-in method |
+| GET | `/api/oidc/identities` | session | List linked identities |
+| DELETE | `/api/oidc/identities/{id}` | session | Unlink an identity. Refused (409) when it is the account's last sign-in method |
 
 The QR code encodes `tinysonic://pair?server=<base_url>&token=<token>`. The app
 posts the token to `/api/pair/complete` and stores the returned key.
@@ -926,6 +929,7 @@ message text is for people; apps should not parse it.
 | `session_unknown`, `session_expired` | The web session token is unknown or expired |
 | `user_disabled` | The account is disabled |
 | `scope_forbidden` | The key may not be used for this request (worker keys) |
+| `session_required` | The request needs a signed-in session, not an API key (account and library management) |
 | `password_invalid`, `rate_limited` | Subsonic `u`/`p` sign-in failed, or too many failures |
 | `pairing_expired`, `pairing_invalid` | A pairing code is past its 15 minutes, or unknown or already used |
 | `invite_expired`, `invite_invalid` | An invitation code is past its 7 days, or unknown, used or revoked |
