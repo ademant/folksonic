@@ -193,6 +193,8 @@ tinysonic invite list [-c FILE]                       list invites and their sta
 tinysonic invite revoke [-c FILE] <id>                withdraw an unused invite
 
 tinysonic pair [-c FILE] --user <username>            print a pairing QR code (valid 15 min, single use)
+tinysonic device list [-c FILE] --user <username>     list the account's paired devices
+tinysonic device remove [-c FILE] --user <username> <id>   remove one; its next request fails
 
 tinysonic worker key [-c FILE] --user <username> --out <file>
                                                       write a worker config with a new worker key (mode 0600)
@@ -583,12 +585,23 @@ work, including Substreamer, play:sub, Symfonium, Tempo, and Sonixd.
 
 ## How auth works
 
-Every `/rest/*` request is authenticated in this order:
+Every `/rest/*` request is authenticated in this order. A paired app (a
+**device**, #101) is the exception in method 0: it sends no secret, only a proof
+signed with a key that never leaves its Keystore.
+
+0. **Device proof** (`DPoP: <proof>`, RFC 9449): the app signs each request with
+   its device key. The proof must name the request's method and URL (without
+   its query), carry a fresh `iat` (within 60 seconds) and a `jti` not seen
+   before. Its key must belong to an active device. Devices may use `/rest/*`
+   and `/api/*`, but not manage the account: approving pairings, listing and
+   removing devices, and managing keys, passkeys and identities need a session.
+   A device's proof is refused with `pairing_pending` until its owner approves
+   it, `device_unknown` once removed, and `proof_replayed` on reuse.
 
 1. **API key**: sent in the `X-Api-Key: <key>` header (preferred, for API clients
    such as DanceSonic), or as the `apiKey=<key>` parameter (Subsonic clients and
    the Android app). The header keeps the key out of URLs and access logs. Keys
-   are created by scanning a pairing QR code, or with `POST /api/keys`. A key has the same
+   are created with `POST /api/keys`, or by a legacy pairing for apps without device keys. A key has the same
    rights as its user and can be revoked. A key may call the Subsonic API, the
    analysis reads and the worker endpoints, but not manage the account: creating,
    listing or revoking keys, pairing devices, passkeys, identities and library
@@ -682,6 +695,16 @@ key after a device is lost.
 
 ### Accounts and pairing
 
+**Pairing a device.** The account page shows a QR code for 15 minutes. The app
+scans it and creates a key in its Keystore; it sends only the public key with
+the one-time token. The pairing then waits on the account page under "Waiting
+for approval", where the owner approves it with the device name shown. Nothing
+is granted until approval, and the wait ends with the QR code's 15 minutes. An
+approved device appears under "Devices", where it can be removed at any time.
+A device holds no bearer secret, so a copied request or log line is not a key.
+`tinysonic device list` and `tinysonic device remove` do the same from the
+command line.
+
 The JSON endpoints below are described in [`docs/openapi.yaml`](docs/openapi.yaml).
 
 | Method | Path | Auth | Purpose |
@@ -692,7 +715,13 @@ The JSON endpoints below are described in [`docs/openapi.yaml`](docs/openapi.yam
 | GET | `/api/stream-url?id=so-…` | session | Signed stream URL for one song, valid 2 hours. Play it at `/rest/stream.view` or `/rest/download.view` with no other credentials |
 | DELETE | `/api/keys/{id}` | session | Revoke an own key |
 | POST | `/api/pair/start` | session | Create a pairing token and QR payload |
-| POST | `/api/pair/complete` | token | App redeems a pairing token for an API key |
+| POST | `/api/pair/complete` | token | Redeem a pairing token. With `jwk` (the app's public P-256 key) the pairing waits for approval and no secret is returned (202). Without `jwk` the legacy form returns an API key, for apps that predate device keys |
+| GET | `/api/device/me` | device proof | The device this proof belongs to. The app polls it while the pairing waits |
+| GET | `/api/pair/pending` | session | Pairings waiting for approval |
+| POST | `/api/pair/pending/{id}/approve` | session | Approve a pairing. Refused with 410 once its 15 minutes have run out |
+| POST | `/api/pair/pending/{id}/deny` | session | Discard a pending pairing |
+| GET | `/api/devices` | session | The account's paired devices |
+| DELETE | `/api/devices/{id}` | session | Remove a device; its next request fails with `device_unknown` |
 | POST | `/api/passkey/register/begin` · `/finish` | session | Enrol a passkey |
 | POST | `/api/passkey/login/begin` · `/finish` | none | Sign in with a passkey |
 | POST | `/api/register/passkey/begin` · `/finish` | none | Sign up with an invite and a passkey, no password. The account is created only after the passkey is verified |
@@ -1022,6 +1051,10 @@ message text is for people; apps should not parse it.
 | `session_required` | The request needs a signed-in session, not an API key (account and library management) |
 | `stream_url_expired` | The signed stream link is past its expiry; ask `/api/stream-url` for a new one (403) |
 | `stream_url_invalid` | The signed stream link was changed, is for another song, or its key was rotated (403) |
+| `proof_invalid` | A device proof is malformed, signed by another key, or for another method or URL (401) |
+| `proof_replayed` | A device proof's `jti` was used before (401) |
+| `pairing_pending` | The device is waiting for its owner to approve the pairing on the account page (401) |
+| `device_unknown` | The device was removed, or its key was never paired (401) |
 | `password_invalid`, `rate_limited` | Subsonic `u`/`p` sign-in failed, or too many failures |
 | `pairing_expired`, `pairing_invalid` | A pairing code is past its 15 minutes, or unknown or already used |
 | `invite_expired`, `invite_invalid` | An invitation code is past its 7 days, or unknown, used or revoked |

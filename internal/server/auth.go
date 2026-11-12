@@ -49,6 +49,10 @@ func (s *State) resolveCaller(r *http.Request) (users.User, bool) {
 		}
 		return u, true
 	}
+	// A paired app signs each request with its key (devices.go). No secret is sent.
+	if proof := r.Header.Get("DPoP"); proof != "" {
+		return s.verifyDevice(r, proof)
+	}
 	if tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
 		u, err := users.LookupSession(ctx, s.Pool, tok)
 		if err != nil {

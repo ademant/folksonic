@@ -21,9 +21,22 @@
     <div id="qr"><img id="qrImg" alt="Pairing QR code"></div>
   </section>
 
+  <section aria-labelledby="h-devices">
+    <h2 id="h-devices">Devices</h2>
+    <p>Apps paired with this account. Each one signs its requests with a key that
+      stays on the device. Remove a device to disconnect it at its next request.</p>
+    <div id="pendingBox" hidden>
+      <h3>Waiting for approval</h3>
+      <p>Approve only a device you are holding now. A pairing that is not approved
+        expires with its code.</p>
+      <ul id="pending"></ul>
+    </div>
+    <ul id="devices"></ul>
+  </section>
+
   <section aria-labelledby="h-keys">
     <h2 id="h-keys">API keys</h2>
-    <p>Use a key where a client asks for an API key. Revoke a key to disconnect that client.</p>
+    <p>For Subsonic clients and older apps that take an API key. Revoke a key to disconnect that client.</p>
     <div class="row">
       <div>
         <label for="keyLabel">Label</label>

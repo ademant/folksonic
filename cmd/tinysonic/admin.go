@@ -42,6 +42,8 @@ func runAdmin(args []string) error {
 		return runStream(args[1:])
 	case "cert":
 		return runCert(args[1:])
+	case "device":
+		return runDevice(args[1:])
 	}
 	return fmt.Errorf("unknown command %q", args[0])
 }

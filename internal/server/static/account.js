@@ -89,6 +89,55 @@
     });
   }
   async function loadKeys() { renderKeys((await api("GET", "keys")).keys || []); }
+
+  // Devices (#101): paired apps, and pairings waiting for approval.
+  function renderPending(list) {
+    var box = $("pendingBox"), ul = $("pending");
+    ul.textContent = "";
+    box.hidden = !list.length;
+    list.forEach(function (p) {
+      var li = el("li");
+      var info = el("div");
+      info.appendChild(el("strong", p.name));
+      info.appendChild(el("div", "Requested " + when(p.createdAt) + " · expires " + when(p.expiresAt), "meta"));
+      li.appendChild(info);
+      var ok = el("button", "Approve", "small");
+      ok.addEventListener("click", async function () {
+        try { await api("POST", "pair/pending/" + p.id + "/approve"); say("Device approved."); await refreshDevices(); } catch (e) { say(e.message); }
+      });
+      var no = el("button", "Deny", "danger small");
+      no.addEventListener("click", async function () {
+        try { await api("POST", "pair/pending/" + p.id + "/deny"); say("Pairing denied."); await refreshDevices(); } catch (e) { say(e.message); }
+      });
+      li.appendChild(ok);
+      li.appendChild(no);
+      ul.appendChild(li);
+    });
+  }
+  function renderDevices(list) {
+    var ul = $("devices");
+    ul.textContent = "";
+    if (!list.length) ul.appendChild(el("li", "No paired devices yet.", "meta"));
+    list.forEach(function (d) {
+      var li = el("li");
+      var info = el("div");
+      info.appendChild(el("strong", d.name));
+      info.appendChild(el("div", "Paired " + when(d.createdAt) +
+        (d.lastUsedAt ? " · last used " + when(d.lastUsedAt) : " · not used yet"), "meta"));
+      li.appendChild(info);
+      var b = el("button", "Remove", "danger small");
+      b.addEventListener("click", async function () {
+        try { await api("DELETE", "devices/" + d.id); say("Device removed."); await refreshDevices(); } catch (e) { say(e.message); }
+      });
+      li.appendChild(b);
+      ul.appendChild(li);
+    });
+  }
+  async function refreshDevices() {
+    var pending = (await api("GET", "pair/pending")).pending || [];
+    renderPending(pending);
+    renderDevices((await api("GET", "devices")).devices || []);
+  }
   $("revokeAllKeys").addEventListener("click", async function () {
     if (!confirm("Revoke every API key on this account? Apps and players using them will have to pair again.")) return;
     try {
@@ -224,7 +273,11 @@
   });
 
   // Load everything; each section fails on its own so one problem does not hide the rest.
-  [loadKeys, loadPasskeys].forEach(function (f) { f().catch(function (e) { say(e.message); }); });
+  [loadKeys, loadPasskeys, refreshDevices].forEach(function (f) { f().catch(function (e) { say(e.message); }); });
+  // Pairings appear while a phone is waiting; refresh while the page is in view.
+  setInterval(function () {
+    if (document.visibilityState === "visible") refreshDevices().catch(function () {});
+  }, 5000);
   // The library page is for librarians; its stats endpoint answers 403 otherwise.
   raw("GET", "library/stats").then(function (r) { $("librarySection").hidden = !r.ok; }).catch(function () {});
   fetch("api/oidc/status").then(function (r) { return r.json(); }).then(function (j) {

@@ -62,6 +62,11 @@ components:
       in: header
       name: X-Api-Key
       description: 'Device API key (`tsk_…`) in the `X-Api-Key` header. Preferred: the key stays out of URLs and access logs. Not accepted for worker keys (use `workerKey`).'
+    dpopProof:
+      type: apiKey
+      in: header
+      name: DPoP
+      description: 'A paired app (device) signs each request with its Keystore key and sends the proof (RFC 9449) in the `DPoP` header. No bearer secret is sent. The proof names the method and the request URL without its query, and carries a fresh `iat` and a unique `jti`.'
     apiKeyQuery:
       type: apiKey
       in: query
@@ -434,6 +439,127 @@ paths:
           description: A key was used, or the request needs a session.
         '404':
           description: No song with that id.
+  /api/device/me:
+    get:
+      tags: [Device pairing]
+      summary: The paired device this proof belongs to
+      description: Proof only. Refused with `pairing_pending` until the owner approves the device.
+      security:
+        - dpopProof: []
+      responses:
+        '200':
+          description: The device.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: {type: integer}
+                  name: {type: string}
+                  lastUsedAt: {type: string}
+        '401':
+          description: Refused with `pairing_pending`, `pairing_expired`, `device_unknown`, `proof_invalid` or `proof_replayed`.
+  /api/pair/pending:
+    get:
+      tags: [Device pairing]
+      summary: Pairings waiting for approval
+      description: Session only.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: The pending pairings.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pending:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: {type: integer}
+                        name: {type: string}
+                        createdAt: {type: string}
+                        expiresAt: {type: string}
+  /api/pair/pending/{id}/approve:
+    post:
+      tags: [Device pairing]
+      summary: Approve a pending pairing
+      description: Session only. Refused with 410 when the pairing's time has run out.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer}
+      responses:
+        '201':
+          description: The device.
+        '404':
+          description: No such pairing.
+        '410':
+          description: The pairing expired before approval.
+  /api/pair/pending/{id}/deny:
+    post:
+      tags: [Device pairing]
+      summary: Deny a pending pairing
+      description: Session only.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer}
+      responses:
+        '200':
+          description: Denied.
+        '404':
+          description: No such pairing.
+  /api/devices:
+    get:
+      tags: [Device pairing]
+      summary: The account's paired devices
+      description: Session only.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: The devices.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  devices:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: {type: integer}
+                        name: {type: string}
+                        createdAt: {type: string}
+                        lastUsedAt: {type: string}
+  /api/devices/{id}:
+    delete:
+      tags: [Device pairing]
+      summary: Remove a paired device
+      description: Session only. The device's next request is refused with `device_unknown`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer}
+      responses:
+        '200':
+          description: Removed.
+        '404':
+          description: No such device.
   /api/keys:
     get:
       security:
@@ -528,8 +654,13 @@ paths:
   /api/pair/complete:
     post:
       tags: [Device pairing]
-      summary: Redeem a pairing token for a device API key
-      description: No authentication. The single-use token is the credential.
+      summary: Redeem a pairing token
+      description: >-
+        No authentication. The single-use token is the credential. With `jwk`
+        (the app's public key, #101) the pairing waits for approval on the
+        account page and no secret is returned: poll `GET /api/device/me` with a
+        signed proof until it succeeds. Without `jwk`, the legacy form returns an
+        API key for apps that predate device keys.
       security: []
       requestBody:
         required: true
@@ -543,8 +674,29 @@ paths:
                   type: string
                 device:
                   type: string
-                  description: Name for the key the app is given.
+                  description: Name for the device or key.
+                jwk:
+                  type: object
+                  description: The app's public P-256 key (`kty`, `crv`, `x`, `y`). Starts a device pairing.
+                  required: [kty, crv, x, y]
+                  properties:
+                    kty: {type: string, enum: [EC]}
+                    crv: {type: string, enum: [P-256]}
+                    x: {type: string}
+                    y: {type: string}
       responses:
+        '202':
+          description: Pairing pending approval on the account page.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, enum: [pending]}
+                  pendingId: {type: integer}
+                  expiresAt: {type: string, format: date-time}
+        '409':
+          description: The key is already paired.
         '200':
           description: Key issued.
           content:
