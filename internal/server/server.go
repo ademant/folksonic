@@ -178,7 +178,7 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 		s.sso = newOIDCService(cfg.OIDC, cfg.BaseURL)
 	}
 
-	handler := mountAt(cfg.BasePath, s.routes())
+	handler := mountAt(cfg.BasePath, cacheDefaults(s.routes()))
 
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 	srv := &http.Server{
@@ -261,8 +261,25 @@ func requestLogger(h http.Handler) http.Handler {
 		if rw.status >= 500 {
 			level = slog.LevelWarn
 		}
-		logging.Logf(level, "%s %s %d %dB %s%s%s", r.Method, r.URL.Path, rw.status, rw.bytes, time.Since(start), mode, rl.fields())
+		logging.Logf(level, "%s %s %d %dB %s%s%s%s", r.Method, r.URL.Path, rw.status, rw.bytes, time.Since(start), mode, songIDField(r), rl.fields())
 	})
+}
+
+// songIDField is " id=<song id>" for the id parameter of a request, so stream
+// and analysis lines name their track (the Apache log cannot). Only a plain
+// token is logged: the parameter is client input, and no credential is ever
+// named id.
+func songIDField(r *http.Request) string {
+	id := r.URL.Query().Get("id")
+	if id == "" || len(id) > 64 {
+		return ""
+	}
+	for _, c := range id {
+		if !(c == '-' || c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+			return ""
+		}
+	}
+	return " id=" + id
 }
 
 type recordedResponse struct {

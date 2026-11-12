@@ -739,6 +739,16 @@ The web pages have no inline script or style. Their scripts and stylesheets
 are served from `/static/` and the policy is `'self'` only. A reverse proxy
 should not add `'unsafe-inline'` to that policy.
 
+Every response also carries `Referrer-Policy: no-referrer`, so the URL of a
+page (which can hold a key) is not sent to other sites, and a
+`Permissions-Policy` that turns off camera, microphone, geolocation, payment
+and USB. Passkeys are not affected by that policy.
+
+The Subsonic and API responses (`/rest/*` and `/api/*`) carry
+`Cache-Control: no-store`, except `stream` and `download`
+(`private, max-age=3600`) and `getCoverArt` (`private, max-age=86400`). Those
+are private, so the client may keep them, but a shared cache may not.
+
 ## Public pages
 
 Four pages are public, and they describe the server only. The library is never
@@ -861,7 +871,28 @@ journalctl -u tinysonic -p warning          # warnings and errors only
 Elsewhere each line starts with the local time, and every level but `info` is
 named (`2026/11/04 21:29:14 WARN …`). The startup banner is printed only when
 stdout is a terminal. Query strings are never logged, because they can carry
-credentials.
+credentials. A request that has an `id` parameter also shows it (`id=so-…`), so
+stream lines name their track; only a plain token is shown.
+
+A refused credential is logged as `auth failed ip=… reason=… path=…`, which the
+Fail2ban filter in `deploy/fail2ban` reads. The reasons are:
+
+| Reason | Level | Meaning |
+|---|---|---|
+| `unknown-key`, `invalid-key` | info | An API key that does not match any key |
+| `revoked-key` | warn | A key that was revoked (someone is still using it) |
+| `expired-key` | info | A key past its expiry |
+| `disabled-user` | info | The key's or session's account is disabled |
+| `unknown-session`, `expired-session`, `invalid-session` | info | A bearer session token that is unknown, expired or otherwise refused |
+| `worker-key-scope` | info | A worker key used outside `/api/worker/*` |
+| `password`, `unknown-user`, `not-active`, `rate-limit` | warn | Subsonic `u`/`p` sign-in (existing) |
+
+For a revoked or expired key the line also names the key's id and label
+(`key=7 label="old phone"`), so an administrator can find it with
+`tinysonic user keys`. The key itself is never logged.
+
+Access logs written by Apache leave out query strings too. See the comments in
+`deploy/apache-subpath.conf`, which also say which host settings are needed.
 
 A request line ends with the client name (`c`), the signed-in user and, for a
 failed Subsonic answer (which is still HTTP 200), its error code, each only

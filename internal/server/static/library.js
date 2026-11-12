@@ -88,8 +88,15 @@
       loadFailed();
     }
 
+    schedule(busy ? 5000 : 30000);
+  }
+
+  // Only one poll is pending, and none while the tab is hidden: a hidden page
+  // polls nothing, and showing it again refreshes at once (see below).
+  function schedule(ms) {
     clearTimeout(timer);
-    timer = setTimeout(refresh, busy ? 2000 : 30000);
+    timer = null;
+    if (!document.hidden) timer = setTimeout(refresh, ms);
   }
 
   // The failed list is loaded when its count changes, not on every poll.
@@ -126,7 +133,7 @@
   }
   async function refresh() {
     try { render(await api("GET", "library/stats")); }
-    catch (e) { say(e.message); timer = setTimeout(refresh, 10000); }
+    catch (e) { say(e.message); schedule(10000); }
   }
   async function act(fn, msg) {
     try { await fn(); say(msg); } catch (e) { say(e.message); }
@@ -150,6 +157,9 @@
   });
   $("stop").addEventListener("click", function () {
     act(function () { return api("POST", "library/jobs/cancel"); }, "Stopping after the current track.");
+  });
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) refresh();
   });
   refresh();
 })();

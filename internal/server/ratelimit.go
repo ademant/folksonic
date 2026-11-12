@@ -1,6 +1,7 @@
 package server
 
 import (
+	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
@@ -232,4 +233,16 @@ func isTrusted(a netip.Addr, trusted []netip.Prefix) bool {
 // never the username, the password or the query string.
 func logAuthFailure(ip, reason, path string) {
 	logging.Warnf("auth failed ip=%s reason=%s path=%s", ip, reason, path)
+}
+
+// logCredentialFailure logs a refused API key or session in the same form as a
+// failed password, so the Fail2ban filter matches it. A revoked key is a
+// warning: someone is using a key that was taken out of service. The others
+// are routine (an old phone, an expired key) and log at info.
+func logCredentialFailure(ip, reason, path, extra string) {
+	level := slog.LevelInfo
+	if reason == "revoked-key" {
+		level = slog.LevelWarn
+	}
+	logging.Logf(level, "auth failed ip=%s reason=%s path=%s%s", ip, reason, path, extra)
 }

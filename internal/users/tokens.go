@@ -253,3 +253,51 @@ func DeleteSession(ctx context.Context, db *sql.DB, plain string) error {
 	_, err := db.ExecContext(ctx, "DELETE FROM sessions WHERE token_hash = ?", hashToken(plain))
 	return err
 }
+
+// APIKeyProblem says why a presented API key is not valid, for the log: an
+// unknown key, or a revoked, expired or disabled one. It is called only after
+// LookupAPIKeyInfo has refused the key. For a key that exists, it also returns
+// the key's id and label, so an administrator can find it; the key itself is
+// never returned.
+func APIKeyProblem(ctx context.Context, db *sql.DB, plain string) (reason string, keyID int64, label string) {
+	var revoked, expires sql.NullString
+	var status string
+	err := db.QueryRowContext(ctx, `
+		SELECT k.id, k.label, k.revoked_at, k.expires_at, u.status
+		FROM api_keys k JOIN users u ON u.id = k.user_id
+		WHERE k.key_hash = ?`, hashToken(plain),
+	).Scan(&keyID, &label, &revoked, &expires, &status)
+	if errors.Is(err, sql.ErrNoRows) || err != nil {
+		return "unknown-key", 0, ""
+	}
+	switch {
+	case revoked.Valid:
+		return "revoked-key", keyID, label
+	case expires.Valid && expires.String <= Now():
+		return "expired-key", keyID, label
+	case status != StatusActive:
+		return "disabled-user", keyID, label
+	}
+	return "invalid-key", keyID, label
+}
+
+// SessionProblem says why a presented session token is not valid, for the log:
+// an unknown token, an expired one, or one whose account is disabled.
+func SessionProblem(ctx context.Context, db *sql.DB, plain string) string {
+	var userID int64
+	var expires string
+	err := db.QueryRowContext(ctx,
+		"SELECT user_id, expires_at FROM sessions WHERE token_hash = ?", hashToken(plain),
+	).Scan(&userID, &expires)
+	if err != nil {
+		return "unknown-session"
+	}
+	if expires <= Now() {
+		return "expired-session"
+	}
+	var status string
+	if err := db.QueryRowContext(ctx, "SELECT status FROM users WHERE id = ?", userID).Scan(&status); err != nil || status != StatusActive {
+		return "disabled-user"
+	}
+	return "invalid-session"
+}
