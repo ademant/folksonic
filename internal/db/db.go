@@ -89,6 +89,9 @@ func migrate(d *sql.DB) error {
 	if err := migrateKeyScope(d); err != nil {
 		return fmt.Errorf("key scope: %w", err)
 	}
+	if err := migratePairingVerify(d); err != nil {
+		return fmt.Errorf("pairing verification: %w", err)
+	}
 	return backfillFTS(d)
 }
 
@@ -338,7 +341,16 @@ CREATE TABLE IF NOT EXISTS device_pairings (
     name       TEXT NOT NULL,
     jkt        TEXT NOT NULL UNIQUE,
     created_at TEXT NOT NULL,
-    expires_at TEXT NOT NULL
+    expires_at TEXT NOT NULL,
+    -- Verification (#103): the pairing token it came from (its hash, which
+    -- with jkt gives the code both sides show), the client address, and the
+    -- two confirmations. state is 'pending' or 'rejected'.
+    token_hash          TEXT,
+    client_ip           TEXT,
+    owner_confirmed_at  TEXT,
+    device_confirmed_at TEXT,
+    state               TEXT NOT NULL DEFAULT 'pending',
+    reason              TEXT
 );
 
 -- jtis of DPoP proofs seen recently, so a captured proof cannot be replayed.
@@ -410,6 +422,32 @@ func backfillFTS(d *sql.DB) error {
 		}
 		if n == 0 {
 			if _, err := d.Exec(p.fill); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// migratePairingVerify adds the verification columns of #103 to
+// device_pairings in databases created before them. A pending pairing from
+// before has no token_hash, so it shows no code and cannot be confirmed; it
+// runs out with its token.
+func migratePairingVerify(d *sql.DB) error {
+	for _, col := range []struct{ name, typ string }{
+		{"token_hash", "TEXT"},
+		{"client_ip", "TEXT"},
+		{"owner_confirmed_at", "TEXT"},
+		{"device_confirmed_at", "TEXT"},
+		{"state", "TEXT NOT NULL DEFAULT 'pending'"},
+		{"reason", "TEXT"},
+	} {
+		found, _, err := tableColumn(d, "device_pairings", col.name)
+		if err != nil {
+			return err
+		}
+		if !found {
+			if _, err := d.Exec(fmt.Sprintf("ALTER TABLE device_pairings ADD COLUMN %s %s", col.name, col.typ)); err != nil {
 				return err
 			}
 		}

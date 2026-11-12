@@ -277,6 +277,10 @@ func (s *State) APIPairComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key, u, err := users.RedeemPairingToken(r.Context(), s.Pool, in.Token, in.Device)
+	if errors.Is(err, users.ErrPairingTokenUsed) {
+		writeCoded(w, http.StatusConflict, users.CodePairingTokenUsed)
+		return
+	}
 	if errors.Is(err, users.ErrPairingExpired) {
 		writeCoded(w, http.StatusUnauthorized, users.CodePairingExpired)
 		return

@@ -5,7 +5,9 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -110,20 +112,35 @@ func TestDeviceIsPairedApprovedAndRemoved(t *testing.T) {
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &pending)
 
-	// Waiting: the device's proof is refused until the owner approves.
+	// Waiting: the device's proof is refused until both sides confirm. That
+	// is not a failed sign-in, so it writes no "auth failed" line for Fail2ban.
+	logBuf := captureLog(t)
 	rec = devCall(t, s, http.MethodGet, "/api/device/me", "", withProof(proof(t, key, http.MethodGet, "/api/device/me")))
 	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), users.CodePairingPending) {
-		t.Fatalf("before approval: %d %s", rec.Code, rec.Body.String())
+		t.Fatalf("before confirmation: %d %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(logBuf.String(), "auth failed") || !strings.Contains(logBuf.String(), "pairing pending") {
+		t.Fatalf("pending logged as: %s", logBuf.String())
 	}
 
-	// The account page lists it, and the owner approves it.
+	// The account page lists it with the code the app computes on its side.
+	jkt, _ := dpop.Thumbprint(dpop.JWK{Kty: "EC", Crv: "P-256", X: jwkOf(key)["x"], Y: jwkOf(key)["y"]})
+	wantCode := users.VerificationCode(sha256Hex(tok), jkt)
 	rec = devCall(t, s, http.MethodGet, "/api/pair/pending", "", bearer(sess))
-	if !strings.Contains(rec.Body.String(), "Pixel") {
-		t.Fatalf("pending list: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "Pixel") || !strings.Contains(rec.Body.String(), `"code":"`+wantCode+`"`) {
+		t.Fatalf("pending list (want code %s): %s", wantCode, rec.Body.String())
 	}
-	rec = devCall(t, s, http.MethodPost, fmt.Sprintf("/api/pair/pending/%d/approve", pending.PendingID), "", bearer(sess))
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("approve: %d %s", rec.Code, rec.Body.String())
+	confirmURL := fmt.Sprintf("/api/pair/pending/%d/confirm", pending.PendingID)
+
+	// The owner's confirmation alone creates nothing.
+	rec = devCall(t, s, http.MethodPost, confirmURL, `{"result":"match"}`, bearer(sess))
+	if rec.Code != http.StatusAccepted || !strings.Contains(rec.Body.String(), `"waitingFor":"device"`) {
+		t.Fatalf("owner confirm: %d %s", rec.Code, rec.Body.String())
+	}
+	// The device confirms with a request signed by the key being paired.
+	rec = devCall(t, s, http.MethodPost, "/api/pair/confirm", `{"result":"match"}`, withProof(proof(t, key, http.MethodPost, "/api/pair/confirm")))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"status":"paired"`) {
+		t.Fatalf("device confirm: %d %s", rec.Code, rec.Body.String())
 	}
 
 	// Approved: the device's own proof works on /api and on the Subsonic API.
@@ -226,15 +243,113 @@ func TestPairingWithoutApprovalExpires(t *testing.T) {
 	}
 }
 
-func TestPairingTokenIsSingleUseOverHTTP(t *testing.T) {
+func sha256Hex(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
+
+// pairBody is a pairing request for key.
+func pairBody(tok, name string, key *ecdsa.PrivateKey) string {
+	b, _ := json.Marshal(map[string]any{"token": tok, "device": name, "jwk": jwkOf(key)})
+	return string(b)
+}
+
+func TestSecondDeviceCannotUseAConfirmedCode(t *testing.T) {
+	s, bob, sess := deviceFixture(t)
+	tok, _ := users.CreatePairingToken(context.Background(), s.Pool, bob)
+	mine, other := newDeviceKey(t), newDeviceKey(t)
+
+	rec := devCall(t, s, http.MethodPost, "/api/pair/complete", pairBody(tok, "Mine", mine), nil)
+	if rec.Code != http.StatusAccepted || !strings.Contains(rec.Body.String(), `"confirm":true`) {
+		t.Fatalf("mine: %d %s", rec.Code, rec.Body.String())
+	}
+	var p struct {
+		PendingID int64 `json:"pendingId"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &p)
+	if rec := devCall(t, s, http.MethodPost, "/api/pair/complete", pairBody(tok, "Mine", other), nil); rec.Code != http.StatusAccepted {
+		t.Fatalf("other device scanning the same code: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// Both sides confirm "mine".
+	if rec := devCall(t, s, http.MethodPost, "/api/pair/confirm", `{"result":"match"}`, withProof(proof(t, mine, http.MethodPost, "/api/pair/confirm"))); rec.Code != http.StatusAccepted {
+		t.Fatalf("device confirm: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := devCall(t, s, http.MethodPost, fmt.Sprintf("/api/pair/pending/%d/confirm", p.PendingID), `{"result":"match"}`, bearer(sess)); rec.Code != http.StatusCreated {
+		t.Fatalf("owner confirm: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// The other device is out: its pairing is rejected and the code is used up.
+	rec = devCall(t, s, http.MethodGet, "/api/device/me", "", withProof(proof(t, other, http.MethodGet, "/api/device/me")))
+	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), users.CodePairingRejected) {
+		t.Fatalf("other device after consumption: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = devCall(t, s, http.MethodPost, "/api/pair/confirm", `{"result":"match"}`, withProof(proof(t, other, http.MethodPost, "/api/pair/confirm")))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), users.CodePairingRejected) {
+		t.Fatalf("other device confirming: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = devCall(t, s, http.MethodPost, "/api/pair/complete", pairBody(tok, "Third", newDeviceKey(t)), nil)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), users.CodePairingTokenUsed) {
+		t.Fatalf("scan after consumption: %d %s", rec.Code, rec.Body.String())
+	}
+	// Nor can the code be redeemed for an API key the old way.
+	rec = devCall(t, s, http.MethodPost, "/api/pair/complete", fmt.Sprintf(`{"token":%q,"device":"legacy"}`, tok), nil)
+	if rec.Code < 400 || strings.Contains(rec.Body.String(), "apiKey") {
+		t.Fatalf("legacy redemption: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestOwnerRejectsAPairing(t *testing.T) {
+	s, bob, sess := deviceFixture(t)
+	tok, _ := users.CreatePairingToken(context.Background(), s.Pool, bob)
+	evil := newDeviceKey(t)
+	rec := devCall(t, s, http.MethodPost, "/api/pair/complete", pairBody(tok, "Phone", evil), nil)
+	var p struct {
+		PendingID int64 `json:"pendingId"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &p)
+	rec = devCall(t, s, http.MethodPost, fmt.Sprintf("/api/pair/pending/%d/confirm", p.PendingID), `{"result":"reject"}`, bearer(sess))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "rejected") {
+		t.Fatalf("reject: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = devCall(t, s, http.MethodPost, "/api/pair/confirm", `{"result":"match"}`, withProof(proof(t, evil, http.MethodPost, "/api/pair/confirm")))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), users.CodePairingRejected) {
+		t.Fatalf("rejected device confirming: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = devCall(t, s, http.MethodPost, "/api/pair/complete", pairBody(tok, "Again", newDeviceKey(t)), nil)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), users.CodePairingTokenUsed) {
+		t.Fatalf("scan after rejection: %d %s", rec.Code, rec.Body.String())
+	}
+	// Unknown results are refused.
+	if rec := devCall(t, s, http.MethodPost, fmt.Sprintf("/api/pair/pending/%d/confirm", p.PendingID), `{"result":"yes"}`, bearer(sess)); rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad result: %d", rec.Code)
+	}
+}
+
+func TestDeviceConfirmationNeedsTheKeysProof(t *testing.T) {
 	s, bob, _ := deviceFixture(t)
 	tok, _ := users.CreatePairingToken(context.Background(), s.Pool, bob)
-	body, _ := json.Marshal(map[string]any{"token": tok, "device": "Once", "jwk": jwkOf(newDeviceKey(t))})
-	if rec := devCall(t, s, http.MethodPost, "/api/pair/complete", string(body), nil); rec.Code != http.StatusAccepted {
-		t.Fatalf("first: %d", rec.Code)
+	key := newDeviceKey(t)
+	if rec := devCall(t, s, http.MethodPost, "/api/pair/complete", pairBody(tok, "Phone", key), nil); rec.Code != http.StatusAccepted {
+		t.Fatalf("pair: %d", rec.Code)
 	}
-	rec := devCall(t, s, http.MethodPost, "/api/pair/complete", string(body), nil)
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("second use: %d %s", rec.Code, rec.Body.String())
+	// No proof at all.
+	if rec := devCall(t, s, http.MethodPost, "/api/pair/confirm", `{"result":"match"}`, nil); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("no proof: %d %s", rec.Code, rec.Body.String())
+	}
+	// A proof for another URL.
+	rec := devCall(t, s, http.MethodPost, "/api/pair/confirm", `{"result":"match"}`, withProof(proof(t, key, http.MethodPost, "/api/device/me")))
+	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), users.CodeProofInvalid) {
+		t.Fatalf("wrong URL: %d %s", rec.Code, rec.Body.String())
+	}
+	// A key with no pairing.
+	rec = devCall(t, s, http.MethodPost, "/api/pair/confirm", `{"result":"match"}`, withProof(proof(t, newDeviceKey(t), http.MethodPost, "/api/pair/confirm")))
+	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), users.CodeDeviceUnknown) {
+		t.Fatalf("stranger: %d %s", rec.Code, rec.Body.String())
+	}
+	// A session cannot confirm for the device.
+	sess, _ := users.CreateSession(context.Background(), s.Pool, bob)
+	if rec := devCall(t, s, http.MethodPost, "/api/pair/confirm", `{"result":"match"}`, bearer(sess)); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("session confirming for the device: %d", rec.Code)
 	}
 }

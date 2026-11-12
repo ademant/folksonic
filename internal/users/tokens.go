@@ -215,6 +215,16 @@ func RedeemPairingToken(ctx context.Context, db *sql.DB, plain, deviceLabel stri
 	if expires <= Now() {
 		return "", User{}, ErrPairingExpired
 	}
+	// A QR code a device has already scanned is for that verified pairing
+	// (#103): it must not also hand out an API key that needs no confirmation.
+	var devicePairings int
+	if err := tx.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM device_pairings WHERE token_hash = ?", hashToken(plain)).Scan(&devicePairings); err != nil {
+		return "", User{}, err
+	}
+	if devicePairings > 0 {
+		return "", User{}, ErrPairingTokenUsed
+	}
 	res, err := tx.ExecContext(ctx,
 		"UPDATE pairing_tokens SET used_at = ? WHERE token_hash = ? AND used_at IS NULL",
 		Now(), hashToken(plain))
@@ -340,6 +350,9 @@ const (
 	CodeProofReplayed       = "proof_replayed"
 	CodePairingPending      = "pairing_pending"
 	CodeDeviceUnknown       = "device_unknown"
+	CodePairingRejected     = "pairing_rejected"
+	CodePairingTokenUsed    = "pairing_token_used"
+	CodePairingBusy         = "pairing_busy"
 	// RevokedIdle is the revoked_reason of a key the idle sweep revoked.
 	RevokedIdle = "idle"
 )
