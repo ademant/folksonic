@@ -2,13 +2,23 @@ openapi: 3.1.0
 info:
   title: tinysonic JSON API
   version: 1.0.0
-  summary: Accounts, API keys, device pairing, passkeys, single sign-on and track analysis.
+  summary: Accounts, API keys, device pairing, passkeys, single sign-on, signed stream links and track analysis.
   description: |
     JSON endpoints under `/api`, used by the web account page and the Android
     app. They are not part of the Subsonic API: the Subsonic endpoints under
     `/rest` are listed in `docs/opensubsonic-endpoints.md`.
 
-    Errors use one shape, `{"error": "<message>"}`, with an HTTP status code.
+    Errors carry an HTTP status code and a JSON body `{"error": "<code>",
+    "message": "<text>"}`. The code is stable and clients branch on it, for
+    example `key_revoked`, `session_required` or `stream_url_expired`; the
+    message is for people. Subsonic endpoints answer with their own envelope.
+
+    Some operations accept only a signed-in session (`bearerAuth`), not an API
+    key: key, pairing, passkey and identity management, library jobs and stream
+    links. An API key sent to them gets 403 `session_required`.
+
+    `GET /api/stream-url` returns a link to one song that plays at
+    `/rest/stream.view` for 2 hours without other credentials.
 
     Paths are relative to the server root. With `base_path` set, prefix every
     path with it, for example `/folksonic/api/keys`.
@@ -27,6 +37,11 @@ tags:
   - name: Device pairing
   - name: Passkeys
   - name: Single sign-on
+  - name: Stream
+    description: >-
+      Signed, short-lived links to one song for our own apps. Advertised as the
+      OpenSubsonic extension `tinysonicStreamUrl`. Subsonic clients keep
+      `apiKeyAuthentication`.
   - name: Library
     description: Library administration for librarians. Other accounts get 403.
   - name: Analysis

@@ -619,6 +619,62 @@ are hashed and the plaintext is removed. The step is idempotent.
 Passkey-only accounts have no password. They cannot use the password parameter
 and an empty password never matches.
 
+### Hardening the Subsonic API
+
+Subsonic clients send their credentials with every request, including each
+stream and cover-art URL. A username and password, or an API key in the URL, is
+therefore the weakest part of the server. The protocol offers nothing better:
+a Subsonic client cannot ask for a short-lived, per-track link. Our own apps can
+(see item 3 under [How auth works](#how-auth-works)), but Subsonic clients stay
+on the long-lived key. For a server reachable from the internet:
+
+1. **Serve HTTPS only.** `base_url` set to a public name turns on `require_https`
+   (see [Running over HTTPS](#running-over-https)). Plain HTTP then gets 426 on
+   `/rest` and `/api`, so no key or password crosses the network in the clear.
+2. **Turn off password sign-in for Subsonic clients:** `legacy_password_auth = false`.
+   A request with `u` and `p` then gets Subsonic error 42, and only API keys (or a
+   session) work. A password would otherwise be sent on every call.
+3. **Send the key in the `X-Api-Key` header when the client allows it.** A key in
+   the query string (`apiKey=`) is written to every proxy access log that records
+   the full URL, to the browser history for a link opened in a browser, and to any
+   link that is shared. The header keeps it out of all three. Clients that cannot
+   set headers have to use the parameter.
+4. **Keep query strings out of proxy logs.** The Apache template logs only the
+   path (`%U`). nginx's default access log records `$request`, which includes the
+   query string; use a `log_format` without it, or turn off the access log for
+   the Subsonic paths. The Caddy template sets no access log, so add one with the
+   query string removed if you enable it.
+5. **Use short key lifetimes.** `api_key_ttl_days` (default 365) and
+   `api_key_idle_days` (default 180) bound a leaked key. Shorter values suit a
+   public server, at the cost of pairing devices again more often. A key can be
+   revoked on the account page, and every key shows when it was last used.
+6. **Expect the limits to be enforced in code, not left to the client.** Token
+   auth (`t` with `s`) is refused with error 42. Repeated wrong passwords are
+   slowed and then refused (see [Sign-in limits](#sign-in-limits)). Each refusal
+   is logged with a reason code, and the key itself never appears in the log.
+
+A recommended public configuration:
+
+```toml
+base_url             = "https://music.example.com"
+legacy_password_auth = false
+api_key_ttl_days     = 90
+api_key_idle_days    = 30
+```
+
+**What a leaked Subsonic key can still do.** It can call every Subsonic endpoint
+the account may use, until it expires or is revoked: play and read the library,
+star, make playlists and scrobble. It cannot create, list or revoke keys, pair
+devices, manage passkeys or identities, run library jobs, or mint stream links
+(`session_required`). A worker key works only on the worker endpoints. Revoking
+the key from the account page ends its access at the next request.
+
+**What is left to do.** A Subsonic client's key is valid for its whole lifetime,
+and it reaches the server on every stream and cover-art request. Only our own
+apps avoid that, through signed stream links that last 2 hours and cover one
+song. Subsonic clients need a shorter key lifetime or a user who revokes the
+key after a device is lost.
+
 ### Accounts and pairing
 
 The JSON endpoints below are described in [`docs/openapi.yaml`](docs/openapi.yaml).
