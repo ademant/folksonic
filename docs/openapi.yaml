@@ -384,6 +384,41 @@ paths:
                   status:
                     type: string
                     enum: ['signed out']
+  /api/stream-url:
+    get:
+      security:
+        - bearerAuth: []
+      tags: [Stream]
+      summary: Signed stream URL for one song
+      description: >-
+        Session only; an API key gets 403 `session_required`. The returned URL
+        plays the song at `/rest/stream.view` with no other credentials, until
+        `expiresAt` (2 hours). The URL is bound to the song, the user and the
+        expiry; changing any of them gets 403 `stream_url_invalid`.
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema: {type: string}
+          description: Song id (`so-…`).
+      responses:
+        '200':
+          description: The link and its expiry.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url: {type: string}
+                  expiresAt: {type: string, format: date-time}
+        '400':
+          description: Missing `id`.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: A key was used, or the request needs a session.
+        '404':
+          description: No song with that id.
   /api/keys:
     get:
       security:

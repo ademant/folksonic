@@ -334,6 +334,8 @@ const (
 	CodePairingInvalid      = "pairing_invalid"
 	CodeInviteExpired       = "invite_expired"
 	CodeInviteInvalid       = "invite_invalid"
+	CodeStreamURLExpired    = "stream_url_expired"
+	CodeStreamURLInvalid    = "stream_url_invalid"
 	// RevokedIdle is the revoked_reason of a key the idle sweep revoked.
 	RevokedIdle = "idle"
 )

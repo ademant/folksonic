@@ -27,6 +27,8 @@ import (
 type State struct {
 	Pool      *sql.DB
 	MusicDirs []string
+	// stream caches the key that signs stream URLs; see streamurl.go.
+	stream streamSecretCache
 	// SongTags is the allowlist of file tags exposed on songs (song_tags).
 	SongTags []string
 	// IgnoredArticles are the leading words skipped when indexing artists
@@ -475,6 +477,7 @@ func (s *State) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/register", s.APIRegister)
 	mux.HandleFunc("POST /api/keys", s.APICreateKey)
 	mux.HandleFunc("GET /api/keys", s.APIListKeys)
+	mux.HandleFunc("GET /api/stream-url", s.APIStreamURL)
 	mux.HandleFunc("DELETE /api/keys/{id}", s.APIRevokeKey)
 	mux.HandleFunc("POST /api/pair/start", s.APIPairStart)
 	mux.HandleFunc("POST /api/pair/complete", s.APIPairComplete)

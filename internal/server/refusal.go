@@ -31,6 +31,8 @@ var refusalMessages = map[string]string{
 	users.CodePairingInvalid:      "The pairing code is not valid or was already used.",
 	users.CodeInviteExpired:       "The invitation code has expired.",
 	users.CodeInviteInvalid:       "The invitation code is not valid.",
+	users.CodeStreamURLExpired:    "The stream link has expired. Ask for a new one.",
+	users.CodeStreamURLInvalid:    "The stream link is not valid for this song, or it was changed.",
 	codePasswordBad:               "Wrong username or password.",
 	codeRateLimited:               "Too many failed sign-in attempts. Wait before trying again.",
 	codeHTTPSRequired:             "HTTPS is required. Use the address in base_url.",
