@@ -72,9 +72,23 @@ func (s *State) serverURL(r *http.Request) string {
 	return "http://" + r.Host
 }
 
-// PairURI is the payload encoded in the pairing QR code.
-func PairURI(server, token string) string {
-	return "tinysonic://pair?" + url.Values{"server": {server}, "token": {token}}.Encode()
+// nullableString is nil for an empty string, so a JSON field is null, not "".
+func nullableString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// PairURI is the payload encoded in the pairing QR code. pin is the server's
+// certificate pin (sha256/…) when it serves HTTPS with tls_cert; the app stores
+// it and refuses any other certificate. Empty pin leaves it out.
+func PairURI(server, token, pin string) string {
+	v := url.Values{"server": {server}, "token": {token}}
+	if pin != "" {
+		v.Set("pin", pin)
+	}
+	return "tinysonic://pair?" + v.Encode()
 }
 
 func userJSON(u users.User) J {
@@ -242,7 +256,8 @@ func (s *State) APIPairStart(w http.ResponseWriter, r *http.Request) {
 	server := s.serverURL(r)
 	writeJSON(w, http.StatusCreated, J{
 		"token":     token,
-		"uri":       PairURI(server, token),
+		"uri":       PairURI(server, token, s.tlsPin),
+		"pin":       nullableString(s.tlsPin),
 		"expiresIn": int(users.PairingTTL / time.Second),
 	})
 }

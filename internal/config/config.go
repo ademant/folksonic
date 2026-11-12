@@ -76,6 +76,11 @@ type Config struct {
 	// base_url is a public name and off for a private or loopback address; see
 	// HTTPSRequired.
 	RequireHTTPS *bool `toml:"require_https"`
+	// TLSCert and TLSKey serve HTTPS directly, without a reverse proxy: a PEM
+	// certificate and its private key. Both or neither. `tinysonic cert` makes
+	// them. Clients pin the certificate: the pairing QR carries its pin.
+	TLSCert string `toml:"tls_cert"`
+	TLSKey  string `toml:"tls_key"`
 	// Analysis assigns the per-track analysis features to tools; see
 	// Analysis.
 	Analysis Analysis `toml:"analysis"`
@@ -181,6 +186,12 @@ func Load(path string) (*Config, error) {
 	}
 	if err := c.OIDC.validate(c.BaseURL); err != nil {
 		return nil, err
+	}
+	if (c.TLSCert == "") != (c.TLSKey == "") {
+		return nil, errors.New("config: tls_cert and tls_key must be set together")
+	}
+	if c.TLSCert != "" && !strings.HasPrefix(strings.ToLower(c.BaseURL), "https://") {
+		c.Warnings = append(c.Warnings, "tls_cert is set but base_url is not https://; set base_url to the https address clients use")
 	}
 	lvl, err := logging.ParseLevel(c.LogLevel)
 	if err != nil {
@@ -374,34 +385,13 @@ func (c *Config) normaliseSongTags() error {
 	return nil
 }
 
-// HTTPSRequired reports whether plain HTTP is refused on every endpoint. An
-// explicit require_https wins. Otherwise it is on when base_url names a public
-// host, and off for a private or loopback address, where TLS would be a burden
-// on a home network. A base_url that is not set counts as private.
+// HTTPSRequired reports whether plain HTTP is refused on every endpoint. It is
+// on unless require_https says otherwise: a LAN install is served over HTTPS
+// too, with tls_cert and tls_key (see tinysonic cert). Set require_https =
+// false only for a test setup on a trusted network.
 func (c *Config) HTTPSRequired() bool {
 	if c.RequireHTTPS != nil {
 		return *c.RequireHTTPS
 	}
-	return !privateBaseHost(c.BaseURL)
-}
-
-// privateBaseHost reports whether base_url names a loopback, private or
-// link-local address, or a name that resolves only on the local network.
-func privateBaseHost(baseURL string) bool {
-	if baseURL == "" {
-		return true
-	}
-	u, err := url.Parse(baseURL)
-	if err != nil || u.Hostname() == "" {
-		return false
-	}
-	host := strings.ToLower(u.Hostname())
-	if host == "localhost" || strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".lan") {
-		return true
-	}
-	addr, err := netip.ParseAddr(host)
-	if err != nil {
-		return false
-	}
-	return addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast()
+	return true
 }

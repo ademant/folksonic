@@ -5,25 +5,48 @@ import (
 	"testing"
 )
 
-func TestHTTPSRequiredFollowsBaseURL(t *testing.T) {
-	cases := []struct {
-		name, baseURL string
-		want          bool
-	}{
-		{"public name", "https://cloud.example.com/folksonic", true},
-		{"public address", "http://203.0.113.5:4533", true},
-		{"private LAN", "http://192.168.1.10:4533", false},
-		{"10/8", "http://10.1.2.3:4533", false},
-		{"loopback", "http://127.0.0.1:4533", false},
-		{"localhost", "http://localhost:4533", false},
-		{"mDNS name", "http://folksonic.local:4533", false},
-		{"no base_url", "", false},
-	}
-	for _, c := range cases {
-		cfg := &Config{BaseURL: c.baseURL}
-		if got := cfg.HTTPSRequired(); got != c.want {
-			t.Errorf("%s (%q): HTTPSRequired = %v, want %v", c.name, c.baseURL, got, c.want)
+// HTTPS is required everywhere by default, LAN included: a LAN install serves
+// HTTPS with tls_cert (see tinysonic cert). The base_url does not change that.
+func TestHTTPSRequiredByDefault(t *testing.T) {
+	for _, baseURL := range []string{
+		"https://cloud.example.com/folksonic",
+		"http://203.0.113.5:4533",
+		"http://192.168.1.10:4533",
+		"http://127.0.0.1:4533",
+		"http://folksonic.local:4533",
+		"",
+	} {
+		cfg := &Config{BaseURL: baseURL}
+		if !cfg.HTTPSRequired() {
+			t.Errorf("%q: HTTPS not required by default", baseURL)
 		}
+	}
+}
+
+func TestTLSKeysMustComeAsAPair(t *testing.T) {
+	if _, err := Load(writeSiteConfig(t, `music_dirs = ["music"]
+base_url = "https://192.168.1.10:4533"
+tls_cert = "cert.pem"
+`)); err == nil || !strings.Contains(err.Error(), "must be set together") {
+		t.Fatalf("tls_cert without tls_key: err = %v", err)
+	}
+}
+
+func TestTLSWithPlainBaseURLWarns(t *testing.T) {
+	c, err := Load(writeSiteConfig(t, `music_dirs = ["music"]
+base_url = "http://192.168.1.10:4533"
+tls_cert = "cert.pem"
+tls_key = "key.pem"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, w := range c.Warnings {
+		found = found || strings.Contains(w, "not https")
+	}
+	if !found {
+		t.Errorf("no warning for tls_cert with an http base_url: %v", c.Warnings)
 	}
 }
 
