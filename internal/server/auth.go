@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/hex"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -36,18 +37,25 @@ func (s *State) resolveCaller(r *http.Request) (users.User, bool) {
 	if key, fromHeader := apiKeyOf(r); key != "" {
 		u, info, err := users.LookupAPIKeyInfo(ctx, s.Pool, key)
 		if err != nil {
+			reason, keyID, label := users.APIKeyProblem(ctx, s.Pool, key)
+			s.logRefused(r, reason, keyID, label)
 			return users.User{}, false
 		}
 		// A worker key works only in the X-Api-Key header and only on the
 		// worker endpoints; everywhere else it is no key at all.
 		if info.Scope == users.ScopeWorker && !(fromHeader && strings.HasPrefix(r.URL.Path, "/api/worker/")) {
+			s.logRefused(r, "worker-key-scope", info.ID, "")
 			return users.User{}, false
 		}
 		return u, true
 	}
 	if tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
 		u, err := users.LookupSession(ctx, s.Pool, tok)
-		return u, err == nil
+		if err != nil {
+			s.logRefused(r, users.SessionProblem(ctx, s.Pool, tok), 0, "")
+			return users.User{}, false
+		}
+		return u, true
 	}
 
 	name := q.Get("u")
@@ -81,6 +89,17 @@ func (s *State) resolveCaller(r *http.Request) (users.User, bool) {
 	}
 	s.auth.succeed(ip)
 	return u, true
+}
+
+// logRefused logs a refused API key or session. Unlike a wrong password it is
+// not delayed: a 256-bit key cannot be guessed, so the point is visibility. The
+// key id and label are logged for a key that exists, never the key itself.
+func (s *State) logRefused(r *http.Request, reason string, keyID int64, label string) {
+	extra := ""
+	if keyID != 0 {
+		extra = fmt.Sprintf(" key=%d label=%s", keyID, strconv.Quote(label))
+	}
+	logCredentialFailure(s.clientIP(r), reason, r.URL.Path, extra)
 }
 
 // authFailed records a failed password attempt and makes the caller wait the
