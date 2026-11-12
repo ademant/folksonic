@@ -20,6 +20,17 @@ CREATE TABLE IF NOT EXISTS analysis (
     PRIMARY KEY (song_id, feature)
 );
 
+-- analysis_leases records that an analysis worker (key key_id) was given a
+-- track for a tool. A lease that is not finished before until_ms expires, and
+-- the track can be given to another worker; the attempt counts stay.
+CREATE TABLE IF NOT EXISTS analysis_leases (
+    song_id  TEXT NOT NULL REFERENCES songs(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    tool     TEXT NOT NULL,
+    key_id   INTEGER NOT NULL,
+    until_ms INTEGER NOT NULL,
+    PRIMARY KEY (song_id, tool)
+);
+
 -- analysis_attempts counts runs of a tool on a track that started but did not
 -- store a result (the process was killed or the server stopped). A row is
 -- written before each run and removed when the run's result is stored; a
@@ -63,6 +74,23 @@ func migrateAnalysis(d *sql.DB) error {
 		}
 		if !found {
 			if _, err := d.Exec(fmt.Sprintf("ALTER TABLE songs ADD COLUMN %s %s", c.name, c.typ)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// migrateKeyScope adds the scope columns to API keys and pairing tokens. It is
+// idempotent; existing keys are full keys (scope ”).
+func migrateKeyScope(d *sql.DB) error {
+	for _, table := range []string{"api_keys", "pairing_tokens"} {
+		found, _, err := tableColumn(d, table, "scope")
+		if err != nil {
+			return err
+		}
+		if !found {
+			if _, err := d.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN scope TEXT NOT NULL DEFAULT ''", table)); err != nil {
 				return err
 			}
 		}

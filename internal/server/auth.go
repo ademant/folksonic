@@ -33,9 +33,17 @@ func (s *State) resolveCaller(r *http.Request) (users.User, bool) {
 	ctx := r.Context()
 	q := params(r)
 
-	if key := q.Get("apiKey"); key != "" {
-		u, err := users.LookupAPIKey(ctx, s.Pool, key)
-		return u, err == nil
+	if key, fromHeader := apiKeyOf(r); key != "" {
+		u, info, err := users.LookupAPIKeyInfo(ctx, s.Pool, key)
+		if err != nil {
+			return users.User{}, false
+		}
+		// A worker key works only in the X-Api-Key header and only on the
+		// worker endpoints; everywhere else it is no key at all.
+		if info.Scope == users.ScopeWorker && !(fromHeader && strings.HasPrefix(r.URL.Path, "/api/worker/")) {
+			return users.User{}, false
+		}
+		return u, true
 	}
 	if tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
 		u, err := users.LookupSession(ctx, s.Pool, tok)

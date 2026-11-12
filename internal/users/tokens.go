@@ -25,11 +25,23 @@ type APIKey struct {
 	ExpiresAt  sql.NullString
 	LastUsedAt sql.NullString
 	RevokedAt  sql.NullString
+	// Scope is "" for a full key, or ScopeWorker for a key that may only
+	// call the analysis worker endpoints.
+	Scope string
 }
 
-// CreateAPIKey issues a new key for userID and returns its plaintext. A zero
-// ttl means the key does not expire.
+// ScopeWorker marks the key of an analysis worker (see internal/worker). It
+// is accepted only in the X-Api-Key header and only on /api/worker/.
+const ScopeWorker = "worker"
+
+// CreateAPIKey issues a new full key for userID and returns its plaintext. A
+// zero ttl means the key does not expire.
 func CreateAPIKey(ctx context.Context, q querier, userID int64, label string, ttl time.Duration) (string, error) {
+	return CreateScopedAPIKey(ctx, q, userID, label, "", ttl)
+}
+
+// CreateScopedAPIKey issues a key limited to scope ("" for a full key).
+func CreateScopedAPIKey(ctx context.Context, q querier, userID int64, label, scope string, ttl time.Duration) (string, error) {
 	plain, err := randomToken(apiKeyPrefix)
 	if err != nil {
 		return "", err
@@ -42,41 +54,59 @@ func CreateAPIKey(ctx context.Context, q querier, userID int64, label string, tt
 		label = "api key"
 	}
 	_, err = q.Exec(
-		`INSERT INTO api_keys (user_id, label, prefix, key_hash, created_at, expires_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		userID, label, plain[:apiKeyDisplayN], hashToken(plain), Now(), expires)
+		`INSERT INTO api_keys (user_id, label, prefix, key_hash, created_at, expires_at, scope)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		userID, label, plain[:apiKeyDisplayN], hashToken(plain), Now(), expires, scope)
 	if err != nil {
 		return "", err
 	}
 	return plain, nil
 }
 
+// KeyInfo describes the key that authenticated a request.
+type KeyInfo struct {
+	ID    int64
+	Scope string
+}
+
 // LookupAPIKey returns the active user behind a presented key. Revoked,
-// expired and disabled-user keys are rejected with ErrNotFound.
+// expired and disabled-user keys are rejected with ErrNotFound. The scope is
+// not checked here; see LookupAPIKeyInfo.
 func LookupAPIKey(ctx context.Context, db *sql.DB, plain string) (User, error) {
+	u, _, err := LookupAPIKeyInfo(ctx, db, plain)
+	return u, err
+}
+
+// LookupAPIKeyInfo is LookupAPIKey that also returns the key's id and scope.
+func LookupAPIKeyInfo(ctx context.Context, db *sql.DB, plain string) (User, KeyInfo, error) {
+	var info KeyInfo
 	// scanUser handles passwordless accounts, whose password_hash is NULL.
-	u, err := scanUser(db.QueryRowContext(ctx, `
-		SELECT u.id, u.username, u.password_hash, u.role, u.status, u.created_at, u.webauthn_handle
+	row := db.QueryRowContext(ctx, `
+		SELECT u.id, u.username, u.password_hash, u.role, u.status, u.created_at, u.webauthn_handle, k.id, k.scope
 		FROM api_keys k JOIN users u ON u.id = k.user_id
 		WHERE k.key_hash = ? AND k.revoked_at IS NULL
 		  AND (k.expires_at IS NULL OR k.expires_at > ?)
 		  AND u.status = ?`,
 		hashToken(plain), Now(), StatusActive,
-	))
+	)
+	var u User
+	var hash sql.NullString
+	err := row.Scan(&u.ID, &u.Username, &hash, &u.Role, &u.Status, &u.CreatedAt, &u.WebAuthnHandle, &info.ID, &info.Scope)
+	u.PasswordHash = hash.String
 	if errors.Is(err, sql.ErrNoRows) {
-		return User{}, ErrNotFound
+		return User{}, KeyInfo{}, ErrNotFound
 	}
 	if err != nil {
-		return User{}, err
+		return User{}, KeyInfo{}, err
 	}
 	// Best effort: a failed timestamp write must not reject a valid key.
 	_, _ = db.ExecContext(ctx, "UPDATE api_keys SET last_used_at = ? WHERE key_hash = ?", Now(), hashToken(plain))
-	return u, nil
+	return u, info, nil
 }
 
 func ListAPIKeys(ctx context.Context, db *sql.DB, userID int64) ([]APIKey, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT id, label, prefix, created_at, expires_at, last_used_at, revoked_at
+		SELECT id, label, prefix, created_at, expires_at, last_used_at, revoked_at, scope
 		FROM api_keys WHERE user_id = ? AND revoked_at IS NULL ORDER BY id`, userID)
 	if err != nil {
 		return nil, err
@@ -85,7 +115,7 @@ func ListAPIKeys(ctx context.Context, db *sql.DB, userID int64) ([]APIKey, error
 	var out []APIKey
 	for rows.Next() {
 		var k APIKey
-		if err := rows.Scan(&k.ID, &k.Label, &k.Prefix, &k.CreatedAt, &k.ExpiresAt, &k.LastUsedAt, &k.RevokedAt); err != nil {
+		if err := rows.Scan(&k.ID, &k.Label, &k.Prefix, &k.CreatedAt, &k.ExpiresAt, &k.LastUsedAt, &k.RevokedAt, &k.Scope); err != nil {
 			return nil, err
 		}
 		out = append(out, k)
@@ -108,13 +138,18 @@ func RevokeAPIKey(ctx context.Context, db *sql.DB, userID, keyID int64) error {
 // CreatePairingToken issues a single-use token a device can redeem for an
 // API key. It expires after PairingTTL.
 func CreatePairingToken(ctx context.Context, db *sql.DB, userID int64) (string, error) {
+	return CreateScopedPairingToken(ctx, db, userID, "")
+}
+
+// CreateScopedPairingToken issues a pairing token whose key has scope.
+func CreateScopedPairingToken(ctx context.Context, db *sql.DB, userID int64, scope string) (string, error) {
 	plain, err := randomToken(pairingPrefix)
 	if err != nil {
 		return "", err
 	}
 	_, err = db.ExecContext(ctx,
-		"INSERT INTO pairing_tokens (token_hash, user_id, expires_at) VALUES (?, ?, ?)",
-		hashToken(plain), userID, ts(time.Now().Add(PairingTTL)))
+		"INSERT INTO pairing_tokens (token_hash, user_id, expires_at, scope) VALUES (?, ?, ?, ?)",
+		hashToken(plain), userID, ts(time.Now().Add(PairingTTL)), scope)
 	if err != nil {
 		return "", err
 	}
@@ -132,11 +167,11 @@ func RedeemPairingToken(ctx context.Context, db *sql.DB, plain, deviceLabel stri
 	defer tx.Rollback()
 
 	var userID int64
-	var expires string
+	var expires, scope string
 	var used sql.NullString
 	err = tx.QueryRowContext(ctx,
-		"SELECT user_id, expires_at, used_at FROM pairing_tokens WHERE token_hash = ?",
-		hashToken(plain)).Scan(&userID, &expires, &used)
+		"SELECT user_id, expires_at, used_at, scope FROM pairing_tokens WHERE token_hash = ?",
+		hashToken(plain)).Scan(&userID, &expires, &used, &scope)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", User{}, ErrNotFound
 	}
@@ -162,7 +197,11 @@ func RedeemPairingToken(ctx context.Context, db *sql.DB, plain, deviceLabel stri
 	if u.Status != StatusActive {
 		return "", User{}, ErrNotFound
 	}
-	key, err := CreateAPIKey(ctx, tx, userID, "app: "+deviceLabel, 0)
+	label := "app: " + deviceLabel
+	if scope == ScopeWorker {
+		label = "worker: " + deviceLabel
+	}
+	key, err := CreateScopedAPIKey(ctx, tx, userID, label, scope, 0)
 	if err != nil {
 		return "", User{}, err
 	}

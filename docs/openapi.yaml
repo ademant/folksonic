@@ -29,6 +29,7 @@ tags:
   - name: Library
     description: Library administration for librarians. Other accounts get 403.
   - name: Analysis
+  - name: Analysis workers
     description: >-
       Per-track audio analysis computed in the background by the tools
       assigned in the `[analysis]` config table. Advertised as the
@@ -44,7 +45,12 @@ components:
       type: apiKey
       in: query
       name: apiKey
-      description: Device API key (`tsk_…`), from `/api/keys`, pairing or single sign-on (app). Also accepted as a form field.
+      description: Device API key (`tsk_…`), from `/api/keys`, pairing or single sign-on (app). Also accepted as a form field. Not accepted for worker keys.
+    workerKey:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+      description: Worker key (`tsk_…`) from `tinysonic worker key` or a worker pairing. Works only on `/api/worker/*`, and only in this header.
   parameters:
     Id:
       name: id
@@ -1095,6 +1101,102 @@ paths:
           $ref: '#/components/responses/Conflict'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /api/worker/jobs:
+    post:
+      tags: [Analysis workers]
+      summary: Lease tracks to an analysis worker
+      description: >-
+        For a worker key only (`X-Api-Key` header). Gives up to `limit` pending
+        tracks of a tool the server assigns to workers, leased for
+        `leaseSeconds`. A track with a live lease is not given out again; an
+        expired lease counts as an interrupted attempt. Paths are relative to
+        the music directory. Tracks without a known file fingerprint are skipped.
+      security:
+        - workerKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tool]
+              properties:
+                tool: {type: string, enum: [folksentia]}
+                limit: {type: integer, minimum: 1, maximum: 20, default: 5}
+      responses:
+        '200':
+          description: Leased tracks, possibly none.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jobs:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: {type: string, description: Song id.}
+                        path: {type: string}
+                        size: {type: integer, format: int64}
+                        mtimeMs: {type: integer, format: int64}
+                        durationMs: {type: integer, format: int64}
+                        features: {type: array, items: {type: string}}
+                  leaseSeconds: {type: integer}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: The key is not a worker key.
+        '500':
+          description: Database error.
+  /api/worker/results:
+    post:
+      tags: [Analysis workers]
+      summary: Send a worker's analysis result
+      description: >-
+        For a worker key only. The key must hold the lease on the track, and the
+        file's size and mtime must still match the job. `output` is the tool's
+        stdout (folksentia schema 1), parsed like a local run; `error` is set
+        instead when the tool could not run. Values outside the expected range
+        are refused and recorded as a failed run. The body may be up to 32 MiB.
+      security:
+        - workerKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, tool, size, mtimeMs]
+              properties:
+                id: {type: string, description: Song id from the job.}
+                tool: {type: string, enum: [folksentia]}
+                size: {type: integer, format: int64}
+                mtimeMs: {type: integer, format: int64}
+                output: {type: string}
+                error: {type: string}
+      responses:
+        '200':
+          description: Stored.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, enum: [stored]}
+                  changed: {type: boolean}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: The key is not a worker key.
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          description: Database error.
   /api/library/analysis/failed:
     get:
       tags: [Library]

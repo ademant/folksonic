@@ -190,6 +190,11 @@ tinysonic invite revoke [-c FILE] <id>                withdraw an unused invite
 
 tinysonic pair [-c FILE] --user <username>            print a pairing QR code (valid 5 min, single use)
 
+tinysonic worker key [-c FILE] --user <username> --out <file>
+                                                      write a worker config with a new worker key (mode 0600)
+tinysonic worker pair [-c FILE] --user <username>     print a one-time token that a worker redeems itself
+tinysonic worker run [-c FILE] [--pair <token>]       run an analysis worker (on the worker machine)
+
 tinysonic analysis pending [-c FILE]                  analyse what has no result yet (as after a scan)
 tinysonic analysis recalc [-c FILE] [-features key,beats] (-all | <song id>…)
                                                       run the assigned tools again, even for unchanged files
@@ -410,6 +415,14 @@ memory_limit = "2G"                     # optional, see below
 max_duration = "45m"                    # optional, see below
 ```
 
+Folksentia can also run on a remote analysis worker instead of this host, see
+[Analysis workers](#analysis-workers). Then the server does not set `command`:
+
+```toml
+[analysis.tools.folksentia]
+worker = true                           # run on workers; command must not be set
+```
+
 | Tool | Features | Notes |
 |---|---|---|
 | `builtin` | `bpm` | The estimator described above. Never replaces a BPM from tags |
@@ -510,6 +523,50 @@ under F); names themselves are unchanged.
 
 `GET /` returns a plain-text index of every endpoint and its query params.
 
+### Analysis workers
+
+A worker runs folksentia on another machine, for example a desktop that the
+server cannot reach. The worker always connects out to the server (pull
+model), so the server needs no inbound route to it.
+
+Worker keys are normal API keys with the scope `worker`. They are accepted only
+in the `X-Api-Key` header and only on `/api/worker/*`. Every other endpoint,
+Subsonic included, refuses them, so a leaked worker key cannot read the library
+or act as the account. Keys are listed and revoked with `tinysonic user keys`
+and `tinysonic user revoke-key`, like the others.
+
+Two ways to provision a worker:
+
+```bash
+# On the server: write a config file with a new key, then copy it over (ssh/scp).
+tinysonic worker key --user worker -c /etc/tinysonic/tinysonic.toml --out worker.toml
+
+# Or: a one-time token the worker redeems itself (valid 5 min, single use).
+tinysonic worker pair --user worker -c /etc/tinysonic/tinysonic.toml
+```
+
+On the worker, `worker.toml` (or any path) needs `music_root`, the absolute
+path where the server's music directory is mounted on this machine, and the
+absolute path of the folksentia binary. Then:
+
+```bash
+tinysonic worker run -c worker.toml
+tinysonic worker run -c worker.toml --pair <token>   # redeem the token first, then run
+```
+
+The worker asks for batches of tracks (`batch`, 1–20), checks each file's size
+and mtime against the server's record, runs folksentia (`timeout` per track,
+optional `memory_limit`), and posts the output. The server parses and stores it
+exactly as it stores a local run. A file that changed on the worker is not
+stored, and the track is analysed again on the next pass. The worker does not
+send anything when it stops, so a track it was working on counts as an
+interrupted attempt, and after two of those it is marked failed.
+
+Limits: recalculation of worker-served features from the library page is not
+available in this version. Run it on the worker side instead (or wait for the
+next pass after the file changes). A `worker.toml` holds a secret: keep it
+private, and delete the copy on the server once it has been transferred.
+
 ## Tested clients
 
 Anything that speaks Subsonic API 1.16.x and prefers tag-based browsing should
@@ -578,6 +635,8 @@ The JSON endpoints below are described in [`docs/openapi.yaml`](docs/openapi.yam
 | POST | `/api/library/jobs/cancel` | librarian | Stop the running job after the current track |
 | GET | `/api/analysis?id=` | user | Stored analysis of one track; see [Track analysis](#track-analysis) |
 | GET | `/api/duplicates` | user | Groups of songs with matching audio fingerprints; see [Track analysis](#track-analysis) |
+| POST | `/api/worker/jobs` | worker key | Lease up to 20 tracks for a worker tool (`{"tool": "folksentia", "limit": 5}`); see [Analysis workers](#analysis-workers) |
+| POST | `/api/worker/results` | worker key | Store a worker's output for a leased track; 409 when the lease or the file is gone |
 | GET | `/api/oidc/identities` | user | List linked identities |
 | DELETE | `/api/oidc/identities/{id}` | user | Unlink an identity. Refused (409) when it is the account's last sign-in method |
 

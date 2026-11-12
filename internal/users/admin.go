@@ -57,7 +57,7 @@ func Rename(ctx context.Context, db *sql.DB, id int64, newName string) error {
 // administration. ListAPIKeys returns only the usable ones.
 func ListAllAPIKeys(ctx context.Context, db *sql.DB, userID int64) ([]APIKey, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT id, label, prefix, created_at, expires_at, last_used_at, revoked_at
+		SELECT id, label, prefix, created_at, expires_at, last_used_at, revoked_at, scope
 		FROM api_keys WHERE user_id = ? ORDER BY id`, userID)
 	if err != nil {
 		return nil, err
@@ -66,7 +66,7 @@ func ListAllAPIKeys(ctx context.Context, db *sql.DB, userID int64) ([]APIKey, er
 	var out []APIKey
 	for rows.Next() {
 		var k APIKey
-		if err := rows.Scan(&k.ID, &k.Label, &k.Prefix, &k.CreatedAt, &k.ExpiresAt, &k.LastUsedAt, &k.RevokedAt); err != nil {
+		if err := rows.Scan(&k.ID, &k.Label, &k.Prefix, &k.CreatedAt, &k.ExpiresAt, &k.LastUsedAt, &k.RevokedAt, &k.Scope); err != nil {
 			return nil, err
 		}
 		out = append(out, k)

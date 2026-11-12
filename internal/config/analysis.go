@@ -54,6 +54,11 @@ type AnalysisTool struct {
 	Timeout string `toml:"timeout"`
 	// TimeoutDur is Timeout parsed by Load.
 	TimeoutDur time.Duration `toml:"-"`
+	// Worker is true when the tool runs on analysis workers (internal/worker)
+	// instead of this server. The server then assigns the features as usual
+	// but never starts the tool, so Command must be empty. Only folksentia
+	// can be served by workers.
+	Worker bool `toml:"worker"`
 	// MemoryLimit caps the memory the tool may allocate, as a size such as
 	// "500M" (K, M or G, binary; plain bytes without a suffix). Empty means no
 	// limit. It is applied with RLIMIT_DATA on Linux, so a tool that needs more
@@ -101,7 +106,14 @@ func (a *Analysis) normalise(defined bool) error {
 		if !slices.Contains(ExternalAnalysisTools, name) {
 			return fmt.Errorf("config: analysis.tools.%s: unknown tool (known: %v)", name, ExternalAnalysisTools)
 		}
-		if name == ToolFFmpeg && t.Command == "" {
+		if t.Worker {
+			if name != "folksentia" {
+				return fmt.Errorf("config: analysis.tools.%s: worker = true is only supported for folksentia", name)
+			}
+			if t.Command != "" {
+				return fmt.Errorf("config: analysis.tools.%s: worker = true runs the tool on the workers; command must not be set", name)
+			}
+		} else if name == ToolFFmpeg && t.Command == "" {
 			// ffmpeg falls back to ffmpeg_path; only the timeout is set here.
 		} else if !filepath.IsAbs(t.Command) {
 			return fmt.Errorf("config: analysis.tools.%s.command must be an absolute path, got %q", name, t.Command)
@@ -115,7 +127,7 @@ func (a *Analysis) normalise(defined bool) error {
 			t.TimeoutDur = d
 		}
 		if t.MemoryLimit != "" {
-			n, err := parseByteSize(t.MemoryLimit)
+			n, err := ParseByteSize(t.MemoryLimit)
 			if err != nil {
 				return fmt.Errorf("config: analysis.tools.%s.memory_limit %q: %v (use a size such as \"500M\")", name, t.MemoryLimit, err)
 			}
@@ -145,9 +157,9 @@ func (a *Analysis) normalise(defined bool) error {
 	return nil
 }
 
-// parseByteSize reads a size such as "500M", "2G" or "1048576". K, M and G
+// ParseByteSize reads a size such as "500M", "2G" or "1048576". K, M and G
 // are binary (multiples of 1024).
-func parseByteSize(s string) (int64, error) {
+func ParseByteSize(s string) (int64, error) {
 	mult := int64(1)
 	v := strings.TrimSpace(s)
 	if n := len(v); n > 0 {

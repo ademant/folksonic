@@ -35,6 +35,8 @@ func runAdmin(args []string) error {
 		return runPair(args[1:])
 	case "analysis":
 		return runAnalysis(args[1:])
+	case "worker":
+		return runWorkerCommand(args[1:])
 	}
 	return fmt.Errorf("unknown command %q", args[0])
 }
