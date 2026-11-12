@@ -27,3 +27,4 @@
   [hidden] { display:none !important; }
 
 .self-end{align-self:end}
+  li.pending .code { font: 600 1.8rem/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing:.08em; margin:.1rem 0 .3rem; }

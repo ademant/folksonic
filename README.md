@@ -593,10 +593,11 @@ signed with a key that never leaves its Keystore.
    its device key. The proof must name the request's method and URL (without
    its query), carry a fresh `iat` (within 60 seconds) and a `jti` not seen
    before. Its key must belong to an active device. Devices may use `/rest/*`
-   and `/api/*`, but not manage the account: approving pairings, listing and
+   and `/api/*`, but not manage the account: confirming pairings, listing and
    removing devices, and managing keys, passkeys and identities need a session.
-   A device's proof is refused with `pairing_pending` until its owner approves
-   it, `device_unknown` once removed, and `proof_replayed` on reuse.
+   A device's proof is refused with `pairing_pending` until the pairing is
+   confirmed on both sides, `pairing_rejected` once rejected, `device_unknown`
+   once removed, and `proof_replayed` on reuse.
 
 1. **API key**: sent in the `X-Api-Key: <key>` header (preferred, for API clients
    such as DanceSonic), or as the `apiKey=<key>` parameter (Subsonic clients and
@@ -697,13 +698,35 @@ key after a device is lost.
 
 **Pairing a device.** The account page shows a QR code for 15 minutes. The app
 scans it and creates a key in its Keystore; it sends only the public key with
-the one-time token. The pairing then waits on the account page under "Waiting
-for approval", where the owner approves it with the device name shown. Nothing
-is granted until approval, and the wait ends with the QR code's 15 minutes. An
-approved device appears under "Devices", where it can be removed at any time.
-A device holds no bearer secret, so a copied request or log line is not a key.
+the token. Like Bluetooth pairing, the phone and the account page (under
+"Waiting for confirmation") then show the same six-digit **verification code**,
+and the pairing completes only when it is confirmed on **both** sides: with
+"Code matches" on the account page, and on the phone, which sends its answer
+signed with the new key (`POST /api/pair/confirm`). The order does not matter.
+
+Each side derives the code on its own; it is never sent. The code is the first
+four bytes of `SHA-256(token_hash ":" jkt)`, read big-endian, modulo 1,000,000
+and zero-padded to six digits. `token_hash` is the lower-case hex SHA-256 of the
+token from the QR code and `jkt` the RFC 7638 thumbprint of the device key. Test
+vector: token `tsp_example-pairing-token` and jkt
+`NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs` give `446284`.
+
+Someone who photographs the QR code and scans it too gets a different code,
+because their key differs. A QR code can collect up to three waiting pairings.
+The first one confirmed on both sides **uses it up**: every other pairing on it
+is rejected (`pairing_rejected`), and further scans get `pairing_token_used`.
+Rejecting a pairing on the account page also retires its QR code, so a rejected
+device cannot simply scan again; pairings already waiting on it stay open.
+Cancelling on the phone leaves the QR code usable. Nothing is granted before
+both confirmations, and the wait ends with the QR code's 15 minutes. A paired
+device appears under "Devices", where it can be removed at any time. A device
+holds no bearer secret, so a copied request or log line is not a key.
 `tinysonic device list` and `tinysonic device remove` do the same from the
 command line.
+
+The pairing without a device key (an API key for older apps) is refused for a
+QR code that a device has already scanned, so it cannot be used to skip the
+confirmation. It still works for a fresh QR code.
 
 The JSON endpoints below are described in [`docs/openapi.yaml`](docs/openapi.yaml).
 
@@ -715,11 +738,11 @@ The JSON endpoints below are described in [`docs/openapi.yaml`](docs/openapi.yam
 | GET | `/api/stream-url?id=so-…` | session | Signed stream URL for one song, valid 2 hours. Play it at `/rest/stream.view` or `/rest/download.view` with no other credentials |
 | DELETE | `/api/keys/{id}` | session | Revoke an own key |
 | POST | `/api/pair/start` | session | Create a pairing token and QR payload |
-| POST | `/api/pair/complete` | token | Redeem a pairing token. With `jwk` (the app's public P-256 key) the pairing waits for approval and no secret is returned (202). Without `jwk` the legacy form returns an API key, for apps that predate device keys |
+| POST | `/api/pair/complete` | token | Redeem a pairing token. With `jwk` (the app's public P-256 key) the pairing waits for both confirmations and no secret is returned (202, `"confirm": true`). Without `jwk` the legacy form returns an API key, for apps that predate device keys |
+| POST | `/api/pair/confirm` | proof of the pending key | The device's answer to the verification code: `{"result": "match"}` or `"cancel"`. 200 with the device once both sides confirmed, 202 while the owner has not |
 | GET | `/api/device/me` | device proof | The device this proof belongs to. The app polls it while the pairing waits |
-| GET | `/api/pair/pending` | session | Pairings waiting for approval |
-| POST | `/api/pair/pending/{id}/approve` | session | Approve a pairing. Refused with 410 once its 15 minutes have run out |
-| POST | `/api/pair/pending/{id}/deny` | session | Discard a pending pairing |
+| GET | `/api/pair/pending` | session | Pairings waiting for confirmation, each with its `code`, `clientAddress` and both confirmation flags |
+| POST | `/api/pair/pending/{id}/confirm` | session | The owner's answer: `{"result": "match"}` (201 with the device, or 202 while the phone has not confirmed) or `"reject"` (also retires the QR code). 410 once the 15 minutes have run out |
 | GET | `/api/devices` | session | The account's paired devices |
 | DELETE | `/api/devices/{id}` | session | Remove a device; its next request fails with `device_unknown` |
 | POST | `/api/passkey/register/begin` · `/finish` | session | Enrol a passkey |
@@ -1053,7 +1076,10 @@ message text is for people; apps should not parse it.
 | `stream_url_invalid` | The signed stream link was changed, is for another song, or its key was rotated (403) |
 | `proof_invalid` | A device proof is malformed, signed by another key, or for another method or URL (401) |
 | `proof_replayed` | A device proof's `jti` was used before (401) |
-| `pairing_pending` | The device is waiting for its owner to approve the pairing on the account page (401) |
+| `pairing_pending` | The pairing waits for its confirmation on the phone, the account page, or both (401) |
+| `pairing_rejected` | The pairing was rejected on the account page or on the phone, or another device used the QR code first (401, 409) |
+| `pairing_token_used` | The QR code was used up by a confirmed device or retired by a rejection; create a new one (409) |
+| `pairing_busy` | Three devices already wait on this QR code (429) |
 | `device_unknown` | The device was removed, or its key was never paired (401) |
 | `password_invalid`, `rate_limited` | Subsonic `u`/`p` sign-in failed, or too many failures |
 | `pairing_expired`, `pairing_invalid` | A pairing code is past its 15 minutes, or unknown or already used |

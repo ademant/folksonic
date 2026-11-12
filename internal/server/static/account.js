@@ -17,6 +17,10 @@
     var d = new Date(s);
     return isNaN(d) ? (s || "") : d.toLocaleDateString();
   }
+  function whenTime(s) {
+    var d = new Date(s);
+    return isNaN(d) ? (s || "") : d.toLocaleString();
+  }
   function signedOut() {
     try { sessionStorage.removeItem("tinysonic.token"); sessionStorage.removeItem("tinysonic.user"); } catch (e) {}
     location.replace("login");
@@ -35,7 +39,7 @@
   async function api(method, path, body) {
     var r = await raw(method, path, body);
     var j = await r.json().catch(function () { return {}; });
-    if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+    if (!r.ok) throw new Error(j.message || j.error || ("HTTP " + r.status));
     return j;
   }
   function b64uToBuf(s) {
@@ -90,26 +94,49 @@
   }
   async function loadKeys() { renderKeys((await api("GET", "keys")).keys || []); }
 
-  // Devices (#101): paired apps, and pairings waiting for approval.
+  // Devices (#101): paired apps. A new pairing (#103) shows the verification
+  // code that the app shows too; the owner confirms here when both match, and
+  // the app confirms on the phone.
   function renderPending(list) {
     var box = $("pendingBox"), ul = $("pending");
     ul.textContent = "";
     box.hidden = !list.length;
     list.forEach(function (p) {
-      var li = el("li");
+      var li = el("li", null, "pending");
       var info = el("div");
+      if (p.code) {
+        info.appendChild(el("div", p.code.slice(0, 3) + " " + p.code.slice(3), "code"));
+      }
       info.appendChild(el("strong", p.name));
-      info.appendChild(el("div", "Requested " + when(p.createdAt) + " · expires " + when(p.expiresAt), "meta"));
+      info.appendChild(el("div", "Requested " + whenTime(p.createdAt) +
+        (p.clientAddress ? " from " + p.clientAddress : "") + " · expires " + whenTime(p.expiresAt), "meta"));
+      var status = p.ownerConfirmed ? "You confirmed. Waiting for the phone to confirm."
+        : p.deviceConfirmed ? "The phone confirmed. Compare the code and confirm here."
+        : "Compare this code with the one on the phone.";
+      info.appendChild(el("div", status, "meta"));
       li.appendChild(info);
-      var ok = el("button", "Approve", "small");
-      ok.addEventListener("click", async function () {
-        try { await api("POST", "pair/pending/" + p.id + "/approve"); say("Device approved."); await refreshDevices(); } catch (e) { say(e.message); }
-      });
-      var no = el("button", "Deny", "danger small");
+      if (!p.code) {
+        info.appendChild(el("div", "Paired before verification codes existed. Reject it and pair again.", "meta"));
+      }
+      if (!p.ownerConfirmed && p.code) {
+        var ok = el("button", "Code matches", "small");
+        ok.addEventListener("click", async function () {
+          try {
+            var r = await api("POST", "pair/pending/" + p.id + "/confirm", { result: "match" });
+            say(r && r.status === "waiting" ? "Confirmed. Now confirm on the phone." : "Device paired.");
+            await refreshDevices();
+          } catch (e) { say(e.message); }
+        });
+        li.appendChild(ok);
+      }
+      var no = el("button", "Reject", "danger small");
       no.addEventListener("click", async function () {
-        try { await api("POST", "pair/pending/" + p.id + "/deny"); say("Pairing denied."); await refreshDevices(); } catch (e) { say(e.message); }
+        try {
+          await api("POST", "pair/pending/" + p.id + "/confirm", { result: "reject" });
+          say("Pairing rejected. That QR code no longer works; show a new one to pair again.");
+          await refreshDevices();
+        } catch (e) { say(e.message); }
       });
-      li.appendChild(ok);
       li.appendChild(no);
       ul.appendChild(li);
     });

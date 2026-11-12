@@ -443,7 +443,7 @@ paths:
     get:
       tags: [Device pairing]
       summary: The paired device this proof belongs to
-      description: Proof only. Refused with `pairing_pending` until the owner approves the device.
+      description: Proof only. Refused with `pairing_pending` until the pairing is confirmed on both sides (account page and phone).
       security:
         - dpopProof: []
       responses:
@@ -458,12 +458,12 @@ paths:
                   name: {type: string}
                   lastUsedAt: {type: string}
         '401':
-          description: Refused with `pairing_pending`, `pairing_expired`, `device_unknown`, `proof_invalid` or `proof_replayed`.
+          description: Refused with `pairing_pending`, `pairing_rejected`, `pairing_expired`, `device_unknown`, `proof_invalid` or `proof_replayed`.
   /api/pair/pending:
     get:
       tags: [Device pairing]
-      summary: Pairings waiting for approval
-      description: Session only.
+      summary: Pairings waiting for confirmation
+      description: Session only. Each entry has the verification code the phone shows too.
       security:
         - bearerAuth: []
       responses:
@@ -483,11 +483,21 @@ paths:
                         name: {type: string}
                         createdAt: {type: string}
                         expiresAt: {type: string}
-  /api/pair/pending/{id}/approve:
+                        code:
+                          type: string
+                          description: Six-digit verification code; empty for a pairing from before verification codes.
+                        clientAddress: {type: string}
+                        ownerConfirmed: {type: boolean}
+                        deviceConfirmed: {type: boolean}
+  /api/pair/pending/{id}/confirm:
     post:
       tags: [Device pairing]
-      summary: Approve a pending pairing
-      description: Session only. Refused with 410 when the pairing's time has run out.
+      summary: The owner's answer to a pairing's verification code
+      description: >-
+        Session only. `match` when the code on the account page equals the one
+        on the phone, `reject` otherwise. The device is created once the phone
+        has confirmed too (`POST /api/pair/confirm`). A rejection also retires
+        the QR code; other pairings already waiting on it stay open.
       security:
         - bearerAuth: []
       parameters:
@@ -495,30 +505,63 @@ paths:
           in: path
           required: true
           schema: {type: integer}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [result]
+              properties:
+                result: {type: string, enum: [match, reject]}
       responses:
         '201':
-          description: The device.
+          description: Both sides confirmed; the device.
+        '202':
+          description: Confirmed here; waiting for the phone (`waitingFor`).
+        '200':
+          description: Rejected.
         '404':
           description: No such pairing.
+        '409':
+          description: '`pairing_rejected`: the pairing was rejected already.'
         '410':
-          description: The pairing expired before approval.
-  /api/pair/pending/{id}/deny:
+          description: '`pairing_expired`: the pairing ran out before confirmation.'
+  /api/pair/confirm:
     post:
       tags: [Device pairing]
-      summary: Deny a pending pairing
-      description: Session only.
+      summary: The device's answer to its verification code
+      description: >-
+        Signed with the key being paired (a DPoP proof for this URL), although
+        it is not a device yet. `match` when the code on the phone equals the
+        one on the account page, `cancel` otherwise; cancelling leaves the QR
+        code usable. The code is SHA-256(token_hash ":" jkt), first four bytes
+        big-endian, modulo 1,000,000, six digits, where token_hash is the hex
+        SHA-256 of the QR token and jkt the RFC 7638 thumbprint of the key.
       security:
-        - bearerAuth: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: {type: integer}
+        - dpopProof: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [result]
+              properties:
+                result: {type: string, enum: [match, cancel]}
       responses:
         '200':
-          description: Denied.
+          description: Paired (`status` = `paired`, with `device`), or cancelled.
+        '202':
+          description: Confirmed on the phone; waiting for the account page (`waitingFor` = `owner`).
+        '401':
+          description: Missing or invalid proof (`proof_invalid`, `proof_replayed`).
         '404':
-          description: No such pairing.
+          description: '`device_unknown`: no pairing waits for this key.'
+        '409':
+          description: '`pairing_rejected`: rejected on the account page, cancelled, or another device used the QR code.'
+        '410':
+          description: '`pairing_expired`.'
   /api/devices:
     get:
       tags: [Device pairing]
@@ -657,9 +700,11 @@ paths:
       summary: Redeem a pairing token
       description: >-
         No authentication. The single-use token is the credential. With `jwk`
-        (the app's public key, #101) the pairing waits for approval on the
-        account page and no secret is returned: poll `GET /api/device/me` with a
-        signed proof until it succeeds. Without `jwk`, the legacy form returns an
+        (the app's public key, #101) the pairing waits for confirmation on both
+        sides (#103) and no secret is returned: show the verification code,
+        send the phone's answer to `POST /api/pair/confirm`, and poll
+        `GET /api/device/me` with a signed proof until it succeeds. A QR code
+        may be scanned by up to three devices until one is confirmed. Without `jwk`, the legacy form returns an
         API key for apps that predate device keys.
       security: []
       requestBody:
@@ -686,7 +731,7 @@ paths:
                     y: {type: string}
       responses:
         '202':
-          description: Pairing pending approval on the account page.
+          description: Pairing pending; confirm the verification code on both sides (`confirm` is true).
           content:
             application/json:
               schema:
@@ -695,8 +740,11 @@ paths:
                   status: {type: string, enum: [pending]}
                   pendingId: {type: integer}
                   expiresAt: {type: string, format: date-time}
+                  confirm: {type: boolean}
         '409':
-          description: The key is already paired.
+          description: The key is already paired, or `pairing_token_used` (the QR code was used up or retired).
+        '429':
+          description: '`pairing_busy`: three devices already wait on this QR code.'
         '200':
           description: Key issued.
           content:
