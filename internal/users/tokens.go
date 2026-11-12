@@ -329,6 +329,7 @@ const (
 	CodeUserDisabled        = "user_disabled"
 	CodeCredentialsRequired = "credentials_required"
 	CodeScopeForbidden      = "scope_forbidden"
+	CodeSessionRequired     = "session_required"
 	CodePairingExpired      = "pairing_expired"
 	CodePairingInvalid      = "pairing_invalid"
 	CodeInviteExpired       = "invite_expired"

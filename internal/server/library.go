@@ -36,7 +36,7 @@ func (s *State) ServeLibraryPage(w http.ResponseWriter, r *http.Request) {
 
 // requireLibrarian is requireUser for the library administration API.
 func (s *State) requireLibrarian(w http.ResponseWriter, r *http.Request) (users.User, bool) {
-	u, ok := s.requireUser(w, r)
+	u, ok := s.requireSession(w, r)
 	if !ok {
 		return u, false
 	}

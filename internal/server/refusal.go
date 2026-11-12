@@ -26,6 +26,7 @@ var refusalMessages = map[string]string{
 	users.CodeSessionExpired:      "The session has expired. Sign in again.",
 	users.CodeUserDisabled:        "The account is disabled.",
 	users.CodeScopeForbidden:      "This key may not be used for this request.",
+	users.CodeSessionRequired:     "This action needs a signed-in session. Sign in with a password or passkey and try again.",
 	users.CodePairingExpired:      "The pairing code has expired. Create a new one.",
 	users.CodePairingInvalid:      "The pairing code is not valid or was already used.",
 	users.CodeInviteExpired:       "The invitation code has expired.",
