@@ -175,6 +175,14 @@ func (s *State) startJob(kind, mode string, sel analysis.Selection) error {
 	if sel.Features != nil && slices.ContainsFunc(sel.Features, func(f string) bool { return p.Tool(f) == "" }) {
 		return fmt.Errorf("%w: %v", errNotAssigned, sel.Features)
 	}
+	// A feature whose tool is offline only is never run here (#105); asking
+	// for it explicitly is refused instead of starting an empty job.
+	avail := p.Available()
+	for _, f := range sel.Features {
+		if t := p.Tool(f); avail[t] == analysis.OfflineOnly {
+			return fmt.Errorf("%w: %s: %s is %s", errNoTool, f, t, analysis.OfflineOnly)
+		}
+	}
 	todo, err := p.Select(context.Background(), s.Pool, sel)
 	if err != nil {
 		return err

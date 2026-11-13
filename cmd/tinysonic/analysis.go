@@ -72,6 +72,9 @@ func runAnalysis(args []string) error {
 				if plan.Tool(f) == "" {
 					return fmt.Errorf("no analysis tool is assigned to %q (assigned: %v)", f, plan.Assignments())
 				}
+				if t := plan.Tool(f); plan.Available()[t] == analysis.OfflineOnly {
+					return fmt.Errorf("%s: %s is %s", f, t, analysis.OfflineOnly)
+				}
 				sel.Features = append(sel.Features, f)
 			}
 		}
