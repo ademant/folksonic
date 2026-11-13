@@ -26,14 +26,10 @@ type APIKey struct {
 	ExpiresAt  sql.NullString
 	LastUsedAt sql.NullString
 	RevokedAt  sql.NullString
-	// Scope is "" for a full key, or ScopeWorker for a key that may only
-	// call the analysis worker endpoints.
+	// Scope is "" for a full key. A key with a scope (the analysis worker
+	// keys removed in #105) is refused everywhere.
 	Scope string
 }
-
-// ScopeWorker marks the key of an analysis worker (see internal/worker). It
-// is accepted only in the X-Api-Key header and only on /api/worker/.
-const ScopeWorker = "worker"
 
 // KeyTTL is the lifetime of a new key when the caller gives none, and KeyIdle
 // is how long a key may go unused before it is revoked. The server sets both
@@ -164,18 +160,13 @@ func RevokeAPIKey(ctx context.Context, db *sql.DB, userID, keyID int64) error {
 // CreatePairingToken issues a single-use token a device can redeem for an
 // API key. It expires after PairingTTL.
 func CreatePairingToken(ctx context.Context, db *sql.DB, userID int64) (string, error) {
-	return CreateScopedPairingToken(ctx, db, userID, "")
-}
-
-// CreateScopedPairingToken issues a pairing token whose key has scope.
-func CreateScopedPairingToken(ctx context.Context, db *sql.DB, userID int64, scope string) (string, error) {
 	plain, err := randomToken(pairingPrefix)
 	if err != nil {
 		return "", err
 	}
 	_, err = db.ExecContext(ctx,
 		"INSERT INTO pairing_tokens (token_hash, user_id, expires_at, scope) VALUES (?, ?, ?, ?)",
-		hashToken(plain), userID, ts(time.Now().Add(PairingTTL)), scope)
+		hashToken(plain), userID, ts(time.Now().Add(PairingTTL)), "")
 	if err != nil {
 		return "", err
 	}
@@ -209,7 +200,8 @@ func RedeemPairingToken(ctx context.Context, db *sql.DB, plain, deviceLabel stri
 	if err != nil {
 		return "", User{}, err
 	}
-	if used.Valid {
+	// A token with a scope was for an analysis worker (removed in #105).
+	if used.Valid || scope != "" {
 		return "", User{}, ErrNotFound
 	}
 	if expires <= Now() {
@@ -241,11 +233,7 @@ func RedeemPairingToken(ctx context.Context, db *sql.DB, plain, deviceLabel stri
 	if u.Status != StatusActive {
 		return "", User{}, ErrNotFound
 	}
-	label := "app: " + deviceLabel
-	if scope == ScopeWorker {
-		label = "worker: " + deviceLabel
-	}
-	key, err := CreateScopedAPIKey(ctx, tx, userID, label, scope, 0)
+	key, err := CreateAPIKey(ctx, tx, userID, "app: "+deviceLabel, 0)
 	if err != nil {
 		return "", User{}, err
 	}

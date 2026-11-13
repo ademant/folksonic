@@ -195,15 +195,9 @@ func store(ctx context.Context, db *sql.DB, songID string, r Run, version string
 	if runErr != nil {
 		errText = sql.NullString{String: shortMessage(runErr.Error()), Valid: true}
 	}
-	// The run ended with a result, so it no longer counts as interrupted, and
-	// a worker's lease on it is over.
-	for _, q := range []string{
-		"DELETE FROM analysis_attempts WHERE song_id = ? AND tool = ?",
-		"DELETE FROM analysis_leases WHERE song_id = ? AND tool = ?",
-	} {
-		if _, err := tx.ExecContext(ctx, q, songID, r.Group.Tool); err != nil {
-			return false, err
-		}
+	// The run ended with a result, so it no longer counts as interrupted.
+	if _, err := tx.ExecContext(ctx, "DELETE FROM analysis_attempts WHERE song_id = ? AND tool = ?", songID, r.Group.Tool); err != nil {
+		return false, err
 	}
 	for _, f := range r.Features {
 		if _, err := tx.ExecContext(ctx,

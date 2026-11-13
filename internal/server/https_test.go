@@ -105,7 +105,7 @@ func TestHTTPSGateOffAllowsPlainHTTP(t *testing.T) {
 
 // Refusals carry their code on the JSON API and a readable message on Subsonic.
 func TestRefusedCredentialsCarryTheirCode(t *testing.T) {
-	s, workerKey, userKey := workerState(t)
+	s, workerKey, userKey := keyFixture(t)
 	h := requestLogger(s.routes())
 	call := func(key string, inHeader bool, path, body string) (int, map[string]any) {
 		t.Helper()
@@ -146,7 +146,7 @@ func TestRefusedCredentialsCarryTheirCode(t *testing.T) {
 }
 
 func TestExpiredPairingTokenAnswersItsCode(t *testing.T) {
-	s, _, _ := workerState(t)
+	s, _, _ := keyFixture(t)
 	tok := mustPairingToken(t, s)
 	expirePairing(t, s)
 	h := requestLogger(s.routes())
@@ -179,7 +179,7 @@ func expireKey(t *testing.T, s *State, _ string) {
 
 func mustPairingToken(t *testing.T, s *State) string {
 	t.Helper()
-	tok, err := users.CreatePairingToken(context.Background(), s.Pool, workerUserID(t, s, "bob"))
+	tok, err := users.CreatePairingToken(context.Background(), s.Pool, userIDOf(t, s, "bob"))
 	if err != nil {
 		t.Fatal(err)
 	}

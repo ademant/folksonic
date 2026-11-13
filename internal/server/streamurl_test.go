@@ -20,7 +20,7 @@ import (
 // token and user id.
 func streamFixture(t *testing.T) (*State, string, int64) {
 	t.Helper()
-	s, _, _ := workerState(t)
+	s, _, _ := keyFixture(t)
 	audio := filepath.Join(t.TempDir(), "track.mp3")
 	if err := os.WriteFile(audio, []byte("audio bytes"), 0o644); err != nil {
 		t.Fatal(err)
@@ -28,7 +28,7 @@ func streamFixture(t *testing.T) (*State, string, int64) {
 	if _, err := s.Pool.Exec("UPDATE songs SET path = ? WHERE id = 'so-1'", audio); err != nil {
 		t.Fatal(err)
 	}
-	bob := workerUserID(t, s, "bob")
+	bob := userIDOf(t, s, "bob")
 	tok, err := users.CreateSession(context.Background(), s.Pool, bob)
 	if err != nil {
 		t.Fatal(err)
@@ -149,7 +149,7 @@ func TestSignedURLOnlyWorksOnStreams(t *testing.T) {
 }
 
 func TestAPIKeyCannotMintStreamURLs(t *testing.T) {
-	s, _, key := workerState(t)
+	s, _, key := keyFixture(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/stream-url?id=so-1", nil)
 	req.Header.Set("X-Api-Key", key)
 	rec := httptest.NewRecorder()
@@ -160,7 +160,7 @@ func TestAPIKeyCannotMintStreamURLs(t *testing.T) {
 }
 
 func TestStreamURLExtensionAdvertised(t *testing.T) {
-	s, _, key := workerState(t)
+	s, _, key := keyFixture(t)
 	rec := getWith(t, s.routes(), "/rest/getOpenSubsonicExtensions.view", key, true)
 	if !strings.Contains(rec.Body.String(), "tinysonicStreamUrl") {
 		t.Fatalf("extension not advertised: %s", rec.Body.String())

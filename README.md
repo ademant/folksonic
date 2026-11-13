@@ -196,11 +196,6 @@ tinysonic pair [-c FILE] --user <username>            print a pairing QR code (v
 tinysonic device list [-c FILE] --user <username>     list the account's paired devices
 tinysonic device remove [-c FILE] --user <username> <id>   remove one; its next request fails
 
-tinysonic worker key [-c FILE] --user <username> --out <file>
-                                                      write a worker config with a new worker key (mode 0600)
-tinysonic worker pair [-c FILE] --user <username>     print a one-time token that a worker redeems itself
-tinysonic worker run [-c FILE] [--pair <token>]       run an analysis worker (on the worker machine)
-
 tinysonic stream rotate [-c FILE]                     new key for signed stream URLs; links made with the old key stop at the next restart
 
 tinysonic cert [-c FILE] [--dir DIR] [--force]        make a self-signed certificate for the host in base_url (10 years, mode 0600 key)
@@ -209,6 +204,10 @@ tinysonic cert fingerprint [-c FILE]                  print the pin (sha256/…)
 tinysonic analysis pending [-c FILE]                  analyse what has no result yet (as after a scan)
 tinysonic analysis recalc [-c FILE] [-features key,beats] (-all | <song id>…)
                                                       run the assigned tools again, even for unchanged files
+tinysonic analysis export [-c FILE] [-features …] (-all | -pending | <song id>…) -out jobs.json
+                                                      write a folksentia job list for an offline run
+tinysonic analysis import [-c FILE] [-dry-run] [-size-only] results.jsonl
+                                                      store folksentia's results from an offline run
 ```
 
 Account commands work directly on the database, so run them on the server
@@ -426,12 +425,13 @@ memory_limit = "2G"                     # optional, see below
 max_duration = "45m"                    # optional, see below
 ```
 
-Folksentia can also run on a remote analysis worker instead of this host, see
-[Analysis workers](#analysis-workers). Then the server does not set `command`:
+Folksentia can also run on another machine, see
+[Offline analysis](#offline-analysis). To never run it on this host, leave
+`command` unset; the features stay assigned, and their results come in only
+through `tinysonic analysis import`:
 
 ```toml
-[analysis.tools.folksentia]
-worker = true                           # run on workers; command must not be set
+[analysis.tools.folksentia]             # no command: offline only
 ```
 
 | Tool | Features | Notes |
@@ -534,49 +534,75 @@ under F); names themselves are unchanged.
 
 `GET /` returns a plain-text index of every endpoint and its query params.
 
-### Analysis workers
+### Offline analysis
 
-A worker runs folksentia on another machine, for example a desktop that the
-server cannot reach. The worker always connects out to the server (pull
-model), so the server needs no inbound route to it.
-
-Worker keys are normal API keys with the scope `worker`. They are accepted only
-in the `X-Api-Key` header and only on `/api/worker/*`. Every other endpoint,
-Subsonic included, refuses them, so a leaked worker key cannot read the library
-or act as the account. Keys are listed and revoked with `tinysonic user keys`
-and `tinysonic user revoke-key`, like the others.
-
-Two ways to provision a worker:
+A bulk recalculation can run on a faster machine, for example a desktop with
+a copy of the library, without any network connection to the server. It is a
+round trip through two files:
 
 ```bash
-# On the server: write a config file with a new key, then copy it over (ssh/scp).
-tinysonic worker key --user worker -c /etc/tinysonic/tinysonic.toml --out worker.toml
+# 1. On the server: the job list (song IDs, relative paths, size and mtime).
+tinysonic analysis export -c /etc/tinysonic/tinysonic.toml -all -out jobs.json
 
-# Or: a one-time token the worker redeems itself (valid 15 min, single use).
-tinysonic worker pair --user worker -c /etc/tinysonic/tinysonic.toml
+# 2. On the desktop: folksentia's batch mode runs every job against the local
+#    copy and writes one line per track. It can be stopped and resumed.
+folksentia --jobs jobs.json --music-root ~/Musik --out results.jsonl
+
+# 3. On the server: check, then store.
+tinysonic analysis import -c /etc/tinysonic/tinysonic.toml -dry-run results.jsonl
+tinysonic analysis import -c /etc/tinysonic/tinysonic.toml results.jsonl
 ```
 
-On the worker, `worker.toml` (or any path) needs `music_root`, the absolute
-path where the server's music directory is mounted on this machine, and the
-absolute path of the folksentia binary. Then:
+`export` selects the features assigned to folksentia (`-features` narrows
+them), every song with `-all`, only what folksentia has not analysed yet with
+`-pending`, or the given song IDs. It works whether or not this host runs
+folksentia itself. Paths in `jobs.json` are relative to the music folder and
+`/`-separated. The file holds no secrets and no server paths.
 
-```bash
-tinysonic worker run -c worker.toml
-tinysonic worker run -c worker.toml --pair <token>   # redeem the token first, then run
+**`jobs.json`** (`format` `tinysonic-analysis-jobs`, `version` 1):
+
+```json
+{
+  "format": "tinysonic-analysis-jobs", "version": 1,
+  "created": "2026-11-13T10:00:00Z",
+  "tool": "folksentia", "schema": 1,
+  "options": { "downbeats": true, "waveform": 150, "fingerprint": true },
+  "jobs": [
+    { "id": "so-…", "path": "Artist/Album/01 Tune.opus", "size": 1692335,
+      "mtimeMs": 1730900000000, "durationMs": 113000,
+      "features": ["bpm", "beats", "key", "loudness", "silence", "waveform", "fingerprint"] }
+  ]
+}
 ```
 
-The worker asks for batches of tracks (`batch`, 1–20), checks each file's size
-and mtime against the server's record, runs folksentia (`timeout` per track,
-optional `memory_limit`), and posts the output. The server parses and stores it
-exactly as it stores a local run. A file that changed on the worker is not
-stored, and the track is analysed again on the next pass. The worker does not
-send anything when it stops, so a track it was working on counts as an
-interrupted attempt, and after two of those it is marked failed.
+`options` are the folksentia flags a local run would pass for these features
+(`--downbeats`, `--waveform=150`, `--fingerprint`).
 
-Limits: recalculation of worker-served features from the library page is not
-available in this version. Run it on the worker side instead (or wait for the
-next pass after the file changes). A `worker.toml` holds a secret: keep it
-private, and delete the copy on the server once it has been transferred.
+**`results.jsonl`**, one JSON object per line:
+
+```json
+{"job": { …the job, unchanged… }, "local": {"size": 1692335, "mtimeMs": 1730900000000}, "toolVersion": "0.5.0", "result": { …folksentia schema 1… }}
+{"job": { … }, "skipped": "missing"}
+{"job": { … }, "local": { … }, "skipped": "changed"}
+```
+
+`import` stores each result exactly like a local run (same parsing, BPM
+outside 20–300 refused, a folksentia `error` recorded as a failed run), and
+records `toolVersion` as the tool version. It stores a line only when the song
+still exists and its file on the server has the job's size and mtime
+(`-size-only`: the size alone, for copies that did not keep modification
+times), and only for features still assigned to folksentia. When a song
+appears twice, the last line wins. Every other line is counted and skipped; a
+bad line never stops the import. At the end it prints, for example:
+
+```
+5453 lines: stored 5440 (5212 changed, 3 failed runs); skipped 2 missing, 11 stale
+```
+
+Skip reasons: `missing` and `changed` (on the desktop, as folksentia
+reported), `stale` (the file changed on the server since the export),
+`unknown` (no such song), `unassigned`, `duplicate` and `invalid` (with the
+line number on stderr). A running server sees the new values on its next read.
 
 ## Tested clients
 
@@ -604,7 +630,7 @@ signed with a key that never leaves its Keystore.
    the Android app). The header keeps the key out of URLs and access logs. Keys
    are created with `POST /api/keys`, or by a legacy pairing for apps without device keys. A key has the same
    rights as its user and can be revoked. A key may call the Subsonic API, the
-   analysis reads and the worker endpoints, but not manage the account: creating,
+   analysis reads, but not manage the account: creating,
    listing or revoking keys, pairing devices, passkeys, identities and library
    jobs need a signed-in session (`session_required`). Every key expires after
    `api_key_ttl_days` (365 by default), is renewed when it is used in its last 30
@@ -685,7 +711,7 @@ api_key_idle_days    = 30
 the account may use, until it expires or is revoked: play and read the library,
 star, make playlists and scrobble. It cannot create, list or revoke keys, pair
 devices, manage passkeys or identities, run library jobs, or mint stream links
-(`session_required`). A worker key works only on the worker endpoints. Revoking
+(`session_required`). Revoking
 the key from the account page ends its access at the next request.
 
 **What is left to do.** A Subsonic client's key is valid for its whole lifetime,
@@ -767,8 +793,6 @@ The JSON endpoints below are described in [`docs/openapi.yaml`](docs/openapi.yam
 | POST | `/api/library/jobs/cancel` | session | Stop the running job after the current track |
 | GET | `/api/analysis?id=` | user | Stored analysis of one track; see [Track analysis](#track-analysis) |
 | GET | `/api/duplicates` | user | Groups of songs with matching audio fingerprints; see [Track analysis](#track-analysis) |
-| POST | `/api/worker/jobs` | worker key | Lease up to 20 tracks for a worker tool (`{"tool": "folksentia", "limit": 5}`); see [Analysis workers](#analysis-workers) |
-| POST | `/api/worker/results` | worker key | Store a worker's output for a leased track; 409 when the lease or the file is gone |
 | GET | `/api/oidc/identities` | session | List linked identities |
 | DELETE | `/api/oidc/identities/{id}` | session | Unlink an identity. Refused (409) when it is the account's last sign-in method |
 
@@ -1070,7 +1094,7 @@ message text is for people; apps should not parse it.
 | `key_expired` | The key is past its lifetime |
 | `session_unknown`, `session_expired` | The web session token is unknown or expired |
 | `user_disabled` | The account is disabled |
-| `scope_forbidden` | The key may not be used for this request (worker keys) |
+| `scope_forbidden` | The key may not be used for this request (a key with a scope, such as the removed analysis worker keys) |
 | `session_required` | The request needs a signed-in session, not an API key (account and library management) |
 | `stream_url_expired` | The signed stream link is past its expiry; ask `/api/stream-url` for a new one (403) |
 | `stream_url_invalid` | The signed stream link was changed, is for another song, or its key was rotated (403) |

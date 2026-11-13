@@ -309,7 +309,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
     expires_at   TEXT,
     last_used_at TEXT,
     revoked_at   TEXT,
-    scope        TEXT NOT NULL DEFAULT '',  -- '' for a full key, 'worker' for an analysis worker
+    scope        TEXT NOT NULL DEFAULT '',  -- '' for a full key; a key with a scope (the removed analysis worker keys) is refused
     ttl_seconds    INTEGER,                 -- the key's lifetime, renewed to the same length
     revoked_reason TEXT                     -- 'idle' when the idle sweep revoked it
 );

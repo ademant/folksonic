@@ -39,7 +39,7 @@ func getWith(t *testing.T, h http.Handler, path string, key string, inHeader boo
 
 // #88: personal responses are not stored; audio and covers are private.
 func TestCacheControlOnSubsonicAndAPIResponses(t *testing.T) {
-	s, _, key := workerState(t)
+	s, _, key := keyFixture(t)
 	h := fullChain(s)
 
 	for _, c := range []struct{ path, want string }{
@@ -64,7 +64,6 @@ func TestCacheControlForPaths(t *testing.T) {
 		"/rest/getCoverArt.view":  "private, max-age=86400",
 		"/rest/getPlaylists.view": "no-store",
 		"/api/analysis":           "no-store",
-		"/api/worker/results":     "no-store",
 		"/rest/streamer.view":     "no-store",
 	} {
 		if got := cacheControlFor(p); got != want {
@@ -75,7 +74,7 @@ func TestCacheControlForPaths(t *testing.T) {
 
 // #90: the referrer is not sent and sensor features are off, on every response.
 func TestSecurityHeadersOnPageApiAndStream(t *testing.T) {
-	s, _, key := workerState(t)
+	s, _, key := keyFixture(t)
 	h := fullChain(s)
 	for _, path := range []string{"/", "/api/keys", "/rest/stream.view?id=so-1"} {
 		rec := getWith(t, h, path, key, true)
@@ -111,9 +110,9 @@ func TestSongIDFieldLogsOnlyPlainTokens(t *testing.T) {
 
 // #89: each refused key or session gets its reason; the key itself never does.
 func TestCredentialProblemReasons(t *testing.T) {
-	s, _, _ := workerState(t)
+	s, _, _ := keyFixture(t)
 	ctx := context.Background()
-	bob := workerUserID(t, s, "bob")
+	bob := userIDOf(t, s, "bob")
 
 	active, err := users.CreateAPIKey(ctx, s.Pool, bob, "active", 0)
 	if err != nil {
@@ -175,9 +174,9 @@ func TestCredentialProblemReasons(t *testing.T) {
 }
 
 func TestRefusedKeyIsLoggedWithReasonAndNoSecret(t *testing.T) {
-	s, _, _ := workerState(t)
+	s, _, _ := keyFixture(t)
 	ctx := context.Background()
-	bob := workerUserID(t, s, "bob")
+	bob := userIDOf(t, s, "bob")
 	key, err := users.CreateAPIKey(ctx, s.Pool, bob, "old phone", 0)
 	if err != nil {
 		t.Fatal(err)

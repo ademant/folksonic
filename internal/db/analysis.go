@@ -20,9 +20,8 @@ CREATE TABLE IF NOT EXISTS analysis (
     PRIMARY KEY (song_id, feature)
 );
 
--- analysis_leases records that an analysis worker (key key_id) was given a
--- track for a tool. A lease that is not finished before until_ms expires, and
--- the track can be given to another worker; the attempt counts stay.
+-- analysis_leases was used by the network analysis workers, removed in #105.
+-- It is no longer read or written; it stays so no migration is needed.
 CREATE TABLE IF NOT EXISTS analysis_leases (
     song_id  TEXT NOT NULL REFERENCES songs(id) ON DELETE CASCADE ON UPDATE CASCADE,
     tool     TEXT NOT NULL,
