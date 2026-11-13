@@ -9,7 +9,7 @@ import (
 // its AGENTS.md requires). A user key in that header must work on /api
 // endpoints exactly like the apiKey query parameter.
 func TestAPIKeyInHeaderAuthenticatesAPIEndpoints(t *testing.T) {
-	s, _, userKey := workerState(t)
+	s, _, userKey := keyFixture(t)
 	const path = "/api/analysis?id=so-1"
 
 	if code, _ := keyCall(t, s, userKey, true, http.MethodGet, path, ""); code != http.StatusOK {
@@ -28,7 +28,7 @@ func TestAPIKeyInHeaderAuthenticatesAPIEndpoints(t *testing.T) {
 
 // The header form must not open a worker key to the rest of the API.
 func TestWorkerKeyInHeaderStillRefusedOnAnalysis(t *testing.T) {
-	s, workerKey, _ := workerState(t)
+	s, workerKey, _ := keyFixture(t)
 	if code, _ := keyCall(t, s, workerKey, true, http.MethodGet, "/api/analysis?id=so-1", ""); code != http.StatusUnauthorized {
 		t.Errorf("worker key in header on /api/analysis: status %d, want 401", code)
 	}

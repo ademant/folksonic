@@ -23,8 +23,9 @@ type Group struct {
 	// memLimit and maxDuration come from the tool's config; 0 means none.
 	memLimit    int64
 	maxDuration time.Duration
-	// worker: the tool runs on analysis workers, never on this server.
-	worker  bool
+	// offline: the tool has no command here (folksentia only). The server
+	// never runs it; its results come in through ImportResults (#105).
+	offline bool
 	adapter adapter
 	// command is the configured path; for builtin and ffmpeg it may be empty,
 	// meaning ffmpeg_path (resolved when a job starts).
@@ -59,7 +60,7 @@ func NewPlan(a config.Analysis, ffmpegPath string) *Plan {
 			if t, ok := a.Tools[tool]; ok {
 				g.command, g.timeout = t.Command, t.TimeoutDur
 				g.memLimit, g.maxDuration = t.MemoryLimitBytes, t.MaxDurationDur
-				g.worker = t.Worker
+				g.offline = tool == "folksentia" && t.Command == ""
 			}
 			switch tool {
 			case config.ToolBuiltin:
@@ -122,8 +123,8 @@ func (p *Plan) resolve(g *Group) (string, error) {
 func (p *Plan) Available() map[string]string {
 	m := map[string]string{}
 	for _, g := range p.Groups {
-		if g.worker {
-			m[g.Tool] = "served by analysis workers"
+		if g.offline {
+			m[g.Tool] = OfflineOnly
 			continue
 		}
 		if _, err := p.resolve(g); err != nil {

@@ -54,10 +54,9 @@ type AnalysisTool struct {
 	Timeout string `toml:"timeout"`
 	// TimeoutDur is Timeout parsed by Load.
 	TimeoutDur time.Duration `toml:"-"`
-	// Worker is true when the tool runs on analysis workers (internal/worker)
-	// instead of this server. The server then assigns the features as usual
-	// but never starts the tool, so Command must be empty. Only folksentia
-	// can be served by workers.
+	// Worker was the switch for network analysis workers, removed in #105.
+	// It is still read so that a config that sets it fails with a hint
+	// instead of silently running the tool here.
 	Worker bool `toml:"worker"`
 	// MemoryLimit caps the memory the tool may allocate, as a size such as
 	// "500M" (K, M or G, binary; plain bytes without a suffix). Empty means no
@@ -107,15 +106,13 @@ func (a *Analysis) normalise(defined bool) error {
 			return fmt.Errorf("config: analysis.tools.%s: unknown tool (known: %v)", name, ExternalAnalysisTools)
 		}
 		if t.Worker {
-			if name != "folksentia" {
-				return fmt.Errorf("config: analysis.tools.%s: worker = true is only supported for folksentia", name)
-			}
-			if t.Command != "" {
-				return fmt.Errorf("config: analysis.tools.%s: worker = true runs the tool on the workers; command must not be set", name)
-			}
-		} else if name == ToolFFmpeg && t.Command == "" {
-			// ffmpeg falls back to ffmpeg_path; only the timeout is set here.
-		} else if !filepath.IsAbs(t.Command) {
+			return fmt.Errorf("config: analysis.tools.%s: worker = true is no longer supported; analysis workers were replaced by `tinysonic analysis export` and `import` (leave command unset to analyse %s offline only)", name, name)
+		}
+		switch {
+		case t.Command == "" && (name == ToolFFmpeg || name == "folksentia"):
+			// ffmpeg falls back to ffmpeg_path. folksentia without a command
+			// is offline only: its results come in through `analysis import`.
+		case !filepath.IsAbs(t.Command):
 			return fmt.Errorf("config: analysis.tools.%s.command must be an absolute path, got %q", name, t.Command)
 		}
 		t.TimeoutDur = DefaultToolTimeout

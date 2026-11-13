@@ -140,22 +140,13 @@ func folksentiaArgs(features []string, path string) []string {
 }
 
 func (folksentiaAdapter) run(ctx context.Context, command, path string, _ float64, features []string, memLimit int64) (Values, error) {
-	out, err := RunFolksentia(ctx, command, path, features, memLimit)
-	if err != nil {
-		return nil, err
-	}
-	return parseFolksentia(out, features)
-}
-
-// RunFolksentia runs folksentia on one file for features and returns its
-// output, which parseFolksentia reads. Exit status 1 means "a file failed";
-// the output then holds the error object, so it is returned, not an error.
-func RunFolksentia(ctx context.Context, command, path string, features []string, memLimit int64) ([]byte, error) {
+	// Exit status 1 means "a file failed"; the output then holds the error
+	// object, which parseFolksentia reports.
 	out, _, err := runTool(ctx, command, folksentiaArgs(features, path), func(code int) bool { return code == 1 }, memLimit)
 	if err != nil {
 		return nil, fmt.Errorf("folksentia: %w", err)
 	}
-	return out, nil
+	return parseFolksentia(out, features)
 }
 
 // folksentiaOutput is the part of folksentia's schema 1 that is used.

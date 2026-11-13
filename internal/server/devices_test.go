@@ -25,9 +25,9 @@ const testBase = "https://music.test"
 // deviceFixture is bob with a session and a base URL, so proofs can name it.
 func deviceFixture(t *testing.T) (*State, int64, string) {
 	t.Helper()
-	s, _, _ := workerState(t)
+	s, _, _ := keyFixture(t)
 	s.BaseURL = testBase
-	bob := workerUserID(t, s, "bob")
+	bob := userIDOf(t, s, "bob")
 	sess, err := users.CreateSession(context.Background(), s.Pool, bob)
 	if err != nil {
 		t.Fatal(err)

@@ -52,7 +52,7 @@ func decodeJSONLoose(body string) map[string]any {
 }
 
 func TestAPIKeyCannotManageTheAccount(t *testing.T) {
-	s, _, key := workerState(t)
+	s, _, key := keyFixture(t)
 	for _, c := range sessionOnlyCalls {
 		code, body := authCall(t, s, c.method, c.path, c.body, key, "")
 		if code != http.StatusForbidden || body["error"] != users.CodeSessionRequired {
@@ -62,8 +62,8 @@ func TestAPIKeyCannotManageTheAccount(t *testing.T) {
 }
 
 func TestSessionStillManagesTheAccount(t *testing.T) {
-	s, _, _ := workerState(t)
-	bob := workerUserID(t, s, "bob")
+	s, _, _ := keyFixture(t)
+	bob := userIDOf(t, s, "bob")
 	tok, err := users.CreateSession(context.Background(), s.Pool, bob)
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +77,7 @@ func TestSessionStillManagesTheAccount(t *testing.T) {
 }
 
 func TestAPIKeyStillWorksForSubsonicAndAnalysis(t *testing.T) {
-	s, _, key := workerState(t)
+	s, _, key := keyFixture(t)
 	for _, path := range []string{"/rest/ping.view", "/api/analysis?id=so-1", "/api/duplicates"} {
 		// /api/duplicates answers 202 while its search runs in the background.
 		if code, body := authCall(t, s, http.MethodGet, path, "", key, ""); code != http.StatusOK && code != http.StatusAccepted {
@@ -87,7 +87,7 @@ func TestAPIKeyStillWorksForSubsonicAndAnalysis(t *testing.T) {
 }
 
 func TestSessionOnlyRefusalWithoutCredentialsIsUnchanged(t *testing.T) {
-	s, _, _ := workerState(t)
+	s, _, _ := keyFixture(t)
 	if code, body := authCall(t, s, http.MethodGet, "/api/keys", "", "", ""); code != http.StatusUnauthorized || body["error"] != users.CodeCredentialsRequired {
 		t.Errorf("no credentials: %d %v, want 401 credentials_required", code, body)
 	}

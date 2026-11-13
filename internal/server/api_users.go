@@ -40,7 +40,7 @@ func (s *State) requireSession(w http.ResponseWriter, r *http.Request) (users.Us
 		return u, false
 	}
 	// A device proof is not a session either: a paired app may not manage the account.
-	if key, _ := apiKeyOf(r); key != "" || r.Header.Get("DPoP") != "" {
+	if key := apiKeyOf(r); key != "" || r.Header.Get("DPoP") != "" {
 		writeCoded(w, http.StatusForbidden, users.CodeSessionRequired)
 		return users.User{}, false
 	}

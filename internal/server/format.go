@@ -3,6 +3,8 @@ package server
 import (
 	"path/filepath"
 	"strings"
+
+	"github.com/tsirysndr/tinysonic/internal/analysis"
 )
 
 // relativePath returns p relative to the music directory that contains it,
@@ -10,21 +12,10 @@ import (
 // exposed: a file outside every music directory (only possible after the
 // config changed) is reported by its base name.
 func relativePath(musicDirs []string, p string) string {
-	best := ""
-	for _, d := range musicDirs {
-		rel, err := filepath.Rel(d, p)
-		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			continue
-		}
-		// The longest root wins when music directories are nested.
-		if best == "" || len(rel) < len(best) {
-			best = rel
-		}
+	if rel, ok := analysis.RelativePath(musicDirs, p); ok {
+		return rel
 	}
-	if best == "" {
-		best = filepath.Base(p)
-	}
-	return filepath.ToSlash(best)
+	return filepath.Base(p)
 }
 
 // DefaultIgnoredArticles is used when ignored_articles is not configured.

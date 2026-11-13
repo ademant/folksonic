@@ -34,16 +34,16 @@ func (s *State) resolveCaller(r *http.Request) (users.User, bool) {
 	ctx := r.Context()
 	q := params(r)
 
-	if key, fromHeader := apiKeyOf(r); key != "" {
+	if key := apiKeyOf(r); key != "" {
 		u, info, err := users.LookupAPIKeyInfo(ctx, s.Pool, key)
 		if err != nil {
 			reason, keyID, label := users.APIKeyProblem(ctx, s.Pool, key)
 			s.logRefused(r, reason, keyID, label)
 			return users.User{}, false
 		}
-		// A worker key works only in the X-Api-Key header and only on the
-		// worker endpoints; everywhere else it is no key at all.
-		if info.Scope == users.ScopeWorker && !(fromHeader && strings.HasPrefix(r.URL.Path, "/api/worker/")) {
+		// A scoped key (the analysis worker keys removed in #105) is no key
+		// at all: no endpoint accepts a scope any more.
+		if info.Scope != "" {
 			s.logRefused(r, users.CodeScopeForbidden, info.ID, "")
 			return users.User{}, false
 		}
@@ -191,4 +191,13 @@ func authCheck(username, hash, u, p string) bool {
 		}
 	}
 	return passwords.Verify(hash, decoded)
+}
+
+// apiKeyOf returns the API key a request presents: in the X-Api-Key header,
+// or in the apiKey query parameter that Subsonic clients send.
+func apiKeyOf(r *http.Request) string {
+	if k := r.Header.Get("X-Api-Key"); k != "" {
+		return k
+	}
+	return params(r).Get("apiKey")
 }
