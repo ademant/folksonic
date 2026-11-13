@@ -426,13 +426,22 @@ max_duration = "45m"                    # optional, see below
 ```
 
 Folksentia can also run on another machine, see
-[Offline analysis](#offline-analysis). To never run it on this host, leave
-`command` unset; the features stay assigned, and their results come in only
-through `tinysonic analysis import`:
+[Offline analysis](#offline-analysis). Exports work either way. To never run
+it on this host, for example on a server with little memory, leave `command`
+unset; the features stay assigned, and their results come in only through
+`tinysonic analysis import`:
 
 ```toml
 [analysis.tools.folksentia]             # no command: offline only
 ```
+
+An offline-only folksentia is not run after scans, and the library page and
+`/api/library/stats` report it as unavailable with the reason `offline only`.
+Asking for one of its features explicitly (`POST /api/library/bpm`,
+`POST /api/library/analysis` with `features`, `tinysonic analysis recalc
+-features`) is refused (503 on the API) instead of starting an empty job. A
+recalculation of all features skips them. Imported values are served by
+`/api/analysis` like any other.
 
 | Tool | Features | Notes |
 |---|---|---|
@@ -476,7 +485,13 @@ chooses it before folksonic or another service when memory runs out.
   by later scans. A stop on purpose (shutdown, cancelled job) does not count.
   A recalculation starts the track afresh.
 - **Recalculation** reruns the tools regardless of earlier results:
-  `POST /api/library/analysis` or `tinysonic analysis recalc`.
+  `POST /api/library/analysis` or `tinysonic analysis recalc`. For a bulk
+  recalculation on a faster machine, use
+  [offline analysis](#offline-analysis) instead.
+- **Tool version.** Every stored result records the tool version: the tool's
+  own report for ffmpeg, `1` for the built-in estimator, `schema-1` for a
+  local folksentia run (folksentia has no `--version` yet), and the file's
+  `toolVersion` for an import.
 - **Progress.** A running job logs one line every 100 tracks or every 10
   minutes, with done, failed and pending counts, the rate and the track just
   done, e.g. `analysis: 1200 done, 3 failed, 4138 pending, 4.1 songs/min,

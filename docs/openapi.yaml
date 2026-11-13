@@ -47,7 +47,9 @@ tags:
   - name: Analysis
     description: >-
       Per-track audio analysis computed in the background by the tools
-      assigned in the `[analysis]` config table. Advertised as the
+      assigned in the `[analysis]` config table, or computed on another
+      machine and stored with `tinysonic analysis import` (offline analysis;
+      there is no network endpoint for it). Advertised as the
       OpenSubsonic extension `tinysonicAnalysis`; version 2 adds the
       fingerprint object and `/api/duplicates`.
 components:
@@ -1268,11 +1270,12 @@ paths:
                         description: 'Feature → tool, for example `{"bpm": "folksentia", "loudness": "ffmpeg"}`.'
                       tools:
                         type: object
+                        description: 'Tool → whether this server can run it. A folksentia without `command` is offline only: `available` false, reason `offline only: run it with ...`; its values come from `tinysonic analysis import`.'
                         additionalProperties:
                           type: object
                           properties:
                             available: {type: boolean}
-                            reason: {type: string, nullable: true}
+                            reason: {type: string, nullable: true, description: 'Why the tool cannot run here, for example a missing binary or `offline only`.'}
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1304,7 +1307,9 @@ paths:
         with ffmpeg). `missing` analyses songs without a BPM; `all` also
         recalculates. The built-in estimator never changes BPM from file tags;
         an external tool assigned to `bpm` replaces it. Refused while a scan or
-        another job runs; 503 when the tool is not available.
+        another job runs; 503 when the tool is not available, including a
+        folksentia that is offline only (no `command`; its values come from
+        `tinysonic analysis import`).
       requestBody:
         required: true
         content:
@@ -1348,6 +1353,10 @@ paths:
         their files changed. Give either `ids` or `all`. `features` limits the
         run to some features; each must have a tool assigned. Refused while a
         scan or another job runs; 503 when a needed tool is not available.
+        Features of an offline-only folksentia (no `command`) are skipped by a
+        run without `features` and refused with 503 when listed in
+        `features`; recalculate them with `tinysonic analysis export` and
+        `import`.
       requestBody:
         required: true
         content:
@@ -1430,7 +1439,10 @@ paths:
         Any signed-in account. Only reads the database: analysis runs in
         background jobs. Every feature is `null` when unknown or not computed.
         Values come from file tags (the key) or from the assigned tool, whose
-        result replaces the tag's.
+        result replaces the tag's, whether the tool ran on this server or its
+        result was imported from an offline run. Features of an offline-only
+        tool are never reported as `pending`: the server does not compute
+        them, so a 202 would never resolve; they stay `null` until imported.
       parameters:
         - name: id
           in: query

@@ -183,3 +183,33 @@ func TestAnalysisQueuedAfterScan(t *testing.T) {
 		t.Fatalf("stats analysis: %d %v", code, st["analysis"])
 	}
 }
+
+// A feature whose folksentia has no command is offline only (#105): asking
+// for it is refused with 503, not started as an empty job.
+func TestLibraryJobsRefuseOfflineOnlyFeatures(t *testing.T) {
+	s := pagingFixture(t)
+	s.Progress = &scanner.Progress{}
+	s.Analysis = analysis.NewPlan(config.Analysis{
+		BPM: "folksentia", Key: "folksentia", Auto: true,
+		Tools: map[string]config.AnalysisTool{"folksentia": {TimeoutDur: time.Minute}},
+	}, "")
+	for path, body := range map[string]string{
+		"/api/library/analysis": `{"all":true,"features":["key"]}`,
+		"/api/library/bpm":      `{"mode":"all"}`,
+	} {
+		code, out := apiCall(t, s, "admin", "POST", path, body)
+		if code != http.StatusServiceUnavailable || !strings.Contains(out["error"].(string), "offline only") {
+			t.Errorf("%s: %d %v", path, code, out)
+		}
+	}
+	// Nothing will compute these features here, so /api/analysis answers 200
+	// with null values rather than a 202 that never resolves.
+	if code, out := analysisGet(t, s, "admin", "so-1"); code != http.StatusOK || out["key"] != nil {
+		t.Errorf("analysis of an offline-only feature: %d %v", code, out)
+	}
+	code, out := apiCall(t, s, "admin", "GET", "/api/library/stats", "")
+	tools, _ := out["analysis"].(map[string]any)["tools"].(map[string]any)
+	if fs, _ := tools["folksentia"].(map[string]any); code != http.StatusOK || fs["available"] != false || !strings.Contains(fs["reason"].(string), "offline only") {
+		t.Errorf("stats: %d %v", code, tools)
+	}
+}
