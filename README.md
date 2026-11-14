@@ -614,12 +614,32 @@ bad line never stops the import. At the end it prints, for example:
 
 ```
 5453 lines: stored 5440 (5212 changed, 3 failed runs); skipped 2 missing, 11 stale
+changed values: beats 5180, bpm 66, key 4835, loudness 4517
 ```
 
+A result counts as changed when at least one stored value differs; the second
+line counts the changes per feature. `-dry-run` does the same writes inside
+transactions that it rolls back, so it reports exactly what an import would
+change and stores nothing.
+
 Skip reasons: `missing` and `changed` (on the desktop, as folksentia
-reported), `stale` (the file changed on the server since the export),
-`unknown` (no such song), `unassigned`, `duplicate` and `invalid` (with the
-line number on stderr). A running server sees the new values on its next read.
+reported), `stale` (the file changed or is gone on the server since the
+export), `unreadable` (the file exists but cannot be checked, with the error
+on stderr), `unknown` (no such song), `unassigned`, `duplicate` and `invalid`
+(with the line number on stderr). A running server sees the new values on its
+next read.
+
+The import must be able to read the music folder, since it checks each file's
+size and mtime. Once at least 20 files are unreadable and they outnumber the
+readable ones, it stops with an error instead of skipping the whole library.
+Results stored up to then stay; importing the file again is harmless. A systemd install that
+grants that access through `SupplementaryGroups=` does not pass the group on
+to `sudo -u`; run the import with the service's groups instead:
+
+```
+sudo setpriv --reuid=tinysonic --regid=tinysonic --groups=tinysonic,music \
+    env HOME=/var/lib/tinysonic tinysonic analysis import -c /etc/tinysonic/tinysonic.toml results.jsonl
+```
 
 ## Tested clients
 

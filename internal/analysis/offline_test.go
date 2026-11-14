@@ -4,6 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -285,5 +288,173 @@ func TestImportReadsLongLines(t *testing.T) {
 	rep, err := offlinePlan().ImportResults(ctx, pool, resultsFile(t, line(t, f.Jobs[0], result)), ImportOptions{})
 	if err != nil || rep.Stored != 1 || rep.Skipped["invalid"] != 0 {
 		t.Fatalf("long line: %+v %v", rep, err)
+	}
+}
+
+// A dry run reports the same changes as the import it previews, and stores
+// nothing (#119).
+func TestImportDryRunReportsChanges(t *testing.T) {
+	ctx := context.Background()
+	pool, dir := library(t, "same", "new", "other")
+	f := exportAll(t, pool, dir)
+	jobs := map[string]OfflineJob{}
+	for _, j := range f.Jobs {
+		jobs[j.ID] = j
+	}
+	p := offlinePlan()
+	// so-same and so-other already hold this result.
+	first := resultsFile(t, line(t, jobs["so-same"], folksentiaSample), line(t, jobs["so-other"], folksentiaSample))
+	if _, err := p.ImportResults(ctx, pool, first, ImportOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// so-same unchanged, so-new new, so-other with another BPM.
+	path := resultsFile(t,
+		line(t, jobs["so-same"], folksentiaSample),
+		line(t, jobs["so-new"], folksentiaSample),
+		line(t, jobs["so-other"], strings.Replace(folksentiaSample, `"bpm":124.0`, `"bpm":98.0`, 1)),
+	)
+	dry, err := p.ImportResults(ctx, pool, path, ImportOptions{DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dry.Stored != 3 || dry.Changed != 2 || dry.ChangedBy["bpm"] != 2 || dry.ChangedBy["beats"] != 1 {
+		t.Errorf("dry run: %+v", dry)
+	}
+	if bpm, _ := songBPM(t, pool, "so-new"); bpm.Valid {
+		t.Error("a dry run stored a value")
+	}
+	if bpm, _ := songBPM(t, pool, "so-other"); bpm.Float64 != 124 {
+		t.Errorf("a dry run changed a value: %v", bpm.Float64)
+	}
+	if errs := analysisErrors(t, pool, "so-new"); len(errs) != 0 {
+		t.Errorf("a dry run stored analysis rows: %q", errs)
+	}
+
+	real, err := p.ImportResults(ctx, pool, path, ImportOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if real.Stored != dry.Stored || real.Changed != dry.Changed || real.Failed != dry.Failed || !maps.Equal(real.ChangedBy, dry.ChangedBy) {
+		t.Errorf("import %+v, dry run said %+v", real, dry)
+	}
+	if bpm, _ := songBPM(t, pool, "so-other"); bpm.Float64 != 98 {
+		t.Errorf("import: %v", bpm.Float64)
+	}
+
+	// Nothing left to change: a dry run and an import both say so.
+	for _, dryRun := range []bool{true, false} {
+		if rep, err := p.ImportResults(ctx, pool, path, ImportOptions{DryRun: dryRun}); err != nil || rep.Stored != 3 || rep.Changed != 0 || len(rep.ChangedBy) != 0 {
+			t.Errorf("repeat (dry run %v): %+v %v", dryRun, rep, err)
+		}
+	}
+}
+
+// lockAway moves the songs' files into a directory nobody may enter, as
+// /srv/music looks to a process without the music group.
+func lockAway(t *testing.T, pool *sql.DB, dir string, ids ...string) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("root reads every directory")
+	}
+	locked := filepath.Join(dir, "locked")
+	if err := os.Mkdir(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range ids {
+		var p string
+		if err := pool.QueryRow("SELECT path FROM songs WHERE id = ?", id).Scan(&p); err != nil {
+			t.Fatal(err)
+		}
+		np := filepath.Join(locked, filepath.Base(p))
+		if err := os.Rename(p, np); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec("UPDATE songs SET path = ? WHERE id = ?", np, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o755) })
+}
+
+// A file the import cannot stat is "unreadable", not "stale" (#120).
+func TestImportReportsUnreadableFiles(t *testing.T) {
+	ctx := context.Background()
+	pool, dir := library(t, "locked", "good", "gone", "changed")
+	f := exportAll(t, pool, dir)
+	jobs := map[string]OfflineJob{}
+	for _, j := range f.Jobs {
+		jobs[j.ID] = j
+	}
+	if err := os.Remove(filepath.Join(dir, "gone.flac")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "changed.flac"), []byte("longer audio"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lockAway(t, pool, dir, "so-locked")
+
+	path := resultsFile(t,
+		line(t, jobs["so-locked"], folksentiaSample),
+		line(t, jobs["so-good"], folksentiaSample),
+		line(t, jobs["so-gone"], folksentiaSample),
+		line(t, jobs["so-changed"], folksentiaSample),
+	)
+	rep, err := offlinePlan().ImportResults(ctx, pool, path, ImportOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Stored != 1 || rep.Skipped["unreadable"] != 1 || rep.Skipped["stale"] != 2 {
+		t.Errorf("report: %+v", rep)
+	}
+	if len(rep.Problems) != 1 || !strings.Contains(rep.Problems[0], "line 1:") || !strings.Contains(rep.Problems[0], "permission denied") {
+		t.Errorf("problems: %q", rep.Problems)
+	}
+}
+
+// When most files cannot be read, the import stops instead of skipping the
+// whole library (#120). As on prod, a few readable files at the top of the
+// music folder come first.
+func TestImportStopsWhenTheMusicFolderIsUnreadable(t *testing.T) {
+	ctx := context.Background()
+	const top = 5
+	names := make([]string, top+2*unreadableLimit)
+	for i := range names {
+		names[i] = fmt.Sprintf("t%02d", i)
+	}
+	pool, dir := library(t, names...)
+	f := exportAll(t, pool, dir)
+	byID := map[string]OfflineJob{}
+	for _, j := range f.Jobs {
+		byID[j.ID] = j
+	}
+	lines := make([]string, len(names))
+	for i, n := range names {
+		lines[i] = line(t, byID["so-"+n], folksentiaSample)
+	}
+	var locked []string
+	for _, n := range names[top:] {
+		locked = append(locked, "so-"+n)
+	}
+	lockAway(t, pool, dir, locked...)
+
+	// Fewer unreadable files than the limit are only reported.
+	if rep, err := offlinePlan().ImportResults(ctx, pool, resultsFile(t, lines[:top+unreadableLimit-1]...), ImportOptions{DryRun: true}); err != nil || rep.Skipped["unreadable"] != unreadableLimit-1 {
+		t.Errorf("a few unreadable files: %v (%+v)", err, rep)
+	}
+
+	rep, err := offlinePlan().ImportResults(ctx, pool, resultsFile(t, lines...), ImportOptions{DryRun: true})
+	if !errors.Is(err, ErrMusicUnreadable) {
+		t.Fatalf("err %v, report %+v", err, rep)
+	}
+	if rep.Stored != top || rep.Skipped["unreadable"] != unreadableLimit {
+		t.Errorf("dry run: %+v", rep)
+	}
+	var n int
+	if err := pool.QueryRow("SELECT COUNT(*) FROM analysis").Scan(&n); err != nil || n != 0 {
+		t.Errorf("a dry run stored analysis rows: %d %v", n, err)
 	}
 }
