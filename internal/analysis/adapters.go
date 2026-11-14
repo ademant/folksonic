@@ -135,6 +135,10 @@ func folksentiaArgs(features []string, path string) []string {
 	if slices.Contains(features, "fingerprint") {
 		args = append(args, "--fingerprint")
 	}
+	if slices.Contains(features, "onsets") {
+		args = append(args, "--onsets")
+	}
+	// rhythm and spectral are in every output; they need no option.
 	// "--" so a file name starting with "-" is not read as an option.
 	return append(args, "--", path)
 }
@@ -173,7 +177,25 @@ type folksentiaOutput struct {
 	Beats           []float64    `json:"beats"`
 	DownbeatIndexes []int        `json:"downbeatIndexes"`
 	Fingerprint     *Fingerprint `json:"fingerprint"`
+	Onsets          *struct {
+		Schema    int     `json:"schema"`
+		TimesMs   []int64 `json:"timesMs"`
+		Strengths []int   `json:"strengths"`
+	} `json:"onsets"`
+	Rhythm *struct {
+		Schema     int      `json:"schema"`
+		PulseSec   *float64 `json:"pulseSec"`
+		BarPulses  *int     `json:"barPulses"`
+		BarsPerMin *float64 `json:"barsPerMin"`
+		BarScore   *float64 `json:"barScore"`
+	} `json:"rhythm"`
+	SpectralComplexity *float64 `json:"spectral_complexity"`
+	SpectralEntropy    *float64 `json:"spectral_entropy"`
 }
+
+// folksentiaPartSchema is the schema of folksentia's onsets and rhythm
+// objects that is understood.
+const folksentiaPartSchema = 1
 
 func parseFolksentia(out []byte, features []string) (Values, error) {
 	var o folksentiaOutput
@@ -250,12 +272,61 @@ func parseFolksentia(out []byte, features []string) (Values, error) {
 				b.DownbeatIndexes = o.DownbeatIndexes
 				v[f] = b
 			}
+		case "onsets":
+			if on := o.Onsets; on != nil {
+				if on.Schema != folksentiaPartSchema {
+					return nil, fmt.Errorf("folksentia: onsets schema %d, expected %d", on.Schema, folksentiaPartSchema)
+				}
+				if len(on.TimesMs) != len(on.Strengths) {
+					return nil, fmt.Errorf("folksentia: %d onset times but %d strengths", len(on.TimesMs), len(on.Strengths))
+				}
+				for i, t := range on.TimesMs {
+					if t < 0 || (i > 0 && t < on.TimesMs[i-1]) {
+						return nil, fmt.Errorf("folksentia: onset time %d out of order", t)
+					}
+					if s := on.Strengths[i]; s < 0 || s > 255 {
+						return nil, fmt.Errorf("folksentia: onset strength %d out of range", s)
+					}
+				}
+				// [] (no onset passed the threshold) is a known value, not null.
+				v[f] = &Onsets{TimesMs: nonNil(on.TimesMs), Strengths: nonNil(on.Strengths)}
+			}
+		case "rhythm":
+			if r := o.Rhythm; r != nil {
+				if r.Schema != folksentiaPartSchema {
+					return nil, fmt.Errorf("folksentia: rhythm schema %d, expected %d", r.Schema, folksentiaPartSchema)
+				}
+				if negative(r.PulseSec) || negative(r.BarsPerMin) || (r.BarPulses != nil && *r.BarPulses < 1) {
+					return nil, fmt.Errorf("folksentia: impossible rhythm")
+				}
+				if r.PulseSec != nil || r.BarsPerMin != nil {
+					score := r.BarScore
+					if score != nil {
+						score = ptr(clamp01(*score))
+					}
+					v[f] = &Rhythm{PulseSec: r.PulseSec, BarPulses: r.BarPulses, BarsPerMin: r.BarsPerMin, BarScore: score}
+				}
+			}
+		case "spectral":
+			// A folksentia older than ademant/folksentia#37 has neither field.
+			if o.SpectralComplexity != nil || o.SpectralEntropy != nil {
+				v[f] = &Spectral{Complexity: o.SpectralComplexity, Entropy: o.SpectralEntropy}
+			}
 		}
 	}
 	return v, nil
 }
 
 func clamp01(f float64) float64 { return math.Max(0, math.Min(1, f)) }
+
+func negative(f *float64) bool { return f != nil && *f <= 0 }
+
+func nonNil[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
+}
 
 func roundMs(f *float64) *int64 {
 	if f == nil {

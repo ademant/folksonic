@@ -51,7 +51,8 @@ tags:
       machine and stored with `tinysonic analysis import` (offline analysis;
       there is no network endpoint for it). Advertised as the
       OpenSubsonic extension `tinysonicAnalysis`; version 2 adds the
-      fingerprint object and `/api/duplicates`.
+      fingerprint object and `/api/duplicates`, version 3 the onsets,
+      rhythm and spectral objects.
 components:
   securitySchemes:
     bearerAuth:
@@ -161,6 +162,35 @@ components:
             version: {type: integer, description: 'Chromaprint algorithm version, 2 for the fpcalc/AcoustID default.'}
             durationSec: {type: number, description: Seconds of audio fingerprinted.}
             value: {type: string, description: 'Compressed fingerprint, base64 as fpcalc prints it.'}
+        onsets:
+          type: object
+          nullable: true
+          description: >-
+            Note starts, for time-stretching players (extension version 3).
+            Both arrays have the same length; empty when no onset passed
+            folksentia's threshold.
+          properties:
+            timesMs: {type: array, items: {type: integer, minimum: 0}, description: Ascending.}
+            strengths: {type: array, items: {type: integer, minimum: 0, maximum: 255}, description: Relative to the track's strongest onset (255).}
+        rhythm:
+          type: object
+          nullable: true
+          description: >-
+            The music's own cycle as folksentia measures it (experimental,
+            extension version 3). `null` for silence, tracks shorter than
+            10 s, or when no cycle can be measured.
+          properties:
+            pulseSec: {type: number, nullable: true, description: Seconds per pulse.}
+            barPulses: {type: integer, nullable: true, minimum: 1, description: Pulses per bar.}
+            barsPerMin: {type: number, nullable: true, description: Bars per minute, what dancers count.}
+            barScore: {type: number, nullable: true, minimum: 0, maximum: 1, description: How clearly the bar recurs.}
+        spectral:
+          type: object
+          nullable: true
+          description: How many frequencies the sound uses (extension version 3).
+          properties:
+            complexity: {type: number, nullable: true, description: 'Median spectral peaks per frame (2 for a two-partial tone, 59 for white noise; folk dance tracks read about 9 to 20).'}
+            entropy: {type: number, nullable: true, description: 'Median spectral entropy in bits: low for a few tones, high for noise or percussion (at most 10).'}
         pending:
           type: array
           items: {type: string}
@@ -1368,7 +1398,7 @@ paths:
                 all: {type: boolean}
                 features:
                   type: array
-                  items: {type: string, enum: [bpm, beats, key, loudness, silence, waveform, fingerprint]}
+                  items: {type: string, enum: [bpm, beats, key, loudness, silence, waveform, fingerprint, onsets, rhythm, spectral]}
       responses:
         '202':
           description: Job started.

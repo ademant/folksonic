@@ -67,7 +67,7 @@ func TestAPIDuplicates(t *testing.T) {
 		t.Fatalf("analysis fingerprint: %v", body["fingerprint"])
 	}
 	ext := call(t, s, "GET", "getOpenSubsonicExtensions", url.Values{}, nil).body
-	if !strings.Contains(ext, `{"name":"tinysonicAnalysis","versions":[1,2]}`) {
+	if !strings.Contains(ext, `{"name":"tinysonicAnalysis","versions":[1,2,3]}`) {
 		t.Fatalf("extension: %s", ext)
 	}
 }

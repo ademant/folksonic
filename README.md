@@ -26,7 +26,8 @@ Impressum page is [goldmark](https://github.com/yuin/goldmark), also pure Go.
   [ffmpeg](https://ffmpeg.org/) is an optional runtime dependency for BPM
   calculation and loudness analysis, and
   [folksentia](https://github.com/ademant/folksentia) is an optional analysis
-  tool (beats, key, loudness, silence, waveform, fingerprint). See
+  tool (beats, key, loudness, silence, waveform, fingerprint, onsets, rhythm,
+  spectral). See
   [Track analysis](#track-analysis).
 - Built on Go's `net/http` with [ncruces/go-sqlite3](https://pkg.go.dev/github.com/ncruces/go-sqlite3)
   (SQLite compiled to WebAssembly, no cgo, FTS5 enabled).
@@ -132,7 +133,7 @@ Configuration is checked at startup:
 | `allow_registration` | Enables `POST /api/register` without an invitation code. Default `false`. Invitation codes work either way. |
 | `song_tags`          | File tags exposed on songs, such as `["DANCE", "USE"]`. Only these names are read. Each song then carries `tinysonicTags`, and the `tinysonicSongTags` extension is advertised. Default empty. |
 | `ffmpeg_path`        | ffmpeg binary for BPM calculation and the `ffmpeg` analysis tool. Default: `ffmpeg` on `PATH`. Without ffmpeg, BPM calculation is unavailable and everything else works. |
-| `[analysis]` table   | Assigns analysis features (`bpm`, `beats`, `key`, `loudness`, `silence`, `waveform`, `fingerprint`) to tools, with `[analysis.tools.<name>]` entries (`command`, `timeout`). Without the table, only BPM is calculated, by hand from the library page. See [Track analysis](#track-analysis). |
+| `[analysis]` table   | Assigns analysis features (`bpm`, `beats`, `key`, `loudness`, `silence`, `waveform`, `fingerprint`, `onsets`, `rhythm`, `spectral`) to tools, with `[analysis.tools.<name>]` entries (`command`, `timeout`). Without the table, only BPM is calculated, by hand from the library page. See [Track analysis](#track-analysis). |
 | `ignored_articles`   | Leading words skipped when indexing and sorting artists in `getArtists`/`getIndexes`, separated by spaces, and announced as `ignoredArticles`. An article ending in `'` (`L'`) matches without a following space. Default `"The El La Las Le Les Los Il L' An A Die Das Ein"`; `""` disables it. |
 | `log_level`          | Minimum level written to the log: `debug`, `info` (default), `warn` or `error`. `--log-level` overrides it. See [Logging](#logging). |
 | `max_streams`        | Audio streams (`stream`, `download`) served at once, across all accounts. Default 64; `0` disables the cap. A stream over the cap gets HTTP 503 with `Retry-After`. |
@@ -375,7 +376,9 @@ starting point. Each one stores a confidence (0–1).
 `GET /api/analysis?id=<song id>` (any signed-in account, extension
 `tinysonicAnalysis`) returns the stored analysis of a track: beat grid and
 downbeats, BPM with confidence, key and mode, integrated loudness and true
-peak, lead and tail silence, waveform peaks and a Chromaprint fingerprint.
+peak, lead and tail silence, waveform peaks, a Chromaprint fingerprint, and
+for players that slow music down: note onsets, the measured pulse and bar,
+and how many frequencies the sound uses (extension version 3).
 Every field is `null` when unknown. The schema is in [`docs/openapi.yaml`](docs/openapi.yaml):
 
 ```json
@@ -387,9 +390,26 @@ Every field is `null` when unknown. The schema is in [`docs/openapi.yaml`](docs/
   "key": {"tonic": "A", "mode": "minor", "confidence": 0.81},
   "loudness": {"integratedLufs": -9.4, "truePeakDbtp": -0.8},
   "silence": {"leadMs": 350, "tailMs": 1200},
-  "fingerprint": {"algorithm": "chromaprint", "version": 2, "durationSec": 120, "value": "AQAD…"}
+  "fingerprint": {"algorithm": "chromaprint", "version": 2, "durationSec": 120, "value": "AQAD…"},
+  "onsets": {"timesMs": [512, 768, 1023], "strengths": [255, 96, 140]},
+  "rhythm": {"pulseSec": 0.527, "barPulses": 3, "barsPerMin": 38, "barScore": 0.34},
+  "spectral": {"complexity": 12.5, "entropy": 7.31}
 }
 ```
+
+- `onsets`: note starts in ms, ascending, with a strength 0–255 relative to
+  the track's strongest onset, so a time-stretcher can keep attacks crisp
+  and pick only strong ones. `[]` when no onset passed the threshold. Expect
+  a few per second, roughly 10–15 KB of JSON for a 5-minute track; the
+  endpoint is per song, so playlists do not grow.
+- `rhythm`: folksentia's measured cycle (experimental): seconds per pulse,
+  pulses per bar, bars per minute (what dancers count, often more stable
+  than `bpm` on folk dances) and how clearly the bar recurs (0–1). `null`
+  for tracks shorter than 10 s or without a measurable cycle.
+- `spectral`: the median number of spectral peaks per frame (`complexity`)
+  and the median spectral entropy in bits (`entropy`): low for a few
+  sustained tones, high for noise and percussion. A player can choose stretch
+  settings from them, longer blocks for legato or drone-heavy tracks.
 
 The endpoint only reads the database. 404 means no such song. 202 with
 `Retry-After` means automatic analysis is on and some assigned features have
@@ -418,6 +438,9 @@ loudness = "ffmpeg"       # or "folksentia"
 silence  = "folksentia"
 waveform = "folksentia"
 fingerprint = "folksentia" # Chromaprint, for /api/duplicates
+onsets   = "folksentia"    # needs a folksentia with --onsets
+rhythm   = "folksentia"
+spectral = "folksentia"
 
 [analysis.tools.folksentia]
 command = "/usr/local/bin/folksentia"   # absolute path, never looked up on PATH
@@ -448,7 +471,7 @@ recalculation of all features skips them. Imported values are served by
 |---|---|---|
 | `builtin` | `bpm` | The estimator described above. Never replaces a BPM from tags |
 | `ffmpeg` | `loudness` | ffmpeg's `ebur128` filter. Uses `ffmpeg_path`; `[analysis.tools.ffmpeg]` may set `command` and `timeout` |
-| `folksentia` | `bpm`, `beats`, `key`, `loudness`, `silence`, `waveform`, `fingerprint` | [folksentia](https://github.com/ademant/folksentia) output schema 1. One call per track for all its features. `fingerprint` needs folksentia built with libchromaprint |
+| `folksentia` | `bpm`, `beats`, `key`, `loudness`, `silence`, `waveform`, `fingerprint`, `onsets`, `rhythm`, `spectral` | [folksentia](https://github.com/ademant/folksentia) output schema 1. One call per track for all its features. `fingerprint` needs folksentia built with libchromaprint; `onsets` a folksentia with `--onsets` (an older one fails every track with a usage error); `spectral` a folksentia with `spectral_complexity` (an older one leaves it unknown). `rhythm` and `spectral` need no option, so assigning them costs no extra analysis time |
 
 `[analysis.tools.<name>]` accepts two limits for tools run as child processes
 (`folksentia`, and `ffmpeg` for loudness):
@@ -593,7 +616,7 @@ folksentia itself. Paths in `jobs.json` are relative to the music folder and
 ```
 
 `options` are the folksentia flags a local run would pass for these features
-(`--downbeats`, `--waveform=150`, `--fingerprint`).
+(`--downbeats`, `--waveform=150`, `--fingerprint`, `--onsets`).
 
 **`results.jsonl`**, one JSON object per line:
 

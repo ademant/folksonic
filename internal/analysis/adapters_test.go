@@ -77,6 +77,67 @@ func TestFolksentiaArgs(t *testing.T) {
 	if got := folksentiaArgs([]string{"key"}, "/a.mp3"); !reflect.DeepEqual(got, []string{"--", "/a.mp3"}) {
 		t.Fatalf("%q", got)
 	}
+	// rhythm and spectral are always in the output; onsets is opt-in.
+	if got := folksentiaArgs([]string{"onsets", "rhythm", "spectral"}, "/a.mp3"); !reflect.DeepEqual(got, []string{"--onsets", "--", "/a.mp3"}) {
+		t.Fatalf("%q", got)
+	}
+}
+
+// folksentiaPlayerSample is folksentia output with --onsets
+// (ademant/folksentia#42), the rhythm object and the spectral descriptors.
+const folksentiaPlayerSample = `{"schema":1,"file":"t.flac","duration":200.5,"bpm":124.0,
+ "spectral_complexity":12.5,"spectral_entropy":7.31,
+ "onsets":{"schema":1,"timesMs":[512,768,1023],"strengths":[255,96,140]},
+ "rhythm":{"schema":1,"pulseSec":0.527,"barPulses":3,"barSec":1.581,"barsPerMin":38,"barScore":0.34,
+   "alternatives":[{"pulses":6,"sec":3.161,"score":0.23}],"accents":{"energy":[1,0.57,0.41],"bass":[0.73,1,0.87]},
+   "tempoCurve":[{"startSec":0.0,"barsPerMin":38}]}}`
+
+func TestParseFolksentiaOnsetsRhythmSpectral(t *testing.T) {
+	features := []string{"onsets", "rhythm", "spectral"}
+	v, err := parseFolksentia([]byte(folksentiaPlayerSample), features)
+	if err != nil {
+		t.Fatal(err)
+	}
+	js, _ := json.Marshal(v)
+	want := `{"onsets":{"timesMs":[512,768,1023],"strengths":[255,96,140]},` +
+		`"rhythm":{"pulseSec":0.527,"barPulses":3,"barsPerMin":38,"barScore":0.34},` +
+		`"spectral":{"complexity":12.5,"entropy":7.31}}`
+	if string(js) != want {
+		t.Fatalf("got  %s\nwant %s", js, want)
+	}
+
+	// No onset above the threshold is known ([]); null, a missing rhythm
+	// and an older folksentia without spectral fields are unknown.
+	v, err = parseFolksentia([]byte(`{"schema":1,"onsets":{"schema":1,"timesMs":[],"strengths":[]},"rhythm":null}`), features)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if js, _ := json.Marshal(v); string(js) != `{"onsets":{"timesMs":[],"strengths":[]}}` {
+		t.Fatalf("empty onsets: %s", js)
+	}
+	v, err = parseFolksentia([]byte(`{"schema":1,"onsets":null,"spectral_complexity":null,"spectral_entropy":null}`), features)
+	if err != nil || len(v) != 0 {
+		t.Fatalf("nulls: %v %v", v, err)
+	}
+	v, err = parseFolksentia([]byte(folksentiaSample), features)
+	if err != nil || len(v) != 0 {
+		t.Fatalf("output without these fields: %v %v", v, err)
+	}
+
+	for _, c := range []struct{ out, want string }{
+		{`{"schema":1,"onsets":{"schema":2,"timesMs":[],"strengths":[]}}`, "onsets schema 2"},
+		{`{"schema":1,"onsets":{"schema":1,"timesMs":[1,2],"strengths":[3]}}`, "2 onset times but 1 strengths"},
+		{`{"schema":1,"onsets":{"schema":1,"timesMs":[5,4],"strengths":[1,1]}}`, "out of order"},
+		{`{"schema":1,"onsets":{"schema":1,"timesMs":[-1],"strengths":[1]}}`, "out of order"},
+		{`{"schema":1,"onsets":{"schema":1,"timesMs":[1],"strengths":[256]}}`, "out of range"},
+		{`{"schema":1,"rhythm":{"schema":2,"barsPerMin":38}}`, "rhythm schema 2"},
+		{`{"schema":1,"rhythm":{"schema":1,"pulseSec":0.5,"barPulses":0,"barsPerMin":38}}`, "impossible rhythm"},
+		{`{"schema":1,"rhythm":{"schema":1,"pulseSec":-0.5,"barPulses":2,"barsPerMin":38}}`, "impossible rhythm"},
+	} {
+		if _, err := parseFolksentia([]byte(c.out), features); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: error %v, want %q", c.out, err, c.want)
+		}
+	}
 }
 
 func TestParseEBUR128(t *testing.T) {

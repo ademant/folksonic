@@ -10,7 +10,7 @@ import (
 )
 
 // AnalysisFeatures are the per-track analysis features, in output order.
-var AnalysisFeatures = []string{"bpm", "beats", "key", "loudness", "silence", "waveform", "fingerprint"}
+var AnalysisFeatures = []string{"bpm", "beats", "key", "loudness", "silence", "waveform", "fingerprint", "onsets", "rhythm", "spectral"}
 
 // Built-in analysis tools, which need no [analysis.tools] entry. "builtin" is
 // the pure-Go BPM estimator (decoding through ffmpeg_path); "ffmpeg" is
@@ -36,6 +36,13 @@ type Analysis struct {
 	Silence     string `toml:"silence"`
 	Waveform    string `toml:"waveform"`
 	Fingerprint string `toml:"fingerprint"`
+	// Onsets are note starts with their strength, for time-stretching
+	// players (#121).
+	Onsets string `toml:"onsets"`
+	// Rhythm is the measured pulse and bar (bars per minute); Spectral is
+	// how many frequencies the sound uses (#121).
+	Rhythm   string `toml:"rhythm"`
+	Spectral string `toml:"spectral"`
 	// Tools configures the external tools by name. The name selects the
 	// adapter (how features map to arguments and how output is read), so only
 	// known names are accepted.
@@ -82,13 +89,13 @@ var ExternalAnalysisTools = []string{"folksentia", ToolFFmpeg}
 var ToolFeatures = map[string][]string{
 	ToolBuiltin:  {"bpm"},
 	ToolFFmpeg:   {"loudness"},
-	"folksentia": {"bpm", "beats", "key", "loudness", "silence", "waveform", "fingerprint"},
+	"folksentia": {"bpm", "beats", "key", "loudness", "silence", "waveform", "fingerprint", "onsets", "rhythm", "spectral"},
 }
 
 // Assignments returns feature → tool for every assigned feature.
 func (a Analysis) Assignments() map[string]string {
 	m := map[string]string{}
-	for i, t := range []string{a.BPM, a.Beats, a.Key, a.Loudness, a.Silence, a.Waveform, a.Fingerprint} {
+	for i, t := range []string{a.BPM, a.Beats, a.Key, a.Loudness, a.Silence, a.Waveform, a.Fingerprint, a.Onsets, a.Rhythm, a.Spectral} {
 		if t != "" {
 			m[AnalysisFeatures[i]] = t
 		}

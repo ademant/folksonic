@@ -57,6 +57,9 @@ func TestAnalysisRejected(t *testing.T) {
 		"[analysis]\nkey = \"folksentia\"":                                  "[analysis.tools.folksentia] is not configured",
 		"[analysis]\nfingerprint = \"ffmpeg\"":                              "ffmpeg does not provide fingerprint",
 		"[analysis]\nkey = \"ffmpeg\"":                                      "ffmpeg does not provide key",
+		"[analysis]\nonsets = \"builtin\"":                                  "builtin does not provide onsets",
+		"[analysis]\nrhythm = \"ffmpeg\"":                                   "ffmpeg does not provide rhythm",
+		"[analysis]\nspectral = \"ffmpeg\"":                                 "ffmpeg does not provide spectral",
 		"[analysis.tools.folksentia]\ncommand = \"folksentia\"":             "absolute path",
 		"[analysis.tools.folksentia]\ncommand = \"/x\"\ntimeout = \"soon\"": "positive duration",
 		"[analysis.tools.essentia]\ncommand = \"/x\"":                       "unknown tool",
@@ -65,5 +68,25 @@ func TestAnalysisRejected(t *testing.T) {
 		if _, err := Load(writeSiteConfig(t, "music_dirs = [\"music\"]\n"+cfg)); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%q: error %v, want %q", cfg, err, want)
 		}
+	}
+}
+
+// onsets, rhythm and spectral are folksentia features like beats (#121).
+func TestAnalysisOnsetsRhythmSpectral(t *testing.T) {
+	c, err := Load(writeSiteConfig(t, `music_dirs = ["music"]
+[analysis]
+onsets   = "folksentia"
+rhythm   = "folksentia"
+spectral = "folksentia"
+
+[analysis.tools.folksentia]
+command = "/usr/local/bin/folksentia"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := c.Analysis.Assignments()
+	if len(m) != 3 || m["onsets"] != "folksentia" || m["rhythm"] != "folksentia" || m["spectral"] != "folksentia" {
+		t.Fatalf("assignments %v", m)
 	}
 }

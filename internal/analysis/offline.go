@@ -66,6 +66,7 @@ type FolksentiaOptions struct {
 	Downbeats   bool `json:"downbeats,omitempty"`
 	Waveform    int  `json:"waveform,omitempty"`
 	Fingerprint bool `json:"fingerprint,omitempty"`
+	Onsets      bool `json:"onsets,omitempty"`
 }
 
 // OfflineJob is one track to analyse. Path is relative to the music folder
@@ -144,6 +145,7 @@ func folksentiaOptions(features []string) FolksentiaOptions {
 		o.Waveform = folksentiaBins
 	}
 	o.Fingerprint = slices.Contains(features, "fingerprint")
+	o.Onsets = slices.Contains(features, "onsets")
 	return o
 }
 
