@@ -240,5 +240,13 @@ func runAnalysisImport(args []string) error {
 		fmt.Printf("; skipped %s", strings.Join(parts, ", "))
 	}
 	fmt.Println()
+	if len(rep.ChangedBy) > 0 {
+		features := slices.Sorted(maps.Keys(rep.ChangedBy))
+		parts := make([]string, len(features))
+		for i, f := range features {
+			parts[i] = fmt.Sprintf("%s %d", f, rep.ChangedBy[f])
+		}
+		fmt.Printf("changed values: %s\n", strings.Join(parts, ", "))
+	}
 	return err
 }

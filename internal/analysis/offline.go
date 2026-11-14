@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -173,7 +174,8 @@ type resultLine struct {
 
 // ImportOptions control ImportResults.
 type ImportOptions struct {
-	// DryRun checks every line but stores nothing.
+	// DryRun checks every line and works out what would change, inside
+	// transactions it rolls back, so it stores nothing (#119).
 	DryRun bool
 	// SizeOnly accepts a result when the file size matches, whatever the
 	// mtime (for copies that did not keep modification times).
@@ -186,9 +188,12 @@ type ImportReport struct {
 	// Stored results; Changed of them changed a value, Failed of them record a
 	// failed run (an error from folksentia, or an impossible value).
 	Stored, Changed, Failed int
+	// ChangedBy counts, per feature, the results that changed its value.
+	ChangedBy map[string]int
 	// Skipped lines, by reason: "missing" and "changed" (on the desktop, as
-	// folksentia reported), "stale" (the file changed on the server since the
-	// export), "unknown" (no such song), "unassigned" (none of the job's
+	// folksentia reported), "stale" (the file changed or is gone on the server
+	// since the export), "unreadable" (the file cannot be checked, usually a
+	// missing permission, #120), "unknown" (no such song), "unassigned" (none of the job's
 	// features is assigned to folksentia any more), "duplicate" (a later line
 	// has the same song), "invalid" (not a result line).
 	Skipped map[string]int
@@ -197,6 +202,17 @@ type ImportReport struct {
 }
 
 const maxProblems = 20
+
+// unreadableLimit is how many files may fail to stat before the import gives
+// up, once they also outnumber the files it could check (#120). A few
+// unreadable files are reported; a library that is mostly unreadable means
+// the import lacks access to the music folder.
+const unreadableLimit = 20
+
+// ErrMusicUnreadable is returned when most of the results' files cannot be
+// checked: the import runs without read access to the music folder.
+var ErrMusicUnreadable = errors.New("cannot read the music folder: run the import with the server's user and groups " +
+	"(on a systemd install with SupplementaryGroups, e.g. setpriv --reuid=… --regid=… --groups=…,music)")
 
 // maxLine is the longest result line accepted: a long track's beats,
 // waveform and fingerprint stay far below it.
@@ -250,9 +266,10 @@ func readLines(path string, fn func(n int, line []byte) error) error {
 // ImportResults reads folksentia's result lines from path and stores each
 // result exactly like a local run, after checking that the song still has
 // the file the job was exported with. A bad line is counted and skipped; only
-// an unreadable file or a database error stops the import.
+// an unreadable results file, a database error, or a music folder it cannot
+// read (ErrMusicUnreadable) stops the import.
 func (p *Plan) ImportResults(ctx context.Context, db *sql.DB, path string, opt ImportOptions) (ImportReport, error) {
-	rep := ImportReport{Skipped: map[string]int{}}
+	rep := ImportReport{Skipped: map[string]int{}, ChangedBy: map[string]int{}}
 	g := p.group(OfflineTool)
 	if g == nil {
 		return rep, ErrNoOfflineTool
@@ -276,6 +293,9 @@ func (p *Plan) ImportResults(ctx context.Context, db *sql.DB, path string, opt I
 		return rep, err
 	}
 
+	// readable and unreadable count the files that could and could not be
+	// checked against their job.
+	readable, unreadable := 0, 0
 	err = readLines(path, func(n int, line []byte) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -317,6 +337,18 @@ func (p *Plan) ImportResults(ctx context.Context, db *sql.DB, path string, opt I
 			return err
 		}
 		info, err := os.Stat(songPath)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			unreadable++
+			rep.skip("unreadable")
+			if len(rep.Problems) < maxProblems {
+				rep.Problems = append(rep.Problems, fmt.Sprintf("line %d: %v", n, err))
+			}
+			if unreadable >= unreadableLimit && unreadable > readable {
+				return ErrMusicUnreadable
+			}
+			return nil
+		}
+		readable++
 		if err != nil || info.Size() != l.Job.Size || (!opt.SizeOnly && info.ModTime().UnixMilli() != l.Job.MtimeMs) {
 			rep.skip("stale")
 			return nil
@@ -344,14 +376,11 @@ func (p *Plan) ImportResults(ctx context.Context, db *sql.DB, path string, opt I
 			rep.Failed++
 		}
 		rep.Stored++
-		if opt.DryRun {
-			return nil
-		}
 		version := l.ToolVersion
 		if version == "" {
 			version = g.adapter.version(ctx, "")
 		}
-		changed, err := store(ctx, db, l.Job.ID, Run{Group: g, Features: features}, shortMessage(version), vals, runErr, stampOf(info))
+		changed, err := importStore(ctx, db, opt.DryRun, l.Job.ID, Run{Group: g, Features: features}, shortMessage(version), vals, runErr, stampOf(info))
 		if errors.Is(err, errSongGone) {
 			rep.Stored--
 			rep.skip("unknown")
@@ -360,12 +389,30 @@ func (p *Plan) ImportResults(ctx context.Context, db *sql.DB, path string, opt I
 		if err != nil {
 			return err
 		}
-		if changed {
+		if len(changed) > 0 {
 			rep.Changed++
+		}
+		for _, f := range changed {
+			rep.ChangedBy[f]++
 		}
 		return nil
 	})
 	return rep, err
+}
+
+// importStore stores one imported result like store, or for a dry run does
+// the same writes and rolls them back, so both report the same changes.
+func importStore(ctx context.Context, db *sql.DB, dryRun bool, songID string, r Run, version string, vals Values, runErr error, stamp *Stamp) ([]string, error) {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	changed, err := storeTx(ctx, tx, songID, r, version, vals, runErr, stamp)
+	if err != nil || dryRun {
+		return changed, err
+	}
+	return changed, tx.Commit()
 }
 
 // checkRanges refuses values no track can have.

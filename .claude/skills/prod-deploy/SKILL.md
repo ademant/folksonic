@@ -62,6 +62,22 @@ Never restart Apache for a tinysonic deploy; if the vhost ever needs editing, ba
 
 8. **Report** what was deployed (commit), downtime, the backup directory, and anything not verified. Old `backup-*` directories are kept; mention them occasionally so the user can prune.
 
+## Importing offline analysis results
+
+`tinysonic analysis import` checks every result against the file in `/srv/music`, and the service reads that folder only through `SupplementaryGroups=music` in its drop-in. `sudo -u tinysonic` does **not** pass that group on: the import then reports the files in the artist folders as `unreadable` and stops within the first few dozen lines (#120; before that fix, it silently skipped them as `stale`). Run it with the service's groups, back up first, and dry-run before storing:
+
+```bash
+cd /tmp
+ts() { sudo setpriv --reuid=tinysonic --regid=tinysonic --groups=tinysonic,music env HOME=/var/lib/tinysonic /usr/local/bin/tinysonic "$@"; }
+ts analysis import -c /etc/tinysonic/tinysonic.toml -dry-run <results.jsonl>   # same counts as the real import (#119)
+B=/var/lib/tinysonic/backup-$(date -u +%Y%m%d-%H%M%S)-pre-import
+sudo systemctl stop tinysonic && sudo install -d -o tinysonic -g tinysonic -m 0700 $B && sudo sh -c "cp -p /var/lib/tinysonic/tinysonic.db* $B/"
+ts analysis import -c /etc/tinysonic/tinysonic.toml <results.jsonl>
+sudo systemctl start tinysonic
+```
+
+The results file must be readable by `tinysonic` (e.g. in `/srv/music`, group `music`). Report the stored, changed and skipped counts, the `changed values:` line, and the backup directory. Stopping the service keeps the backup consistent; the import itself also works against a running server.
+
 ## Rolling back by hand
 
 Only binary and database together are a consistent rollback:

@@ -183,12 +183,23 @@ func store(ctx context.Context, db *sql.DB, songID string, r Run, version string
 		return false, err
 	}
 	defer tx.Rollback()
-	var n int
-	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM songs WHERE id = ?", songID).Scan(&n); err != nil {
+	features, err := storeTx(ctx, tx, songID, r, version, vals, runErr, stamp)
+	if err != nil {
 		return false, err
 	}
+	return len(features) > 0, tx.Commit()
+}
+
+// storeTx does store's writes in tx, which the caller commits or (for an
+// import's dry run) rolls back. It returns the features whose stored value
+// changed.
+func storeTx(ctx context.Context, tx *sql.Tx, songID string, r Run, version string, vals Values, runErr error, stamp *Stamp) (changed []string, err error) {
+	var n int
+	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM songs WHERE id = ?", songID).Scan(&n); err != nil {
+		return nil, err
+	}
 	if n == 0 {
-		return false, errSongGone
+		return nil, errSongGone
 	}
 	now := time.Now().UnixMilli()
 	var errText sql.NullString
@@ -197,7 +208,7 @@ func store(ctx context.Context, db *sql.DB, songID string, r Run, version string
 	}
 	// The run ended with a result, so it no longer counts as interrupted.
 	if _, err := tx.ExecContext(ctx, "DELETE FROM analysis_attempts WHERE song_id = ? AND tool = ?", songID, r.Group.Tool); err != nil {
-		return false, err
+		return nil, err
 	}
 	for _, f := range r.Features {
 		if _, err := tx.ExecContext(ctx,
@@ -205,7 +216,7 @@ func store(ctx context.Context, db *sql.DB, songID string, r Run, version string
 			 ON CONFLICT(song_id, feature) DO UPDATE SET tool = excluded.tool, tool_version = excluded.tool_version,
 			   analysed_ms = excluded.analysed_ms, error = excluded.error`,
 			songID, f, r.Group.Tool, version, now, errText); err != nil {
-			return false, err
+			return nil, err
 		}
 		v, ok := vals[f]
 		if runErr != nil || !ok || v == nil {
@@ -227,24 +238,24 @@ func store(ctx context.Context, db *sql.DB, songID string, r Run, version string
 		} else {
 			js, jerr := json.Marshal(v)
 			if jerr != nil {
-				return false, jerr
+				return nil, jerr
 			}
 			res, err = setValue(ctx, tx, songID, f, string(js), now)
 		}
 		if err != nil {
-			return false, err
+			return nil, err
 		}
 		if k, _ := res.RowsAffected(); k > 0 {
-			changed = true
+			changed = append(changed, f)
 		}
 	}
 	if stamp != nil {
 		if _, err := tx.ExecContext(ctx, "UPDATE songs SET file_size = ?, file_mtime_ms = ? WHERE id = ?",
 			stamp.Size, stamp.MtimeMs, songID); err != nil {
-			return false, err
+			return nil, err
 		}
 	}
-	return changed, tx.Commit()
+	return changed, nil
 }
 
 // execer is satisfied by *sql.Tx and *sql.DB.
