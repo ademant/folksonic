@@ -12,6 +12,7 @@ const (
 	codeHTTPSRequired = "https_required"
 	codePasswordBad   = "password_invalid"
 	codeRateLimited   = "rate_limited"
+	codeBusy          = "server_busy"
 )
 
 // refusalMessages says, for people, what each code means. Clients decode the
@@ -42,6 +43,7 @@ var refusalMessages = map[string]string{
 	users.CodePairingBusy:         "Too many devices are waiting on this QR code. Create a new code on the account page.",
 	codePasswordBad:               "Wrong username or password.",
 	codeRateLimited:               "Too many failed sign-in attempts. Wait before trying again.",
+	codeBusy:                      "The server is busy checking passwords. Try again in a moment.",
 	codeHTTPSRequired:             "HTTPS is required. Use the address in base_url.",
 }
 

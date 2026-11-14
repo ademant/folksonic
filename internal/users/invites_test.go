@@ -66,14 +66,14 @@ func TestInviteRegistersActiveAccountOnce(t *testing.T) {
 	}
 
 	// Typed loosely: lower case, no dashes.
-	bob, err := RegisterWithInvite(ctx, pool, strings.ToLower(strings.ReplaceAll(code, "-", "")), "bob", "pw")
+	bob, err := RegisterWithInvite(ctx, pool, strings.ToLower(strings.ReplaceAll(code, "-", "")), "bob", "longpass1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if bob.Status != StatusActive || bob.Role != RoleUser {
 		t.Fatalf("bob is %s/%s, want active/user", bob.Status, bob.Role)
 	}
-	if _, err := RegisterWithInvite(ctx, pool, code, "carol", "pw"); !errors.Is(err, ErrInviteInvalid) {
+	if _, err := RegisterWithInvite(ctx, pool, code, "carol", "longpass1"); !errors.Is(err, ErrInviteInvalid) {
 		t.Fatalf("second use: %v, want ErrInviteInvalid", err)
 	}
 
@@ -96,7 +96,7 @@ func TestAdminInvite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	u, err := RegisterWithInvite(ctx, pool, code, "root", "pw")
+	u, err := RegisterWithInvite(ctx, pool, code, "root", "longpass1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestInviteRejectedWhenExpiredOrRevoked(t *testing.T) {
 	if _, err := pool.Exec("UPDATE invites SET expires_at = ? WHERE id = ?", ts(time.Now().Add(-time.Minute)), inv.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RegisterWithInvite(ctx, pool, expired, "bob", "pw"); !errors.Is(err, ErrInviteInvalid) {
+	if _, err := RegisterWithInvite(ctx, pool, expired, "bob", "longpass1"); !errors.Is(err, ErrInviteInvalid) {
 		t.Fatalf("expired: %v, want ErrInviteInvalid", err)
 	}
 
@@ -127,7 +127,7 @@ func TestInviteRejectedWhenExpiredOrRevoked(t *testing.T) {
 	if err := RevokeInvite(ctx, pool, inv.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RegisterWithInvite(ctx, pool, revoked, "bob", "pw"); !errors.Is(err, ErrInviteInvalid) {
+	if _, err := RegisterWithInvite(ctx, pool, revoked, "bob", "longpass1"); !errors.Is(err, ErrInviteInvalid) {
 		t.Fatalf("revoked: %v, want ErrInviteInvalid", err)
 	}
 	if _, err := ByName(ctx, pool, "bob"); !errors.Is(err, ErrNotFound) {
@@ -146,10 +146,10 @@ func TestInviteKeptWhenUsernameTaken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RegisterWithInvite(ctx, pool, code, "BOB", "pw"); !errors.Is(err, ErrExists) {
+	if _, err := RegisterWithInvite(ctx, pool, code, "BOB", "longpass1"); !errors.Is(err, ErrExists) {
 		t.Fatalf("taken name: %v, want ErrExists", err)
 	}
-	if _, err := RegisterWithInvite(ctx, pool, code, "carol", "pw"); err != nil {
+	if _, err := RegisterWithInvite(ctx, pool, code, "carol", "longpass1"); err != nil {
 		t.Fatalf("invite unusable after a failed attempt: %v", err)
 	}
 }
@@ -166,7 +166,7 @@ func TestInviteConcurrentRedeemOnce(t *testing.T) {
 	errs := make([]error, n)
 	for i := range n {
 		wg.Go(func() {
-			_, errs[i] = RegisterWithInvite(ctx, pool, code, "user"+string(rune('a'+i)), "pw")
+			_, errs[i] = RegisterWithInvite(ctx, pool, code, "user"+string(rune('a'+i)), "longpass1")
 		})
 	}
 	wg.Wait()

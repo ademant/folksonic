@@ -121,7 +121,10 @@ func (s *State) APIRegister(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusForbidden, "registration is disabled")
 		return
 	}
-	_, err := users.Create(r.Context(), s.Pool, in.Username, in.Password, users.RoleUser, users.StatusPending)
+	err := users.CheckPassword(in.Password)
+	if err == nil {
+		_, err = users.Create(r.Context(), s.Pool, in.Username, in.Password, users.RoleUser, users.StatusPending)
+	}
 	switch {
 	case errors.Is(err, users.ErrExists):
 		writeAPIError(w, http.StatusConflict, err.Error())

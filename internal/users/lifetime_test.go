@@ -202,11 +202,11 @@ func TestExpiredInviteIsDistinguished(t *testing.T) {
 	if _, err := pool.ExecContext(ctx, "UPDATE invites SET expires_at = ?", ts(time.Now().Add(-time.Minute))); err != nil {
 		t.Fatal(err)
 	}
-	_, err = RegisterWithInvite(ctx, pool, code, "carol", "pw")
+	_, err = RegisterWithInvite(ctx, pool, code, "carol", "longpass1")
 	if !errors.Is(err, ErrInviteExpired) || !errors.Is(err, ErrInviteInvalid) {
 		t.Fatalf("err = %v, want ErrInviteExpired (which matches ErrInviteInvalid)", err)
 	}
-	_, err = RegisterWithInvite(ctx, pool, "NOTAREALCODE", "dave", "pw")
+	_, err = RegisterWithInvite(ctx, pool, "NOTAREALCODE", "dave", "longpass1")
 	if errors.Is(err, ErrInviteExpired) || !errors.Is(err, ErrInviteInvalid) {
 		t.Fatalf("unknown code: err = %v, want plain ErrInviteInvalid", err)
 	}

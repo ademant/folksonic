@@ -74,6 +74,25 @@ func ValidUsername(name string) error {
 
 // Create inserts a user. Status and role are set by the caller: CLI creation
 // uses active, self-registration uses pending/user.
+
+// MinPasswordLen is the shortest password a person may choose (#113).
+const MinPasswordLen = 8
+
+// CheckPassword is the policy for a password a person chooses: at least
+// MinPasswordLen characters and at most passwords.MaxBytes bytes. Length is
+// counted in bytes, the same measure the hashing cap uses. Callers that take a
+// password from a person apply it: signup, the CLI, SetPassword and invites.
+// Bootstrap does not, so an existing config password keeps working.
+func CheckPassword(password string) error {
+	if len(password) < MinPasswordLen {
+		return fmt.Errorf("%w: password must be at least %d characters", ErrInvalid, MinPasswordLen)
+	}
+	if len(password) > passwords.MaxBytes {
+		return fmt.Errorf("%w: password must be at most %d bytes", ErrInvalid, passwords.MaxBytes)
+	}
+	return nil
+}
+
 func Create(ctx context.Context, db *sql.DB, username, password, role, status string) (User, error) {
 	if err := ValidUsername(username); err != nil {
 		return User{}, err
@@ -167,19 +186,39 @@ func SetStatus(ctx context.Context, db *sql.DB, id int64, status string, approve
 	return requireOne(res)
 }
 
-func SetPassword(ctx context.Context, db *sql.DB, id int64, password string) error {
-	if password == "" {
-		return fmt.Errorf("%w: password must not be empty", ErrInvalid)
+// SetPassword replaces a user's password and ends all of the user's sessions,
+// in one transaction, so a stolen session stops working with the old password
+// (#113). API keys and devices are not sessions and are kept. It returns how
+// many sessions ended.
+func SetPassword(ctx context.Context, db *sql.DB, id int64, password string) (int64, error) {
+	if err := CheckPassword(password); err != nil {
+		return 0, err
 	}
 	hash, err := passwords.Hash(password)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalid, err)
+		return 0, fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
-	res, err := db.ExecContext(ctx, "UPDATE users SET password_hash = ?, password = NULL WHERE id = ?", hash, id)
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	return requireOne(res)
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.ExecContext(ctx, "UPDATE users SET password_hash = ?, password = NULL WHERE id = ?", hash, id)
+	if err != nil {
+		return 0, err
+	}
+	if err := requireOne(res); err != nil {
+		return 0, err
+	}
+	res, err = tx.ExecContext(ctx, "DELETE FROM sessions WHERE user_id = ?", id)
+	if err != nil {
+		return 0, err
+	}
+	ended, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return ended, tx.Commit()
 }
 
 // Delete removes an account. Its API keys, sessions and pairing tokens go

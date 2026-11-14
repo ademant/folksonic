@@ -25,6 +25,9 @@ type reqLog struct {
 	// the failure limit; retryAfter is how long to wait.
 	throttled  bool
 	retryAfter time.Duration
+	// busy is set when the password hashing slots were all taken, so the
+	// attempt was refused unchecked (#109). It is answered with 429 server_busy.
+	busy bool
 	// refusal is the error code of a refused credential (see refusal.go); it
 	// becomes the response's code when the request is answered.
 	refusal string

@@ -272,6 +272,10 @@ func TestChangeFeedMigratesLegacyDatabase(t *testing.T) {
 	if _, err := d.Exec("ALTER TABLE songs DROP COLUMN updated_ms"); err != nil {
 		t.Fatal(err)
 	}
+	// A database from before schema versions: the probe steps must run again.
+	if _, err := d.Exec("PRAGMA user_version = 0"); err != nil {
+		t.Fatal(err)
+	}
 	d.Close()
 
 	d, err = Init(path)

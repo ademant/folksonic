@@ -29,7 +29,7 @@ func TestRegistrationNeedsCLIApproval(t *testing.T) {
 	s.AllowRegistration = true
 	ctx := context.Background()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/register", strings.NewReader(`{"username":"bob","password":"pw"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/register", strings.NewReader(`{"username":"bob","password":"longpass1"}`))
 	rec := httptest.NewRecorder()
 	s.APIRegister(rec, req)
 	if rec.Code != http.StatusAccepted {
@@ -63,7 +63,7 @@ func TestRegistrationNeedsCLIApproval(t *testing.T) {
 	if err := users.SetStatus(ctx, s.Pool, bob.ID, users.StatusActive, 0); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := s.authenticate(httptest.NewRequest(http.MethodGet, "/rest/ping?u=bob&p=pw", nil)); !ok {
+	if _, ok := s.authenticate(httptest.NewRequest(http.MethodGet, "/rest/ping?u=bob&p=longpass1", nil)); !ok {
 		t.Fatal("approved user cannot sign in")
 	}
 }
@@ -119,7 +119,7 @@ func TestRegistrationWithInvite(t *testing.T) {
 		return rec
 	}
 
-	rec := register(`{"username":"bob","password":"pw","invite":"` + code + `"}`)
+	rec := register(`{"username":"bob","password":"longpass1","invite":"` + code + `"}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("register status %d: %s", rec.Code, rec.Body.String())
 	}
@@ -133,14 +133,14 @@ func TestRegistrationWithInvite(t *testing.T) {
 	if u, err := users.LookupSession(ctx, s.Pool, out.Token); err != nil || u.Username != "bob" {
 		t.Fatalf("session from registration: %v, %v", u, err)
 	}
-	if _, ok := s.authenticate(httptest.NewRequest(http.MethodGet, "/rest/ping?u=bob&p=pw", nil)); !ok {
+	if _, ok := s.authenticate(httptest.NewRequest(http.MethodGet, "/rest/ping?u=bob&p=longpass1", nil)); !ok {
 		t.Fatal("invited user cannot sign in")
 	}
 
-	if rec := register(`{"username":"carol","password":"pw","invite":"` + code + `"}`); rec.Code != http.StatusForbidden {
+	if rec := register(`{"username":"carol","password":"longpass1","invite":"` + code + `"}`); rec.Code != http.StatusForbidden {
 		t.Fatalf("reused invite status %d, want 403", rec.Code)
 	}
-	if rec := register(`{"username":"carol","password":"pw","invite":"inv-AAAA-AAAA-AAAA-AAAA"}`); rec.Code != http.StatusForbidden {
+	if rec := register(`{"username":"carol","password":"longpass1","invite":"inv-AAAA-AAAA-AAAA-AAAA"}`); rec.Code != http.StatusForbidden {
 		t.Fatalf("unknown invite status %d, want 403", rec.Code)
 	}
 }

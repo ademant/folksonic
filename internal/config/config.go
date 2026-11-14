@@ -61,6 +61,9 @@ type Config struct {
 	// MaxStreamsPerUser caps the streams one account may hold at once. Zero
 	// disables the cap. Load sets the default.
 	MaxStreamsPerUser int `toml:"max_streams_per_user"`
+	// DBCacheMB is the SQLite page cache per connection, in MiB. Load sets the
+	// default; values below 1 are refused.
+	DBCacheMB int `toml:"db_cache_mb"`
 	// TrustedProxies lists the addresses (IPs or CIDR ranges) of reverse
 	// proxies. Only a request from one of them has its X-Forwarded-For header
 	// believed when the client's address is logged and rate limited.
@@ -95,6 +98,7 @@ type Config struct {
 const (
 	DefaultMaxStreams        = 64
 	DefaultMaxStreamsPerUser = 8
+	DefaultDBCacheMB         = 4
 	// DefaultAPIKeyTTLDays and DefaultAPIKeyIdleDays are the key lifetimes
 	// used when the file does not set them.
 	DefaultAPIKeyTTLDays  = 365
@@ -150,6 +154,7 @@ func Load(path string) (*Config, error) {
 		CoversDir:      "covers",
 		APIKeyTTLDays:  DefaultAPIKeyTTLDays,
 		APIKeyIdleDays: DefaultAPIKeyIdleDays,
+		DBCacheMB:      DefaultDBCacheMB,
 		// Same list as server.DefaultIgnoredArticles.
 		IgnoredArticles: "The El La Las Le Les Los Il L' An A Die Das Ein",
 	}
@@ -200,6 +205,9 @@ func Load(path string) (*Config, error) {
 	c.LogLevel = strings.ToLower(lvl.String())
 	if !md.IsDefined("legacy_password_auth") {
 		c.LegacyPasswordAuth = true
+	}
+	if c.DBCacheMB < 1 {
+		return nil, errors.New("config: db_cache_mb must be at least 1")
 	}
 	if c.MaxStreams < 0 || c.MaxStreamsPerUser < 0 {
 		return nil, errors.New("config: max_streams and max_streams_per_user must not be negative")

@@ -91,6 +91,9 @@ covers_dir = "covers"
 # max_streams          = 64
 # max_streams_per_user = 8
 
+# SQLite page cache per connection, in MiB (at least 1). Small by default for a shared host.
+# db_cache_mb = 4
+
 # Reverse proxies whose X-Forwarded-For is believed when logging and limiting
 # sign-in attempts. IPs or CIDR ranges. Leave empty when clients connect directly.
 # trusted_proxies = ["127.0.0.1", "::1"]

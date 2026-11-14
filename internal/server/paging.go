@@ -46,8 +46,11 @@ func pageSlice[T any](items []T, p page) []T {
 // countParam returns the endpoint's own count parameter when given, else the
 // generic size alias (capped at maxPageSize), else def.
 func countParam(r *http.Request, own string, def int64) int64 {
+	// The list's own count is clamped too: an unclamped songCount=100000 returns
+	// the whole library, and -1 becomes SQLite's LIMIT -1 (no limit). Zero stays:
+	// clients use artistCount=0 to skip a list (#114).
 	if queryFirst(r, own) != "" {
-		return intParam(r, own, def)
+		return clamp(intParam(r, own, def), 0, maxPageSize)
 	}
 	if queryFirst(r, "size") != "" {
 		return clamp(intParam(r, "size", def), 1, maxPageSize)

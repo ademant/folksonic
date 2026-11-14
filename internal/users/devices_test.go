@@ -300,16 +300,20 @@ func TestDisabledOwnerDoesNotAuthenticate(t *testing.T) {
 }
 
 func TestProofJTIIsRefusedTheSecondTime(t *testing.T) {
-	ctx, pool, _ := deviceFixture(t)
+	var p ProofReplay
 	now := time.Now().UTC()
-	if err := RecordProofJTI(ctx, pool, "abc", now); err != nil {
+	if err := p.Check("key1", "abc", now); err != nil {
 		t.Fatal(err)
 	}
-	if err := RecordProofJTI(ctx, pool, "abc", now); err != ErrProofReplayed {
+	if err := p.Check("key1", "abc", now); err != ErrProofReplayed {
 		t.Fatalf("replay: %v", err)
 	}
-	// Once outside the window the entry is pruned, so the jti may be used again.
-	if err := RecordProofJTI(ctx, pool, "abc", now.Add(ProofWindow+time.Minute)); err != nil {
+	// The same jti from another key is a different proof.
+	if err := p.Check("key2", "abc", now); err != nil {
+		t.Fatalf("other key: %v", err)
+	}
+	// Once outside the window the jti may be used again.
+	if err := p.Check("key1", "abc", now.Add(ProofWindow+time.Minute)); err != nil {
 		t.Fatalf("after the window: %v", err)
 	}
 }

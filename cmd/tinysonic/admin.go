@@ -79,7 +79,7 @@ func openDB(cfgPath string) (*config.Config, *sql.DB, error) {
 	for _, w := range cfg.Warnings {
 		fmt.Fprintln(os.Stderr, "warning:", w)
 	}
-	pool, err := db.Init(cfg.DatabasePath)
+	pool, err := db.InitCache(cfg.DatabasePath, cfg.DBCacheMB)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -135,6 +135,9 @@ func runUser(args []string) error {
 		role := users.RoleUser
 		if *librarian {
 			role = users.RoleLibrarian
+		}
+		if err := users.CheckPassword(pw); err != nil {
+			return err
 		}
 		u, err := users.Create(ctx, pool, names[0], pw, role, users.StatusActive)
 		if err != nil {
@@ -253,7 +256,11 @@ func runUser(args []string) error {
 			if perr != nil {
 				return perr
 			}
-			err = users.SetPassword(ctx, pool, u.ID, pw)
+			var ended int64
+			ended, err = users.SetPassword(ctx, pool, u.ID, pw)
+			if err == nil {
+				fmt.Printf("%s: %d session(s) ended, sign in again\n", u.Username, ended)
+			}
 		}
 		if err != nil {
 			return err

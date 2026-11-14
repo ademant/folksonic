@@ -82,6 +82,18 @@ func (s *State) resolveCaller(r *http.Request) (users.User, bool) {
 		logAuthFailure(ip, "rate-limit", r.URL.Path)
 		return users.User{}, false
 	}
+	// Password hashing runs only in a free slot (#109). A full gate is answered
+	// at once, and the token is refunded: no password was checked.
+	if !passwords.TryAcquire() {
+		s.auth.refund(ip)
+		if l := reqLogFrom(ctx); l != nil {
+			l.busy, l.retryAfter = true, busyRetry
+		}
+		setRefusal(r, codeBusy)
+		logAuthFailure(ip, "busy", r.URL.Path)
+		return users.User{}, false
+	}
+	defer passwords.Release()
 	u, err := users.ByName(ctx, s.Pool, name)
 	if err != nil {
 		// Hash anyway, so an unknown username takes as long as a wrong password.
@@ -101,6 +113,9 @@ func (s *State) resolveCaller(r *http.Request) (users.User, bool) {
 	s.auth.succeed(ip)
 	return u, true
 }
+
+// busyRetry is the Retry-After given when no password hashing slot is free.
+const busyRetry = time.Second
 
 // logRefused logs a refused API key or session. Unlike a wrong password it is
 // not delayed: a 256-bit key cannot be guessed, so the point is visibility. The
@@ -155,6 +170,11 @@ func usesTokenAuth(r *http.Request) bool {
 func (s *State) writeAuthFailure(w http.ResponseWriter, r *http.Request) {
 	if s.legacyPasswordOff && params(r).Get("u") != "" {
 		writeError(w, 42, "Password authentication is disabled on this server. Use an API key")
+		return
+	}
+	if l := reqLogFrom(r.Context()); l != nil && l.busy {
+		w.Header().Set("Retry-After", strconv.Itoa(retrySeconds(l.retryAfter)))
+		writeErrorStatus(w, http.StatusTooManyRequests, 0, refusalMessage(codeBusy))
 		return
 	}
 	if l := reqLogFrom(r.Context()); l != nil && l.throttled {

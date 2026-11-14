@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -469,21 +470,47 @@ func RemoveDevice(ctx context.Context, db *sql.DB, userID, deviceID int64) error
 	return nil
 }
 
-// RecordProofJTI remembers a proof's jti for ProofWindow and refuses one seen
-// before. Old entries are pruned on the way.
-func RecordProofJTI(ctx context.Context, db *sql.DB, jti string, now time.Time) error {
-	if _, err := db.ExecContext(ctx,
-		"DELETE FROM dpop_proofs WHERE seen_at < ?", ts(now.Add(-ProofWindow))); err != nil {
-		return err
+// ProofReplay remembers the proofs seen from known keys within ProofWindow, so
+// a captured proof cannot be sent twice (#111). It lives in memory: a restart
+// clears it, which leaves only the ProofWindow after a restart open to replay.
+// The zero value is ready to use. Callers check a key is a known device or a
+// pending pairing first, so unknown keys cannot fill it.
+type ProofReplay struct {
+	mu    sync.Mutex
+	seen  map[string]time.Time
+	prune time.Time
+}
+
+// proofPruneEvery is how often old entries are dropped from ProofReplay.
+const proofPruneEvery = time.Minute
+
+// Len reports how many proofs are remembered.
+func (p *ProofReplay) Len() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.seen)
+}
+
+// Check records the proof jti from the key jkt and returns ErrProofReplayed
+// when the same pair was recorded within ProofWindow.
+func (p *ProofReplay) Check(jkt, jti string, now time.Time) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.seen == nil {
+		p.seen = make(map[string]time.Time)
 	}
-	res, err := db.ExecContext(ctx,
-		"INSERT INTO dpop_proofs (jti, seen_at) VALUES (?, ?) ON CONFLICT (jti) DO NOTHING",
-		jti, ts(now))
-	if err != nil {
-		return err
+	if now.Sub(p.prune) >= proofPruneEvery {
+		for k, at := range p.seen {
+			if now.Sub(at) > ProofWindow {
+				delete(p.seen, k)
+			}
+		}
+		p.prune = now
 	}
-	if n, _ := res.RowsAffected(); n != 1 {
+	key := jkt + " " + jti
+	if at, ok := p.seen[key]; ok && now.Sub(at) <= ProofWindow {
 		return ErrProofReplayed
 	}
+	p.seen[key] = now
 	return nil
 }
