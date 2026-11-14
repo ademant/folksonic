@@ -1,6 +1,7 @@
 // Package analysis computes per-track audio features (tempo, beats, key,
-// loudness, silence, waveform) with the tools assigned in the [analysis]
-// config table, and stores them in the analysis and song_values tables.
+// loudness, silence, waveform, fingerprint, onsets, rhythm, spectral) with
+// the tools assigned in the [analysis] config table, and stores them in the
+// analysis and song_values tables.
 // It runs only in background jobs, never while a request is served.
 package analysis
 
@@ -43,6 +44,32 @@ type Silence struct {
 type Waveform struct {
 	Bins  int   `json:"bins"`
 	Peaks []int `json:"peaks"`
+}
+
+// Onsets are note starts and their strength 0..255, relative to the
+// track's strongest onset. Both slices have the same length; empty when no
+// onset was found.
+type Onsets struct {
+	TimesMs   []int64 `json:"timesMs"`
+	Strengths []int   `json:"strengths"`
+}
+
+// Rhythm is the music's own cycle: the pulse, the bar as a whole number of
+// pulses, the bars per minute dancers count, and how clearly the bar
+// recurs (0..1).
+type Rhythm struct {
+	PulseSec   *float64 `json:"pulseSec"`
+	BarPulses  *int     `json:"barPulses"`
+	BarsPerMin *float64 `json:"barsPerMin"`
+	BarScore   *float64 `json:"barScore"`
+}
+
+// Spectral says how many frequencies the sound uses: complexity is the
+// median number of spectral peaks per frame, entropy the median spectral
+// entropy in bits (low for a few tones, high for noise or percussion).
+type Spectral struct {
+	Complexity *float64 `json:"complexity"`
+	Entropy    *float64 `json:"entropy"`
 }
 
 // Values is what one tool run returned, by feature. A missing or nil entry

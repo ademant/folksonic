@@ -44,7 +44,7 @@ func TestAPIAnalysis(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("plain song: %d %v", code, body)
 	}
-	for _, f := range []string{"waveform", "beats", "bpm", "key", "loudness", "silence", "fingerprint"} {
+	for _, f := range []string{"waveform", "beats", "bpm", "key", "loudness", "silence", "fingerprint", "onsets", "rhythm", "spectral"} {
 		if v, ok := body[f]; !ok || v != nil {
 			t.Errorf("%s: %v (present %v)", f, v, ok)
 		}
@@ -58,7 +58,10 @@ func TestAPIAnalysis(t *testing.T) {
 			file_size = 9, file_mtime_ms = 1000 WHERE id = 'so-1';
 		INSERT INTO song_values (song_id, name, value, changed_ms) VALUES
 			('so-1', 'key', '{"tonic":"A","mode":"minor","confidence":null}', 1),
-			('so-1', 'waveform', '{"bins":2,"peaks":[0,255]}', 1)`); err != nil {
+			('so-1', 'waveform', '{"bins":2,"peaks":[0,255]}', 1),
+			('so-1', 'onsets', '{"timesMs":[512,768],"strengths":[255,96]}', 1),
+			('so-1', 'rhythm', '{"pulseSec":0.527,"barPulses":3,"barsPerMin":38,"barScore":0.34}', 1),
+			('so-1', 'spectral', '{"complexity":12.5,"entropy":7.31}', 1)`); err != nil {
 		t.Fatal(err)
 	}
 	_, body = analysisGet(t, s, "bob", "so-1")
@@ -70,6 +73,15 @@ func TestAPIAnalysis(t *testing.T) {
 	}
 	if w := body["waveform"].(map[string]any); w["bins"] != 2.0 {
 		t.Fatalf("waveform %v", body["waveform"])
+	}
+	if o := body["onsets"].(map[string]any); len(o["timesMs"].([]any)) != 2 || o["strengths"].([]any)[1] != 96.0 {
+		t.Fatalf("onsets %v", body["onsets"])
+	}
+	if r := body["rhythm"].(map[string]any); r["barsPerMin"] != 38.0 || r["barPulses"] != 3.0 {
+		t.Fatalf("rhythm %v", body["rhythm"])
+	}
+	if sp := body["spectral"].(map[string]any); sp["entropy"] != 7.31 {
+		t.Fatalf("spectral %v", body["spectral"])
 	}
 	if body["fileVersion"] == before {
 		t.Fatal("fileVersion did not follow the file")

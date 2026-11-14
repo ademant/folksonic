@@ -43,8 +43,9 @@ allow_registration = false
 # assigned features are analysed in the background after every scan. Without
 # it, only BPM is calculated, by hand on the library page ("builtin").
 # Tools: "builtin" (bpm), "ffmpeg" (loudness, uses ffmpeg_path) and
-# "folksentia" (bpm, beats, key, loudness, silence, waveform, fingerprint;
-# fingerprints feed GET /api/duplicates).
+# "folksentia" (bpm, beats, key, loudness, silence, waveform, fingerprint,
+# onsets, rhythm, spectral; fingerprints feed GET /api/duplicates; onsets
+# need a folksentia with --onsets).
 # [analysis]
 # bpm      = "folksentia"
 # beats    = "folksentia"
@@ -53,6 +54,9 @@ allow_registration = false
 # silence  = "folksentia"
 # waveform = "folksentia"
 # fingerprint = "folksentia"
+# onsets   = "folksentia"
+# rhythm   = "folksentia"
+# spectral = "folksentia"
 #
 # [analysis.tools.folksentia]
 # command = "/usr/local/bin/folksentia"   # absolute path, never looked up on PATH

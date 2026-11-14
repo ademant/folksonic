@@ -48,7 +48,7 @@ func (s *State) APIAnalysis(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := J{"id": id}
-	for _, f := range []string{"waveform", "beats", "bpm", "key", "loudness", "silence", "fingerprint"} {
+	for _, f := range []string{"waveform", "beats", "bpm", "key", "loudness", "silence", "fingerprint", "onsets", "rhythm", "spectral"} {
 		out[f] = nil
 	}
 	// fileVersion names the file the values belong to. It changes when the

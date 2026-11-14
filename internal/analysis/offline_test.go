@@ -109,8 +109,11 @@ func TestExportJobs(t *testing.T) {
 	if f.Format != JobsFormat || f.Version != 1 || f.Tool != "folksentia" || f.Schema != 1 {
 		t.Errorf("header: %+v", f)
 	}
-	if !f.Options.Downbeats || f.Options.Waveform != 0 || f.Options.Fingerprint {
+	if !f.Options.Downbeats || f.Options.Waveform != 0 || f.Options.Fingerprint || f.Options.Onsets {
 		t.Errorf("options for bpm+beats: %+v", f.Options)
+	}
+	if o := folksentiaOptions([]string{"onsets", "rhythm", "spectral"}); o != (FolksentiaOptions{Onsets: true}) {
+		t.Errorf("options for onsets+rhythm+spectral: %+v", o)
 	}
 	if rep.Jobs != 1 || rep.Unreadable != 1 || rep.Outside != 1 || len(f.Jobs) != 1 {
 		t.Fatalf("report %+v, jobs %+v", rep, f.Jobs)
