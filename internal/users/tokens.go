@@ -113,9 +113,13 @@ func LookupAPIKeyInfo(ctx context.Context, db *sql.DB, plain string) (User, KeyI
 	if err != nil {
 		return User{}, KeyInfo{}, err
 	}
-	// Best effort: a failed write must not reject a valid key.
+	// Best effort: a failed write must not reject a valid key. last_used_at is
+	// written at most once a minute: idle revocation works in days, and a write
+	// per request was a database write per API call (#112).
 	now := time.Now()
-	_, _ = db.ExecContext(ctx, "UPDATE api_keys SET last_used_at = ? WHERE key_hash = ?", ts(now), hashToken(plain))
+	_, _ = db.ExecContext(ctx,
+		"UPDATE api_keys SET last_used_at = ? WHERE key_hash = ? AND (last_used_at IS NULL OR last_used_at < ?)",
+		ts(now), hashToken(plain), ts(now.Add(-time.Minute)))
 	// Renewal: a key in use that has less than keyRenewWindow left gets its
 	// full lifetime again. Keys that are not near the end are not written.
 	if ttl.Valid && expires.Valid && ttl.Int64 > 0 {

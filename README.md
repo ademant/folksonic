@@ -137,6 +137,7 @@ Configuration is checked at startup:
 | `log_level`          | Minimum level written to the log: `debug`, `info` (default), `warn` or `error`. `--log-level` overrides it. See [Logging](#logging). |
 | `max_streams`        | Audio streams (`stream`, `download`) served at once, across all accounts. Default 64; `0` disables the cap. A stream over the cap gets HTTP 503 with `Retry-After`. |
 | `max_streams_per_user` | Streams one account may hold at once. Default 8; `0` disables the cap. |
+| `db_cache_mb`        | SQLite page cache per database connection, in MiB. Default 4; at least 1. Hot pages are also held by the memory map and the OS cache, so a small value costs little speed. Raise it for a large library on a host with spare memory. |
 | `legacy_password_auth` | Allow Subsonic clients to sign in with `u`/`p` on every request. Default `true`. Set `false` to require API keys (or a session) for all Subsonic calls. |
 | `trusted_proxies`    | Addresses (IPs or CIDR ranges) of reverse proxies whose `X-Forwarded-For` is believed. Empty by default: the connecting address is the client. See [Sign-in limits](#sign-in-limits). |
 | `api_key_ttl_days`   | Lifetime of an API key, in days (1–3650). Default 365. Every key expires; a key in use within its last 30 days is renewed to a full lifetime. A request can ask for its own `expires_days`. |
@@ -176,7 +177,7 @@ tinysonic user list [-c FILE]                         list accounts: role, statu
                                                       active API keys)
 tinysonic user approve [-c FILE] <username>           activate a pending account
 tinysonic user disable|enable [-c FILE] <username>
-tinysonic user set-password [-c FILE] <username>
+tinysonic user set-password [-c FILE] <username>      new password; ends the account's sessions (API keys stay)
 tinysonic user set-role [-c FILE] <username> user|librarian
                                                       change the role; applies to the next request
 tinysonic user rename [-c FILE] <old> <new>           rename an account; playlists, stars, keys and
@@ -874,9 +875,15 @@ attempts from an address are answered at once. After that, one more is allowed
 each second, and the rest get HTTP 429 with `Retry-After` before any password
 is checked. Each failure also waits 10 ms, doubling for each consecutive
 failure up to 100 ms, so guessing gets no faster. The wait is the same whether
-the username exists or not. Successful sign-ins cost nothing, so a client that
-sends its password with every request is not throttled. Keys and sessions are
-not limited.
+the username exists or not. A correct password gives its attempt back, so a
+client that sends its password with every request is not throttled. Keys and
+sessions are not limited.
+
+Each attempt spends its budget before the password is hashed, so a burst of
+parallel guesses cannot all pass. At most two password hashes run at once. When
+both are busy, the request gets HTTP 429 with `Retry-After: 1` and error code
+`server_busy`, and it is not counted as a failure. A password longer than 1024
+bytes is refused without hashing.
 
 Every failed attempt writes one line to the log:
 
@@ -884,7 +891,7 @@ Every failed attempt writes one line to the log:
 WARN auth failed ip=198.51.100.7 reason=password path=/rest/ping
 ```
 
-`reason` is `password`, `unknown-user`, `not-active` or `rate-limit`. The line
+`reason` is `password`, `unknown-user`, `not-active`, `rate-limit` or `busy`. The line
 never holds the username, the password or the query string.
 
 Behind a reverse proxy, the address is the proxy's unless you say otherwise.
@@ -1122,6 +1129,7 @@ message text is for people; apps should not parse it.
 | `pairing_busy` | Three devices already wait on this QR code (429) |
 | `device_unknown` | The device was removed, or its key was never paired (401) |
 | `password_invalid`, `rate_limited` | Subsonic `u`/`p` sign-in failed, or too many failures |
+| `server_busy` | The server is checking other passwords right now; retry after `Retry-After` (429). The attempt is not counted as a failure |
 | `pairing_expired`, `pairing_invalid` | A pairing code is past its 15 minutes, or unknown or already used |
 | `invite_expired`, `invite_invalid` | An invitation code is past its 7 days, or unknown, used or revoked |
 | `https_required` | Plain HTTP while `require_https` is on |

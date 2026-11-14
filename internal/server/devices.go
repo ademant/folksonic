@@ -27,36 +27,39 @@ const maxDeviceName = 100
 // checkProof verifies a request's DPoP proof (method, URL, freshness, unused
 // jti) and returns the thumbprint of the key that signed it. On failure it
 // records the refusal and returns false.
-func (s *State) checkProof(r *http.Request, proof string) (string, bool) {
+func (s *State) checkProof(r *http.Request, proof string) (jkt, jti string, ok bool) {
 	now := time.Now()
 	if s.BaseURL == "" {
 		// The proof names the URL the app calls, which is base_url plus the path.
 		logging.Warnf("device request refused: base_url is not set")
 		s.logRefused(r, users.CodeProofInvalid, 0, "")
-		return "", false
+		return "", "", false
 	}
 	htu := strings.TrimSuffix(s.BaseURL, "/") + r.URL.Path
 	jwk, claims, err := dpop.Verify(proof, r.Method, htu, now, deviceClockSkew)
 	if err != nil {
 		logging.Debugf("dpop: %v", err)
 		s.logRefused(r, users.CodeProofInvalid, 0, "")
-		return "", false
+		return "", "", false
 	}
-	if err := users.RecordProofJTI(r.Context(), s.Pool, claims.Jti, now); err != nil {
-		if errors.Is(err, users.ErrProofReplayed) {
-			s.logRefused(r, users.CodeProofReplayed, 0, "")
-			return "", false
-		}
-		logging.Errorf("dpop jti: %v", err)
-		s.logRefused(r, users.CodeProofInvalid, 0, "")
-		return "", false
-	}
-	jkt, err := dpop.Thumbprint(jwk)
+	jkt, err = dpop.Thumbprint(jwk)
 	if err != nil {
 		s.logRefused(r, users.CodeProofInvalid, 0, "")
-		return "", false
+		return "", "", false
 	}
-	return jkt, true
+	// The jti is not recorded here: that waits until the key is known (proofFresh).
+	return jkt, claims.Jti, true
+}
+
+// proofFresh refuses a proof whose jti this key already used. Call it only once
+// the key is a known device or a pending pairing, so unknown keys cannot fill
+// the replay store (#111).
+func (s *State) proofFresh(r *http.Request, jkt, jti string) bool {
+	if err := s.proofs.Check(jkt, jti, time.Now()); err != nil {
+		s.logRefused(r, users.CodeProofReplayed, 0, "")
+		return false
+	}
+	return true
 }
 
 // verifyDevice authenticates a request by its DPoP proof, and records the
@@ -64,7 +67,7 @@ func (s *State) checkProof(r *http.Request, proof string) (string, bool) {
 func (s *State) verifyDevice(r *http.Request, proof string) (users.User, bool) {
 	ctx := r.Context()
 	now := time.Now()
-	jkt, ok := s.checkProof(r, proof)
+	jkt, jti, ok := s.checkProof(r, proof)
 	if !ok {
 		return users.User{}, false
 	}
@@ -94,6 +97,9 @@ func (s *State) verifyDevice(r *http.Request, proof string) (users.User, bool) {
 	if err != nil {
 		logging.Errorf("device lookup: %v", err)
 		s.logRefused(r, users.CodeDeviceUnknown, 0, "")
+		return users.User{}, false
+	}
+	if !s.proofFresh(r, jkt, jti) {
 		return users.User{}, false
 	}
 	if u.Status != users.StatusActive {
@@ -212,7 +218,7 @@ func (s *State) APIPairConfirm(w http.ResponseWriter, r *http.Request) {
 		writeCoded(w, http.StatusUnauthorized, users.CodeCredentialsRequired)
 		return
 	}
-	jkt, ok := s.checkProof(r, proof)
+	jkt, jti, ok := s.checkProof(r, proof)
 	if !ok {
 		s.writeRefusal(w, r)
 		return
@@ -223,6 +229,17 @@ func (s *State) APIPairConfirm(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Result != "match" && in.Result != "cancel" {
 		writeAPIError(w, http.StatusBadRequest, `result must be "match" or "cancel"`)
+		return
+	}
+	// Only a key with a pending pairing may record its jti (#111).
+	st, serr := users.DevicePairingState(r.Context(), s.Pool, jkt, time.Now())
+	if serr != nil {
+		logging.Errorf("pairing confirm state: %v", serr)
+		writeAPIError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	if st.State == users.PairingPending && !s.proofFresh(r, jkt, jti) {
+		s.writeRefusal(w, r)
 		return
 	}
 	dev, done, err := users.ConfirmPairingByDevice(r.Context(), s.Pool, jkt, in.Result == "match", time.Now())

@@ -91,13 +91,24 @@ func Thumbprint(k JWK) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(sum[:]), nil
 }
 
+// Size limits on a proof (#111). A real proof is about a kilobyte; anything
+// larger is refused before it is parsed or verified.
+const (
+	maxProofBytes  = 16 << 10
+	maxHeaderBytes = 8 << 10
+	maxJTILen      = 128
+)
+
 // Verify checks a DPoP proof for a request with the given method and URL
 // (the URL without its query string), at time now. The proof's iat may differ
 // from now by at most skew. It returns the key that signed the proof and the
 // claims. The caller checks jti against the proofs already seen.
 func Verify(proof, method, htu string, now time.Time, skew time.Duration) (JWK, Claims, error) {
+	if len(proof) > maxProofBytes {
+		return JWK{}, Claims{}, ErrMalformed
+	}
 	parts := strings.Split(proof, ".")
-	if len(parts) != 3 {
+	if len(parts) != 3 || len(parts[0]) > maxHeaderBytes {
 		return JWK{}, Claims{}, ErrMalformed
 	}
 	headerJSON, err := base64.RawURLEncoding.DecodeString(parts[0])
@@ -144,6 +155,9 @@ func Verify(proof, method, htu string, now time.Time, skew time.Duration) (JWK, 
 	}
 	if c.Jti == "" {
 		return JWK{}, Claims{}, ErrNoJTI
+	}
+	if len(c.Jti) > maxJTILen {
+		return JWK{}, Claims{}, ErrMalformed
 	}
 	if c.Htm != method {
 		return JWK{}, Claims{}, ErrMethod

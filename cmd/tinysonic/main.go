@@ -55,7 +55,7 @@ func main() {
 
 	cli.PrintBanner(cfg.Host, cfg.Port, cfg.MusicDirs)
 
-	pool, err := db.Init(cfg.DatabasePath)
+	pool, err := db.InitCache(cfg.DatabasePath, cfg.DBCacheMB)
 	if err != nil {
 		logging.Fatalf("db: %v", err)
 	}

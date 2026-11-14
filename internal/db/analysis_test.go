@@ -19,7 +19,9 @@ func TestMigrateAnalysis(t *testing.T) {
 		`INSERT INTO albums (id, title, artist, artist_id) VALUES ('al-1', 'Al', 'A', 'ar-1')`,
 		`INSERT INTO songs (id, path, title, artist, artist_id, album, album_id, suffix, content_type, mtime, bpm, bpm_source)
 		 VALUES ('so-1', '/m/1.flac', 'T', 'A', 'ar-1', 'Al', 'al-1', 'flac', 'audio/flac', 42, 120, 'calc')`,
-		// Back to the layout before the migration.
+		// Back to the layout before the migration, and before schema versions,
+		// so the probe steps run again.
+		`PRAGMA user_version = 0`,
 		`DROP TABLE analysis`, `DROP TABLE song_values`,
 		`ALTER TABLE songs DROP COLUMN file_size`, `ALTER TABLE songs DROP COLUMN file_mtime_ms`,
 	} {

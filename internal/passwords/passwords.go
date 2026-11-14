@@ -28,10 +28,39 @@ const (
 // ErrEmpty is returned for an empty password. An empty password never matches.
 var ErrEmpty = errors.New("password must not be empty")
 
+// MaxBytes is the longest password checked at all (#109). A longer one is
+// refused before any hashing, so a large request body costs nothing.
+const MaxBytes = 1024
+
+// gate bounds how many argon2 computations run at once in the process. Each
+// takes 19 MiB; a burst of them exhausts a small host. A full gate makes a
+// caller answer "busy" at once instead of queueing (#109).
+// Slots is how many password computations may run at once.
+const Slots = 2
+
+var gate = make(chan struct{}, Slots)
+
+// TryAcquire takes a slot for one password computation. It returns false at
+// once when all slots are busy; the caller then answers 429, without a hash.
+func TryAcquire() bool {
+	select {
+	case gate <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+// Release frees a slot taken by TryAcquire.
+func Release() { <-gate }
+
 // Hash returns the argon2id encoding of password, with a fresh random salt.
 func Hash(password string) (string, error) {
 	if password == "" {
 		return "", ErrEmpty
+	}
+	if len(password) > MaxBytes {
+		return "", fmt.Errorf("password is longer than %d bytes", MaxBytes)
 	}
 	salt := make([]byte, saltLen)
 	if _, err := rand.Read(salt); err != nil {
@@ -47,7 +76,7 @@ func Hash(password string) (string, error) {
 // (a passkey-only account), an empty password and a malformed encoding all
 // return false.
 func Verify(encoded, password string) bool {
-	if encoded == "" || password == "" {
+	if encoded == "" || password == "" || len(password) > MaxBytes {
 		return false
 	}
 	// "", "argon2id", "v=19", "m=…,t=…,p=…", salt, key
@@ -79,6 +108,9 @@ func Verify(encoded, password string) bool {
 // Burn spends the same time as Verify without a stored hash. Sign-in calls it
 // for unknown usernames, so response time does not reveal which accounts exist.
 func Burn(password string) {
+	if len(password) > MaxBytes {
+		return
+	}
 	salt := make([]byte, saltLen)
 	_ = argon2.IDKey([]byte(password), salt, timeCost, memoryKiB, threads, keyLen)
 }

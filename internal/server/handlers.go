@@ -454,7 +454,11 @@ func (s *State) GetArtists(w http.ResponseWriter, r *http.Request) {
 	if headDone(w, r) {
 		return
 	}
-	counts, _ := repoAlbumCountsByArtist(ctx, s.Pool)
+	counts, err := repoAlbumCountsByArtist(ctx, s.Pool)
+	if err != nil {
+		s.dbFailed(w, "GetArtists", err)
+		return
+	}
 	sorted := pageSlice(sortArtistsForIndex(artists, s.ignoredArticles()), pageParams(r))
 	writeOK(w, J{
 		"artists": J{
@@ -484,7 +488,11 @@ func (s *State) GetArtist(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 70, "Artist not found")
 		return
 	}
-	albums, _ := repoAlbumsByArtist(ctx, s.Pool, id)
+	albums, err := repoAlbumsByArtist(ctx, s.Pool, id)
+	if err != nil {
+		s.dbFailed(w, "GetArtist", err)
+		return
+	}
 	setTotal(w, len(albums))
 	if headDone(w, r) {
 		return
@@ -527,7 +535,11 @@ func (s *State) GetAlbum(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 70, "Album not found")
 		return
 	}
-	songs, _ := repoSongsByAlbum(ctx, s.Pool, id)
+	songs, err := repoSongsByAlbum(ctx, s.Pool, id)
+	if err != nil {
+		s.dbFailed(w, "GetAlbum", err)
+		return
+	}
 	setTotal(w, len(songs))
 	if headDone(w, r) {
 		return
@@ -589,7 +601,11 @@ func (s *State) albumList(w http.ResponseWriter, r *http.Request, wrap string) {
 	if headDone(w, r) {
 		return
 	}
-	albums, _ := repoAlbumsPaginated(ctx, s.Pool, listType, size, offset)
+	albums, err := repoAlbumsPaginated(ctx, s.Pool, listType, size, offset)
+	if err != nil {
+		s.dbFailed(w, "albumList", err)
+		return
+	}
 	out := make([]J, 0, len(albums))
 	for _, a := range albums {
 		out = append(out, albumToChild(a))
@@ -604,12 +620,20 @@ func (s *State) GetIndexes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	artists, _ := repoAllArtists(ctx, s.Pool)
+	artists, err := repoAllArtists(ctx, s.Pool)
+	if err != nil {
+		s.dbFailed(w, "GetIndexes", err)
+		return
+	}
 	setTotal(w, len(artists))
 	if headDone(w, r) {
 		return
 	}
-	counts, _ := repoAlbumCountsByArtist(ctx, s.Pool)
+	counts, err := repoAlbumCountsByArtist(ctx, s.Pool)
+	if err != nil {
+		s.dbFailed(w, "GetIndexes", err)
+		return
+	}
 	sorted := pageSlice(sortArtistsForIndex(artists, s.ignoredArticles()), pageParams(r))
 	writeOK(w, J{
 		"indexes": J{
@@ -632,7 +656,11 @@ func (s *State) GetMusicDirectory(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	if id == "1" {
-		artists, _ := repoAllArtists(ctx, s.Pool)
+		artists, err := repoAllArtists(ctx, s.Pool)
+		if err != nil {
+			s.dbFailed(w, "GetMusicDirectory", err)
+			return
+		}
 		children := make([]J, 0, len(artists))
 		for _, a := range artists {
 			children = append(children, J{
@@ -660,8 +688,17 @@ func (s *State) GetMusicDirectory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if artist, _ := repoFindArtist(ctx, s.Pool, id); artist != nil {
-		albums, _ := repoAlbumsByArtist(ctx, s.Pool, id)
+	artist, err := repoFindArtist(ctx, s.Pool, id)
+	if err != nil {
+		s.dbFailed(w, "GetMusicDirectory", err)
+		return
+	}
+	if artist != nil {
+		albums, err := repoAlbumsByArtist(ctx, s.Pool, id)
+		if err != nil {
+			s.dbFailed(w, "GetMusicDirectory", err)
+			return
+		}
 		children := make([]J, 0, len(albums))
 		for _, a := range albums {
 			var year any
@@ -694,8 +731,17 @@ func (s *State) GetMusicDirectory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if album, _ := repoFindAlbum(ctx, s.Pool, id); album != nil {
-		songs, _ := repoSongsByAlbum(ctx, s.Pool, id)
+	album, err := repoFindAlbum(ctx, s.Pool, id)
+	if err != nil {
+		s.dbFailed(w, "GetMusicDirectory", err)
+		return
+	}
+	if album != nil {
+		songs, err := repoSongsByAlbum(ctx, s.Pool, id)
+		if err != nil {
+			s.dbFailed(w, "GetMusicDirectory", err)
+			return
+		}
 		children := make([]J, 0, len(songs))
 		for _, sg := range songs {
 			children = append(children, s.songToChild(sg))
@@ -724,7 +770,11 @@ func (s *State) GetGenres(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAuth(w, r) {
 		return
 	}
-	rows, _ := repoDistinctGenres(r.Context(), s.Pool)
+	rows, err := repoDistinctGenres(r.Context(), s.Pool)
+	if err != nil {
+		s.dbFailed(w, "GetGenres", err)
+		return
+	}
 	setTotal(w, len(rows))
 	if headDone(w, r) {
 		return
@@ -754,7 +804,11 @@ func (s *State) GetSongsByGenre(w http.ResponseWriter, r *http.Request) {
 	if headDone(w, r) {
 		return
 	}
-	songs, _ := repoSongsByGenre(r.Context(), s.Pool, genre, count, offset)
+	songs, err := repoSongsByGenre(r.Context(), s.Pool, genre, count, offset)
+	if err != nil {
+		s.dbFailed(w, "GetSongsByGenre", err)
+		return
+	}
 	children := make([]J, 0, len(songs))
 	for _, sg := range songs {
 		children = append(children, s.songToChild(sg))
@@ -778,7 +832,11 @@ func (s *State) GetRandomSongs(w http.ResponseWriter, r *http.Request) {
 	if headDone(w, r) {
 		return
 	}
-	songs, _ := repoRandomSongs(r.Context(), s.Pool, size, from, to, genre)
+	songs, err := repoRandomSongs(r.Context(), s.Pool, size, from, to, genre)
+	if err != nil {
+		s.dbFailed(w, "GetRandomSongs", err)
+		return
+	}
 	children := make([]J, 0, len(songs))
 	for _, sg := range songs {
 		children = append(children, s.songToChild(sg))
@@ -797,9 +855,21 @@ func (s *State) GetStarred2(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	songs, _ := repoStarredSongs(ctx, s.Pool, caller.ID)
-	albums, _ := repoStarredAlbums(ctx, s.Pool, caller.ID)
-	artists, _ := repoStarredArtists(ctx, s.Pool, caller.ID)
+	songs, err := repoStarredSongs(ctx, s.Pool, caller.ID)
+	if err != nil {
+		s.dbFailed(w, "GetStarred2", err)
+		return
+	}
+	albums, err := repoStarredAlbums(ctx, s.Pool, caller.ID)
+	if err != nil {
+		s.dbFailed(w, "GetStarred2", err)
+		return
+	}
+	artists, err := repoStarredArtists(ctx, s.Pool, caller.ID)
+	if err != nil {
+		s.dbFailed(w, "GetStarred2", err)
+		return
+	}
 	setTotals(w, len(artists), len(albums), len(songs))
 	if headDone(w, r) {
 		return
@@ -933,27 +1003,43 @@ func (s *State) GetCoverArt(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	var filename string
+	// A database error is a 500, not a 404: a client must not cache "no cover".
+	var err error
 	switch {
 	case strings.HasPrefix(id, "al-"):
-		if a, _ := repoFindAlbum(ctx, s.Pool, id); a != nil && a.CoverArt.Valid {
+		var a *models.Album
+		a, err = repoFindAlbum(ctx, s.Pool, id)
+		if a != nil && a.CoverArt.Valid {
 			filename = a.CoverArt.String
 		}
 	case strings.HasPrefix(id, "so-"):
-		if song, _ := repoFindSong(ctx, s.Pool, id); song != nil {
+		var song *models.Song
+		song, err = repoFindSong(ctx, s.Pool, id)
+		if err == nil && song != nil {
 			if song.CoverArt.Valid {
 				filename = song.CoverArt.String
-			} else if a, _ := repoFindAlbum(ctx, s.Pool, song.AlbumID); a != nil && a.CoverArt.Valid {
-				filename = a.CoverArt.String
+			} else {
+				var a *models.Album
+				a, err = repoFindAlbum(ctx, s.Pool, song.AlbumID)
+				if a != nil && a.CoverArt.Valid {
+					filename = a.CoverArt.String
+				}
 			}
 		}
 	case strings.HasPrefix(id, "ar-"):
-		albums, _ := repoAlbumsByArtist(ctx, s.Pool, id)
+		var albums []models.Album
+		albums, err = repoAlbumsByArtist(ctx, s.Pool, id)
 		for _, a := range albums {
 			if a.CoverArt.Valid {
 				filename = a.CoverArt.String
 				break
 			}
 		}
+	}
+	if err != nil {
+		logging.Errorf("GetCoverArt %s: %v", id, err)
+		http.Error(w, "database error", http.StatusInternalServerError)
+		return
 	}
 	if filename == "" {
 		http.NotFound(w, r)
@@ -1013,17 +1099,41 @@ func (s *State) searchN(w http.ResponseWriter, r *http.Request, wrap string) {
 	albumOffset := offsetParam(r, "albumOffset")
 	songOffset := offsetParam(r, "songOffset")
 
-	na, _ := repoCountSearch(ctx, s.Pool, "artists", term)
-	nb, _ := repoCountSearch(ctx, s.Pool, "albums", term)
-	nc, _ := repoCountSearch(ctx, s.Pool, "songs", term)
+	na, err := repoCountSearch(ctx, s.Pool, "artists", term)
+	if err != nil {
+		s.dbFailed(w, "searchN", err)
+		return
+	}
+	nb, err := repoCountSearch(ctx, s.Pool, "albums", term)
+	if err != nil {
+		s.dbFailed(w, "searchN", err)
+		return
+	}
+	nc, err := repoCountSearch(ctx, s.Pool, "songs", term)
+	if err != nil {
+		s.dbFailed(w, "searchN", err)
+		return
+	}
 	setTotals(w, na, nb, nc)
 	if headDone(w, r) {
 		return
 	}
 
-	artists, _ := repoSearchArtists(ctx, s.Pool, term, artistLimit, artistOffset)
-	albums, _ := repoSearchAlbums(ctx, s.Pool, term, albumLimit, albumOffset)
-	songs, _ := repoSearchSongs(ctx, s.Pool, term, songLimit, songOffset)
+	artists, err := repoSearchArtists(ctx, s.Pool, term, artistLimit, artistOffset)
+	if err != nil {
+		s.dbFailed(w, "searchN", err)
+		return
+	}
+	albums, err := repoSearchAlbums(ctx, s.Pool, term, albumLimit, albumOffset)
+	if err != nil {
+		s.dbFailed(w, "searchN", err)
+		return
+	}
+	songs, err := repoSearchSongs(ctx, s.Pool, term, songLimit, songOffset)
+	if err != nil {
+		s.dbFailed(w, "searchN", err)
+		return
+	}
 
 	artistJSONs := make([]J, 0, len(artists))
 	for _, a := range artists {
@@ -1048,8 +1158,11 @@ func (s *State) searchN(w http.ResponseWriter, r *http.Request, wrap string) {
 
 // ── Playlists ───────────────────────────────────────────────────────────────
 
-func (s *State) playlistJSON(r *http.Request, pl *models.Playlist) J {
-	songs, _ := repoPlaylistSongs(r.Context(), s.Pool, pl.ID)
+func (s *State) playlistJSON(r *http.Request, pl *models.Playlist) (J, error) {
+	songs, err := repoPlaylistSongs(r.Context(), s.Pool, pl.ID)
+	if err != nil {
+		return nil, err
+	}
 	var durMs int64
 	for _, sg := range songs {
 		durMs += sg.DurationMs
@@ -1064,7 +1177,7 @@ func (s *State) playlistJSON(r *http.Request, pl *models.Playlist) J {
 		"created":   pl.CreatedAt,
 		"changed":   pl.UpdatedAt,
 		"coverArt":  nil,
-	}
+	}, nil
 }
 
 func (s *State) GetPlaylists(w http.ResponseWriter, r *http.Request) {
@@ -1072,7 +1185,11 @@ func (s *State) GetPlaylists(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	playlists, _ := repoAllPlaylists(r.Context(), s.Pool, caller.ID)
+	playlists, err := repoAllPlaylists(r.Context(), s.Pool, caller.ID)
+	if err != nil {
+		s.dbFailed(w, "GetPlaylists", err)
+		return
+	}
 	setTotal(w, len(playlists))
 	if headDone(w, r) {
 		return
@@ -1080,7 +1197,12 @@ func (s *State) GetPlaylists(w http.ResponseWriter, r *http.Request) {
 	playlists = pageSlice(playlists, pageParams(r))
 	out := make([]J, 0, len(playlists))
 	for i := range playlists {
-		out = append(out, s.playlistJSON(r, &playlists[i]))
+		pj, err := s.playlistJSON(r, &playlists[i])
+		if err != nil {
+			s.dbFailed(w, "GetPlaylists", err)
+			return
+		}
+		out = append(out, pj)
 	}
 	writeOK(w, J{"playlists": J{"playlist": out}})
 }
@@ -1105,7 +1227,11 @@ func (s *State) GetPlaylist(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 70, "Playlist not found")
 		return
 	}
-	songs, _ := repoPlaylistSongs(r.Context(), s.Pool, id)
+	songs, err := repoPlaylistSongs(r.Context(), s.Pool, id)
+	if err != nil {
+		s.dbFailed(w, "GetPlaylist", err)
+		return
+	}
 	setTotal(w, len(songs))
 	if headDone(w, r) {
 		return
@@ -1152,7 +1278,11 @@ func (s *State) CreatePlaylist(w http.ResponseWriter, r *http.Request) {
 	var id string
 	if existingID != "" {
 		id = existingID
-		pl, _ := repoFindPlaylist(ctx, s.Pool, caller.ID, id)
+		pl, err := repoFindPlaylist(ctx, s.Pool, caller.ID, id)
+		if err != nil {
+			s.dbFailed(w, "CreatePlaylist", err)
+			return
+		}
 		if pl == nil {
 			if err := repoCreatePlaylist(ctx, s.Pool, caller.ID, id, name, now); err != nil {
 				logging.Errorf("createPlaylist: %v", err)
@@ -1182,7 +1312,11 @@ func (s *State) CreatePlaylist(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 0, "playlist persistence error")
 		return
 	}
-	songs, _ := repoPlaylistSongs(ctx, s.Pool, id)
+	songs, err := repoPlaylistSongs(ctx, s.Pool, id)
+	if err != nil {
+		s.dbFailed(w, "CreatePlaylist", err)
+		return
+	}
 	var durMs int64
 	entry := make([]J, 0, len(songs))
 	for _, sg := range songs {
@@ -1216,7 +1350,11 @@ func (s *State) UpdatePlaylist(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 10, "Required parameter is missing: playlistId")
 		return
 	}
-	pl, _ := repoFindPlaylist(ctx, s.Pool, caller.ID, id)
+	pl, err := repoFindPlaylist(ctx, s.Pool, caller.ID, id)
+	if err != nil {
+		s.dbFailed(w, "UpdatePlaylist", err)
+		return
+	}
 	if pl == nil {
 		writeError(w, 70, "Playlist not found")
 		return
@@ -1348,7 +1486,11 @@ func (s *State) GetTopSongs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	count := clamp(intParam(r, "count", 50), 1, 500)
-	songs, _ := repoSearchSongs(r.Context(), s.Pool, artist, count, 0)
+	songs, err := repoSearchSongs(r.Context(), s.Pool, artist, count, 0)
+	if err != nil {
+		s.dbFailed(w, "GetTopSongs", err)
+		return
+	}
 	children := make([]J, 0, len(songs))
 	for _, sg := range songs {
 		if strings.EqualFold(sg.Artist, artist) {
@@ -1373,3 +1515,11 @@ func (s *State) GetLyrics(w http.ResponseWriter, r *http.Request) {
 
 // keep imports tidy when functions are unused in some build modes
 var _ = errors.Is
+
+// dbFailed answers a Subsonic request whose database read failed. The client
+// gets an error, never an empty list it might act on (#110): a sync that reads
+// "no songs" can delete local data.
+func (s *State) dbFailed(w http.ResponseWriter, op string, err error) {
+	logging.Errorf("%s: %v", op, err)
+	writeError(w, 0, "database error")
+}

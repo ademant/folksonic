@@ -85,39 +85,51 @@ func (l *authLimiter) entry(ip string, now time.Time) *authEntry {
 	return e
 }
 
-// allow reports whether ip may try a password now. When it may not, retryAfter
-// says how long until the next attempt is allowed. Allowed attempts cost
-// nothing; fail spends the budget.
+// allow reports whether ip may try a password now. It spends one token before
+// the password is hashed, so parallel attempts cannot all pass the check
+// before the first failure is counted (#109). A success gives the token back
+// (succeed); a refused attempt keeps it spent, and fail counts the failure.
+// When ip may not try, retryAfter says how long until the next attempt is allowed.
 func (l *authLimiter) allow(ip string) (ok bool, retryAfter time.Duration) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	e := l.entry(ip, l.now())
 	if e.tokens >= 1 {
+		e.tokens--
 		return true, 0
 	}
 	wait := (1 - e.tokens) / authRefill
 	return false, time.Duration(wait * float64(time.Second))
 }
 
-// fail records a failed attempt from ip. It spends a token and returns how
-// long the caller should wait before answering.
+// fail records a failed attempt from ip and returns how long the caller should
+// wait before answering. The token was spent by allow.
 func (l *authLimiter) fail(ip string) time.Duration {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	e := l.entry(ip, l.now())
-	if e.tokens >= 1 {
-		e.tokens--
-	}
 	e.fails++
 	return delayFor(e.fails)
 }
 
-// succeed clears the consecutive-failure count for ip.
+// succeed clears the consecutive-failure count for ip and gives back the token
+// that allow spent on this correct attempt.
 func (l *authLimiter) succeed(ip string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if e, ok := l.entries[ip]; ok {
 		e.fails = 0
+		e.tokens = min(authBurst, e.tokens+1)
+	}
+}
+
+// refund gives back the token spent by allow when no password was checked
+// because the server was busy. The server's load is not the client's failure.
+func (l *authLimiter) refund(ip string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if e, ok := l.entries[ip]; ok {
+		e.tokens = min(authBurst, e.tokens+1)
 	}
 }
 

@@ -38,6 +38,14 @@ func (s *State) APILogin(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusTooManyRequests, "too many failed sign-in attempts; wait before trying again")
 		return
 	}
+	if !passwords.TryAcquire() {
+		s.auth.refund(ip)
+		logAuthFailure(ip, "busy", r.URL.Path)
+		w.Header().Set("Retry-After", strconv.Itoa(retrySeconds(busyRetry)))
+		writeCoded(w, http.StatusTooManyRequests, codeBusy)
+		return
+	}
+	defer passwords.Release()
 	u, err := users.ByName(r.Context(), s.Pool, in.Username)
 	if err != nil {
 		// Unknown username: spend the same time as a wrong password.

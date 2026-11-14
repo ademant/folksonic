@@ -177,6 +177,9 @@ func RegisterWithInvite(ctx context.Context, db *sql.DB, code, username, passwor
 	if err := ValidUsername(username); err != nil {
 		return User{}, err
 	}
+	if err := CheckPassword(password); err != nil {
+		return User{}, err
+	}
 	hash, err := passwords.Hash(password)
 	if err != nil {
 		return User{}, fmt.Errorf("%w: %w", ErrInvalid, err)

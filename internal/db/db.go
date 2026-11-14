@@ -15,7 +15,25 @@ func init() {
 	sqlite3.AutoExtension(fts5.Register)
 }
 
+// DefaultCacheMB is the SQLite page cache per connection, in MiB, when none is
+// configured. Hot pages are also held by the memory map and the OS page cache,
+// so a large per-connection cache mostly duplicates them (#116).
+const DefaultCacheMB = 4
+
+// Init opens the database with the default page cache. See InitCache.
 func Init(path string) (*sql.DB, error) {
+	return InitCache(path, DefaultCacheMB)
+}
+
+// InitCache opens the database at path, applies the migrations and returns
+// the pool. cacheMB is the page cache per connection; values below 1 use
+// DefaultCacheMB. Write transactions start immediately (_txlock=immediate), so
+// a transaction that reads and then writes waits for the write lock under
+// busy_timeout rather than failing with SQLITE_BUSY (#115).
+func InitCache(path string, cacheMB int) (*sql.DB, error) {
+	if cacheMB < 1 {
+		cacheMB = DefaultCacheMB
+	}
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, fmt.Errorf("creating db parent dir %s: %w", dir, err)
@@ -27,10 +45,11 @@ func Init(path string) (*sql.DB, error) {
 			"&_pragma=synchronous(NORMAL)"+
 			"&_pragma=foreign_keys(on)"+
 			"&_pragma=busy_timeout(5000)"+
-			"&_pragma=cache_size(-20000)"+
+			"&_pragma=cache_size(%d)"+
 			"&_pragma=temp_store(memory)"+
-			"&_pragma=mmap_size(67108864)",
-		path,
+			"&_pragma=mmap_size(67108864)"+
+			"&_txlock=immediate",
+		path, -cacheMB*1024, // a negative cache_size is in KiB
 	)
 	d, err := sql.Open("sqlite3", dsn)
 	if err != nil {
@@ -46,7 +65,30 @@ func Init(path string) (*sql.DB, error) {
 	return d, nil
 }
 
+// migrate brings the schema up to date. The probe-based steps in migrateLegacy
+// run only on a database that has no schema version yet; after they stamp the
+// baseline, a start runs just the numbered steps (version.go) and the FTS
+// backfill.
 func migrate(d *sql.DB) error {
+	cur, err := userVersion(d)
+	if err != nil {
+		return err
+	}
+	if cur < schemaBaseline {
+		if err := migrateLegacy(d); err != nil {
+			return err
+		}
+	}
+	if err := applyMigrations(d, migrations); err != nil {
+		return err
+	}
+	return backfillFTS(d)
+}
+
+// migrateLegacy is the probe-based history of the schema. Every step is
+// idempotent, so an interrupted run is repeated safely until the baseline is
+// stamped (#115).
+func migrateLegacy(d *sql.DB) error {
 	if _, err := d.Exec(schema); err != nil {
 		return fmt.Errorf("running migrations: %w", err)
 	}
@@ -92,7 +134,7 @@ func migrate(d *sql.DB) error {
 	if err := migratePairingVerify(d); err != nil {
 		return fmt.Errorf("pairing verification: %w", err)
 	}
-	return backfillFTS(d)
+	return nil
 }
 
 // migrateUserScope brings starred and playlists to the per-user layout. It is

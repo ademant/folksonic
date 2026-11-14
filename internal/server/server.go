@@ -33,6 +33,8 @@ type State struct {
 	// tlsPin is the pin of the served certificate, empty over plain HTTP; the
 	// pairing QR carries it (PairURI).
 	tlsPin string
+	// proofs remembers DPoP proof ids so a proof is used once (devices.go).
+	proofs users.ProofReplay
 	// SongTags is the allowlist of file tags exposed on songs (song_tags).
 	SongTags []string
 	// IgnoredArticles are the leading words skipped when indexing artists

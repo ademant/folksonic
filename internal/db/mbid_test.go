@@ -20,6 +20,8 @@ func TestMigrationAddsMBIDAndForcesRescan(t *testing.T) {
 		"INSERT INTO albums (id, title, artist, artist_id) VALUES ('al-1', 'B', 'A', 'ar-1')",
 		"INSERT INTO songs (id, path, title, artist, artist_id, album, album_id, suffix, content_type, mtime) VALUES ('so-1', '/m/x.flac', 'x', 'A', 'ar-1', 'B', 'al-1', 'flac', 'audio/flac', 12345)",
 		"ALTER TABLE songs DROP COLUMN mbid",
+		// A database from before schema versions: the probe steps must run again.
+		"PRAGMA user_version = 0",
 	}
 	for _, q := range stmts {
 		if _, err := d.Exec(q); err != nil {
