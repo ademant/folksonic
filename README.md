@@ -559,9 +559,10 @@ round trip through two files:
 # 1. On the server: the job list (song IDs, relative paths, size and mtime).
 tinysonic analysis export -c /etc/tinysonic/tinysonic.toml -all -out jobs.json
 
-# 2. On the desktop: folksentia's batch mode runs every job against the local
-#    copy and writes one line per track. It can be stopped and resumed.
-folksentia --jobs jobs.json --music-root ~/Musik --out results.jsonl
+# 2. On the desktop: folksentia-jobs (installed with folksentia) runs every job
+#    against the local copy, -j at a time, and writes one line per track. It
+#    can be stopped and resumed.
+folksentia-jobs --jobs jobs.json --music-root ~/Musik --out results.jsonl -j 4
 
 # 3. On the server: check, then store.
 tinysonic analysis import -c /etc/tinysonic/tinysonic.toml -dry-run results.jsonl
