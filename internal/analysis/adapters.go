@@ -109,7 +109,7 @@ func parseEBUR128(stderr []byte) (*Loudness, error) {
 	return &l, nil
 }
 
-// ── folksentia: Essentia-based extractor, JSON output schema 1 ─────────────
+// ── folksentia: Essentia-based extractor, JSON output schemas 1 and 2 ─────
 
 // folksentiaBins is the waveform resolution requested from folksentia.
 const folksentiaBins = 150
@@ -120,8 +120,9 @@ const essentiaMaxBeatConfidence = 5.32
 
 type folksentiaAdapter struct{}
 
-// folksentia has no --version; the output schema it is read with is what
-// the values depend on.
+// folksentia has no --version. Schemas 1 and 2 give the same values (schema 2
+// only reports the key as numbers), so the tag stays "schema-1" and existing
+// songs are not analysed again.
 func (folksentiaAdapter) version(context.Context, string) string { return "schema-1" }
 
 func folksentiaArgs(features []string, path string) []string {
@@ -159,8 +160,10 @@ type folksentiaOutput struct {
 	Error         *string  `json:"error"`
 	BPM           *float64 `json:"bpm"`
 	BPMConfidence *float64 `json:"bpm_confidence"`
-	Key           *string  `json:"key"`
-	Scale         *string  `json:"scale"`
+	Key           *string  `json:"key"`       // schema 1
+	Scale         *string  `json:"scale"`     // schema 1
+	KeyPitch      *int     `json:"key_pitch"` // schema 2: C = 0 ... B = 11
+	KeyMode       *int     `json:"key_mode"`  // schema 2: 0 major, 1 minor
 	KeyStrength   *float64 `json:"key_strength"`
 	Silence       *struct {
 		LeadMs *float64 `json:"leadMs"`
@@ -193,6 +196,34 @@ type folksentiaOutput struct {
 	SpectralEntropy    *float64 `json:"spectral_entropy"`
 }
 
+// folksentiaSchemas are the result schemas the parser reads. The offline job
+// list keeps its own schema (folksentiaSchema in offline.go).
+var folksentiaSchemas = []int{1, 2}
+
+// folksentiaPitchNames are the tonics of folksentia's key_pitch numbers, C = 0.
+var folksentiaPitchNames = [12]string{"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"}
+
+// folksentiaKey reads the key from schema 2 (key_pitch and key_mode) or, for
+// schema 1, from key and scale. A key outside the 12 pitches or the two modes
+// is not a key.
+func folksentiaKey(o folksentiaOutput) (*Key, bool) {
+	if o.KeyPitch != nil && o.KeyMode != nil {
+		p, m := *o.KeyPitch, *o.KeyMode
+		if p < 0 || p > 11 || (m != 0 && m != 1) {
+			return nil, false
+		}
+		mode := "major"
+		if m == 1 {
+			mode = "minor"
+		}
+		return ParseKey(folksentiaPitchNames[p] + " " + mode)
+	}
+	if o.Key != nil && o.Scale != nil {
+		return ParseKey(*o.Key + " " + *o.Scale)
+	}
+	return nil, false
+}
+
 // folksentiaPartSchema is the schema of folksentia's onsets and rhythm
 // objects that is understood.
 const folksentiaPartSchema = 1
@@ -202,8 +233,8 @@ func parseFolksentia(out []byte, features []string) (Values, error) {
 	if err := json.Unmarshal(out, &o); err != nil {
 		return nil, fmt.Errorf("folksentia: reading output: %w", err)
 	}
-	if o.Schema != 1 {
-		return nil, fmt.Errorf("folksentia: output schema %d, expected 1", o.Schema)
+	if !slices.Contains(folksentiaSchemas, o.Schema) {
+		return nil, fmt.Errorf("folksentia: output schema %d, expected 1 or 2", o.Schema)
 	}
 	if o.Error != nil {
 		return nil, fmt.Errorf("folksentia: %s", shortMessage(*o.Error))
@@ -223,13 +254,11 @@ func parseFolksentia(out []byte, features []string) (Values, error) {
 				v[f] = b
 			}
 		case "key":
-			if o.Key != nil && o.Scale != nil {
-				if k, ok := ParseKey(*o.Key + " " + *o.Scale); ok {
-					if o.KeyStrength != nil {
-						k.Confidence = ptr(clamp01(*o.KeyStrength))
-					}
-					v[f] = k
+			if k, ok := folksentiaKey(o); ok {
+				if o.KeyStrength != nil {
+					k.Confidence = ptr(clamp01(*o.KeyStrength))
 				}
+				v[f] = k
 			}
 		case "loudness":
 			if o.Loudness != nil && (o.Loudness.IntegratedLufs != nil || o.Loudness.TruePeakDbtp != nil) {

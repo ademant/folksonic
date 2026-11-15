@@ -471,7 +471,7 @@ recalculation of all features skips them. Imported values are served by
 |---|---|---|
 | `builtin` | `bpm` | The estimator described above. Never replaces a BPM from tags |
 | `ffmpeg` | `loudness` | ffmpeg's `ebur128` filter. Uses `ffmpeg_path`; `[analysis.tools.ffmpeg]` may set `command` and `timeout` |
-| `folksentia` | `bpm`, `beats`, `key`, `loudness`, `silence`, `waveform`, `fingerprint`, `onsets`, `rhythm`, `spectral` | [folksentia](https://github.com/ademant/folksentia) output schema 1. One call per track for all its features. `fingerprint` needs folksentia built with libchromaprint; `onsets` a folksentia with `--onsets` (an older one fails every track with a usage error); `spectral` a folksentia with `spectral_complexity` (an older one leaves it unknown). `rhythm` and `spectral` need no option, so assigning them costs no extra analysis time |
+| `folksentia` | `bpm`, `beats`, `key`, `loudness`, `silence`, `waveform`, `fingerprint`, `onsets`, `rhythm`, `spectral` | [folksentia](https://github.com/ademant/folksentia) output schemas 1 and 2 (schema 2 reports the key as numbers, read the same way). One call per track for all its features. `fingerprint` needs folksentia built with libchromaprint; `onsets` a folksentia with `--onsets` (an older one fails every track with a usage error); `spectral` a folksentia with `spectral_complexity` (an older one leaves it unknown). `rhythm` and `spectral` need no option, so assigning them costs no extra analysis time |
 
 `[analysis.tools.<name>]` accepts two limits for tools run as child processes
 (`folksentia`, and `ffmpeg` for loudness):
@@ -621,7 +621,7 @@ folksentia itself. Paths in `jobs.json` are relative to the music folder and
 **`results.jsonl`**, one JSON object per line:
 
 ```json
-{"job": { …the job, unchanged… }, "local": {"size": 1692335, "mtimeMs": 1730900000000}, "toolVersion": "0.5.0", "result": { …folksentia schema 1… }}
+{"job": { …the job, unchanged… }, "local": {"size": 1692335, "mtimeMs": 1730900000000}, "toolVersion": "0.5.0", "result": { …folksentia schema 1 or 2… }}
 {"job": { … }, "skipped": "missing"}
 {"job": { … }, "local": { … }, "skipped": "changed"}
 ```

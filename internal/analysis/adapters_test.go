@@ -55,7 +55,7 @@ func TestParseFolksentiaUnknownAndErrors(t *testing.T) {
 	}
 	for _, c := range []struct{ out, want string }{
 		{`{"schema":1,"file":"x","error":"no audio decoded from x"}`, "no audio decoded"},
-		{`{"schema":2}`, "schema 2"},
+		{`{"schema":3}`, "schema 3"},
 		{`not json`, "reading output"},
 		{`{"schema":1,"waveform":{"bins":1,"peaks":[300]}}`, "out of range"},
 		{`{"schema":1,"beats":[0],"downbeatIndexes":[5]}`, "out of range"},
@@ -182,5 +182,35 @@ func TestParseKey(t *testing.T) {
 		if k, ok := ParseKey(in); ok {
 			t.Errorf("%q accepted as %v", in, k)
 		}
+	}
+}
+
+// Schema 2 reports the key as key_pitch and key_mode; the stored key is the
+// same text schema 1 gives (#125).
+func TestParseFolksentiaSchema2Key(t *testing.T) {
+	key := func(out string) string {
+		t.Helper()
+		v, err := parseFolksentia([]byte(out), []string{"key"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		js, _ := json.Marshal(v["key"])
+		return string(js)
+	}
+	base := `{"schema":2,"file":"t.flac","key_strength":0.81,%s}`
+	if got := key(strings.Replace(base, "%s", `"key_pitch":6,"key_mode":1`, 1)); got != `{"tonic":"F#","mode":"minor","confidence":0.81}` {
+		t.Fatalf("F# minor: %s", got)
+	}
+	if got := key(strings.Replace(base, "%s", `"key_pitch":0,"key_mode":0`, 1)); got != `{"tonic":"C","mode":"major","confidence":0.81}` {
+		t.Fatalf("C major: %s", got)
+	}
+	if got := key(strings.Replace(base, "%s", `"key_pitch":null,"key_mode":null`, 1)); got != "null" {
+		t.Fatalf("unknown key: %s", got)
+	}
+	if got := key(strings.Replace(base, "%s", `"key_pitch":12,"key_mode":0`, 1)); got != "null" {
+		t.Fatalf("pitch out of range: %s", got)
+	}
+	if got := key(strings.Replace(base, "%s", `"key_pitch":3,"key_mode":2`, 1)); got != "null" {
+		t.Fatalf("mode out of range: %s", got)
 	}
 }

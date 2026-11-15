@@ -210,7 +210,7 @@ func TestImportSkipsAndRefusesLines(t *testing.T) {
 		line(t, jobs["so-fails"], `{"schema":1,"file":"x","error":"no audio decoded"}`),
 		twiceOld,
 		line(t, unknown, folksentiaSample),
-		line(t, jobs["so-wrongschema"], `{"schema":2,"file":"x","bpm":120}`),
+		line(t, jobs["so-wrongschema"], `{"schema":3,"file":"x","bpm":120}`),
 		string(desktopGone),
 		`{"result":{"schema":1}}`,
 		twiceNew,
