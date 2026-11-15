@@ -21,7 +21,19 @@ type migration struct {
 
 // migrations are the numbered steps after the baseline, applied in order. Add
 // new ones at the end; never change or reorder one that has shipped.
-var migrations []migration
+var migrations = []migration{
+	{"song tempo in the change feed", migrateTempoChanges},
+}
+
+// migrateTempoChanges (version 2, #127) marks the songs that gain
+// tinysonicTempo as changed, so clients that sync incrementally fetch them
+// again. Albums and artists are unchanged.
+func migrateTempoChanges(tx *sql.Tx) error {
+	_, err := tx.Exec("UPDATE songs SET updated_ms = " + nowMsSQL + `
+		WHERE bpm_confidence IS NOT NULL
+		   OR id IN (SELECT song_id FROM song_values WHERE name IN ` + sqlNameList(SongObjectValues) + ")")
+	return err
+}
 
 // userVersion reads PRAGMA user_version, which is 0 on a database that has not
 // been stamped.

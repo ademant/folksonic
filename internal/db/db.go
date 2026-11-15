@@ -82,6 +82,9 @@ func migrate(d *sql.DB) error {
 	if err := applyMigrations(d, migrations); err != nil {
 		return err
 	}
+	if err := installChangeTriggers(d); err != nil {
+		return err
+	}
 	return backfillFTS(d)
 }
 

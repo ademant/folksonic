@@ -47,6 +47,9 @@ type Song struct {
 	TrackGain, AlbumGain, TrackPeak, AlbumPeak, BaseGain sql.NullFloat64
 	Meter                                                sql.NullString
 	BPM                                                  sql.NullFloat64
+	BPMConfidence                                        sql.NullFloat64 // 0..1, calculated values only
+	// Rhythm is the stored rhythm analysis (song_values, JSON), for tinysonicTempo.
+	Rhythm sql.NullString
 }
 
 type Playlist struct {

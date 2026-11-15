@@ -305,3 +305,82 @@ func TestChangeFeedMigratesLegacyDatabase(t *testing.T) {
 		t.Fatalf("second start changed the stamp: %d, want %d", got, bumped)
 	}
 }
+
+// A song's change stamp moves when the rhythm its song object carries is
+// added, changed or removed, and stays for other analysis values (#127).
+func TestChangeFeedStampsSongOnRhythm(t *testing.T) {
+	d, err := Init(filepath.Join(t.TempDir(), "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	seedChangeLibrary(t, d)
+	const song = "SELECT updated_ms FROM songs WHERE id = 'so-1'"
+	const album = "SELECT updated_ms FROM albums WHERE id = 'al-1'"
+	step := func(what, q string, wantMoved bool) {
+		t.Helper()
+		before, albumBefore := stampOf(t, d, song), stampOf(t, d, album)
+		tick()
+		if _, err := d.Exec(q); err != nil {
+			t.Fatalf("%s: %v", what, err)
+		}
+		if moved := stampOf(t, d, song) > before; moved != wantMoved {
+			t.Fatalf("%s: song stamp moved %v, want %v", what, moved, wantMoved)
+		}
+		if stampOf(t, d, album) != albumBefore {
+			t.Fatalf("%s: album stamp moved", what)
+		}
+	}
+	step("other value", `INSERT INTO song_values (song_id, name, value, changed_ms) VALUES ('so-1', 'key', '{}', 1)`, false)
+	step("rhythm added", `INSERT INTO song_values (song_id, name, value, changed_ms) VALUES ('so-1', 'rhythm', '{"barsPerMin":38}', 1)`, true)
+	step("rhythm unchanged", `UPDATE song_values SET changed_ms = 2 WHERE name = 'rhythm'`, false)
+	step("rhythm changed", `UPDATE song_values SET value = '{"barsPerMin":39}' WHERE name = 'rhythm'`, true)
+	step("rhythm removed", `DELETE FROM song_values WHERE name = 'rhythm'`, true)
+
+	// bpm_confidence is a song column: the song and, like every song
+	// change, its album and artist move.
+	before := stampOf(t, d, song)
+	tick()
+	if _, err := d.Exec(`UPDATE songs SET bpm_confidence = 0.5 WHERE id = 'so-1'`); err != nil {
+		t.Fatal(err)
+	}
+	if stampOf(t, d, song) <= before {
+		t.Fatal("bpm_confidence did not move the song stamp")
+	}
+}
+
+// Version 2 marks the songs that gain tinysonicTempo as changed (#127).
+func TestTempoMigrationStampsSongsWithTempo(t *testing.T) {
+	d, err := Init(filepath.Join(t.TempDir(), "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	seedChangeLibrary(t, d)
+	if _, err := d.Exec(`INSERT INTO songs (id, path, title, artist, artist_id, album, album_id, suffix, content_type, mtime)
+		VALUES ('so-2', '/m/y.flac', 'y', 'A', 'ar-1', 'B', 'al-1', 'flac', 'audio/flac', 1),
+		       ('so-3', '/m/z.flac', 'z', 'A', 'ar-1', 'B', 'al-1', 'flac', 'audio/flac', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	dropChangeTriggers(t, d)
+	if _, err := d.Exec(`UPDATE songs SET updated_ms = 1;
+		UPDATE songs SET bpm = 120, bpm_confidence = 0.4 WHERE id = 'so-1';
+		INSERT INTO song_values (song_id, name, value, changed_ms) VALUES ('so-2', 'rhythm', '{}', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateTempoChanges(tx); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]bool{"so-1": true, "so-2": true, "so-3": false} {
+		if moved := stampOf(t, d, "SELECT updated_ms FROM songs WHERE id = ?", id) > 1; moved != want {
+			t.Errorf("%s: stamped %v, want %v", id, moved, want)
+		}
+	}
+}

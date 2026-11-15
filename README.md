@@ -210,6 +210,7 @@ tinysonic analysis export [-c FILE] [-features …] (-all | -pending | <song id>
                                                       write a folksentia job list for an offline run
 tinysonic analysis import [-c FILE] [-dry-run] [-size-only] results.jsonl
                                                       store folksentia's results from an offline run
+tinysonic analysis tempo [-c FILE] [-tsv] [-summary]   list every song's stored tempo and count how BPM relates to the pulse (read-only)
 ```
 
 Account commands work directly on the database, so run them on the server
@@ -272,7 +273,7 @@ without a manual rescan.
 **OpenSubsonic** — responses carry `"openSubsonic": true`.
 `getOpenSubsonicExtensions` lists the extensions the server implements:
 `apiKeyAuthentication`, `formPost`, the vendor extensions `tinysonicPaging`,
-`tinysonicLibraryInfo`, `tinysonicLibraryChanges`, `tinysonicMinimal`, `tinysonicMeter` and `tinysonicStreamUrl` (below), plus `tinysonicSongTags`
+`tinysonicLibraryInfo`, `tinysonicLibraryChanges`, `tinysonicMinimal`, `tinysonicMeter`, `tinysonicTempo` and `tinysonicStreamUrl` (below), plus `tinysonicSongTags`
 when `song_tags` is set. It needs no sign-in.
 
 **Song tags (vendor extension `tinysonicSongTags`)** — with `song_tags` set,
@@ -333,7 +334,7 @@ endpoint; token auth (`t` with `s`) gets error 42.
 header `Prefer: tinysonic-minimal` (RFC 7240), objects omit optional fields that
 are constant, duplicated or derivable: songs drop `parent`, `isVideo`, `type`,
 `coverArt`, `path` and `suffix`; albums drop `title` (same as `name`) and
-`coverArt`; artists drop `coverArt`. `replayGain`, `bpm` and `tinysonicMeter` stay. Cover art ids follow a fixed rule: an
+`coverArt`; artists drop `coverArt`. `replayGain`, `bpm`, `tinysonicMeter` and `tinysonicTempo` stay. Cover art ids follow a fixed rule: an
 album's or artist's is its `id`, a song's is its `albumId`. Required fields
 (`id`, `isDir`, `title` on songs, `albumCount`, …), `mediaType` and all data
 fields (`tinysonicTags`, …) always stay, and folder browsing keeps `parent`.
@@ -352,7 +353,7 @@ files and never written back:
 | `replayGain.trackGain` / `albumGain` | Opus: `R128_TRACK_GAIN` / `R128_ALBUM_GAIN`; otherwise `REPLAYGAIN_TRACK_GAIN` / `REPLAYGAIN_ALBUM_GAIN` | R128 is Q7.8 relative to −23 LUFS and is converted to the ReplayGain reference of −18 LUFS: `value / 256 + 5` dB |
 | `replayGain.trackPeak` / `albumPeak` | `REPLAYGAIN_TRACK_PEAK` / `REPLAYGAIN_ALBUM_PEAK` | Opus R128 tags carry no peaks |
 | `replayGain.baseGain` | Opus header output gain | Sent when non-zero or together with other gains |
-| `bpm` | `BPM` (Vorbis/FLAC/Opus, MP3 `TXXX`), MP3 `TBPM`, MP4 `tmpo` | Rounded to an integer. Missing values can be calculated on the library page; a tool assigned to `bpm` replaces the tag's value (see [Track analysis](#track-analysis)) |
+| `bpm` | `BPM` (Vorbis/FLAC/Opus, MP3 `TXXX`), MP3 `TBPM`, MP4 `tmpo` | Rounded to an integer. Missing values can be calculated on the library page; a tool assigned to `bpm` replaces the tag's value (see [Tempo](#tempo)) |
 | `tinysonicMeter` | `METER`, `TIME_SIGNATURE`, `TIMESIGNATURE` (first found) | The tag text as written, e.g. `3/4`, at most 32 characters; never guessed |
 
 MP3 reads the names from `TXXX` frames, M4A from `----:com.apple.iTunes:` atoms.
@@ -370,6 +371,53 @@ cleared when the recording changed. On a folk dance library, about 60% of the
 estimates match the BPM tag within 4%; most others are off by a 3:4 or 2:1
 ratio (cross-rhythms, half or double time), so treat calculated values as a
 starting point. Each one stores a confidence (0–1).
+
+### Tempo
+
+folksonic is the single source of a song's tempo. The tempo lives in the
+database, not in the files:
+
+- **Where the value comes from.** The scan stores a file's BPM tag as the
+  first value. A tool assigned to `bpm` (folksentia) replaces the stored
+  value; the built-in estimator only fills songs without one. Files are never
+  written, so the tag keeps its original value.
+- **Changing it.** Stored values change only through the analysis:
+  `tinysonic analysis recalc` (preferred), the bulk `tinysonic analysis
+  export` / `import` (see [Offline analysis](#offline-analysis)), or
+  `POST /api/library/analysis`. A file whose audio changed is analysed again.
+- **Two views.** Song objects (`getSong`, `getAlbum`, lists, playlists,
+  `getLibraryChanges` items) carry only what a player needs to play a song and
+  change its speed: `bpm` and `tinysonicTempo`. `GET /api/analysis` returns
+  every stored value (see [Track analysis](#track-analysis)).
+
+**`tinysonicTempo` (vendor extension `tinysonicTempo`)** — an object next to
+`bpm`, sent only when one of its keys is known, kept in minimal responses:
+
+```json
+"bpm": 124,
+"tinysonicTempo": {"confidence": 0.92, "barsPerMin": 38, "barPulses": 3}
+```
+
+| Key | Meaning |
+|---|---|
+| `confidence` | 0–1, how sure the tool is of `bpm`. Only for calculated values; a BPM from a tag has none |
+| `barsPerMin` | Bars per minute, what dancers count; often steadier than `bpm` on folk dances (folksentia `rhythm`) |
+| `barPulses` | Pulses per bar, to convert between beats and bars (folksentia `rhythm`) |
+
+Clients must ignore keys they do not know. A new key raises the extension's
+version; tempo stability will follow once folksentia reports it. A change to
+any of these values counts as a change of the song in `getLibraryChanges`.
+
+**Tempo report** — `tinysonic analysis tempo` reads the database and prints
+one line per song: id, BPM, its source (`tag`, `calc` or the tool),
+the `tinysonicTempo` keys, the measured pulse rate (60 / `pulseSec`),
+`barScore`, the ratio of BPM to the pulse rate, artist and title. A summary
+counts, per BPM source, the songs whose BPM is about 1, 2, 1/2, 3/2 or 2/3
+times the pulse rate (within 4%), or none of these. BPM against `barsPerMin`
+is the meter, not an error, so the ratio is taken against the pulse. `-tsv`
+writes tab-separated lines with a header for a spreadsheet (the summary then
+goes to stderr); `-summary` prints only the summary. It is the calibration
+input for a player's playback-speed rule.
 
 ### Track analysis
 
