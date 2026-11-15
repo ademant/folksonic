@@ -366,8 +366,8 @@ func (p *Plan) ImportResults(ctx context.Context, db *sql.DB, path string, opt I
 		var head struct {
 			Schema int `json:"schema"`
 		}
-		if json.Unmarshal(l.Result, &head) != nil || head.Schema != folksentiaSchema {
-			rep.invalid(n, fmt.Sprintf("result schema %d, expected %d", head.Schema, folksentiaSchema))
+		if json.Unmarshal(l.Result, &head) != nil || !slices.Contains(folksentiaSchemas, head.Schema) {
+			rep.invalid(n, fmt.Sprintf("result schema %d, expected 1 or 2", head.Schema))
 			return nil
 		}
 		vals, runErr := parseFolksentia(l.Result, features)
