@@ -68,7 +68,7 @@ components:
       type: apiKey
       in: header
       name: DPoP
-      description: 'A paired app (device) signs each request with its Keystore key and sends the proof (RFC 9449) in the `DPoP` header. No bearer secret is sent. The proof names the method and the request URL without its query, and carries a fresh `iat` and a unique `jti`.'
+      description: 'A paired app (device) signs each request with its Keystore key and sends the proof (RFC 9449) in the `DPoP` header. No bearer secret is sent. The proof names the method and the request URL without its query, and carries a fresh `iat` and a unique `jti` (at most 128 characters). A header over 8 KB is refused.'
     apiKeyQuery:
       type: apiKey
       in: query
@@ -337,7 +337,7 @@ paths:
         With `invite`, the account is active at once and the response is a
         session. Without `invite`, the account is pending and needs
         `allow_registration` on the server; an administrator approves it with
-        `tinysonic user approve`.
+        `tinysonic user approve`. The password must be 8 to 1024 bytes.
       security: []
       requestBody:
         required: true
@@ -393,6 +393,12 @@ paths:
     post:
       tags: [Accounts]
       summary: Sign in with username and password
+      description: |
+        A correct password gives its attempt back against the per-address limit.
+        Each attempt spends budget before the password is hashed. At most two
+        password checks run at once; while both are busy, the request is
+        answered with `server_busy` and `Retry-After: 1`, and it is not counted
+        as a failure.
       security: []
       requestBody:
         required: true
@@ -406,6 +412,7 @@ paths:
                   type: string
                 password:
                   type: string
+                  maxLength: 1024
       responses:
         '200':
           description: Signed in.
@@ -414,7 +421,16 @@ paths:
               schema:
                 $ref: '#/components/schemas/Session'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          description: Wrong username or password, or the account is not active.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: |
+            Too many failed attempts from this address (`Retry-After` says when
+            to try again), or `server_busy` when every password check is in use.
+            No password was checked for `server_busy`.
   /api/logout:
     post:
       tags: [Accounts]

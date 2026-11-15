@@ -678,7 +678,11 @@ signed with a key that never leaves its Keystore.
 0. **Device proof** (`DPoP: <proof>`, RFC 9449): the app signs each request with
    its device key. The proof must name the request's method and URL (without
    its query), carry a fresh `iat` (within 60 seconds) and a `jti` not seen
-   before. Its key must belong to an active device. Devices may use `/rest/*`
+   before. A `jti` over 128 characters or a header over 8 KB is refused. The
+   key must belong to an active device, or to a pending pairing; a proof from
+   any other key is refused without being remembered, so unknown keys cannot
+   fill the replay store. Replay memory is in process: it lasts five minutes
+   and is cleared by a restart. Devices may use `/rest/*`
    and `/api/*`, but not manage the account: confirming pairings, listing and
    removing devices, and managing keys, passkeys and identities need a session.
    A device's proof is refused with `pairing_pending` until the pairing is
@@ -720,8 +724,18 @@ Passkeys remain the recommended sign-in for the web UI.
 Existing databases are migrated at the next start: stored plaintext passwords
 are hashed and the plaintext is removed. The step is idempotent.
 
+The schema version is `PRAGMA user_version`. A database without one runs the
+upgrade steps once and is then stamped. Later schema changes are numbered steps
+that each run in one transaction with their version bump, so an interrupted
+upgrade leaves the previous version.
+
 Passkey-only accounts have no password. They cannot use the password parameter
 and an empty password never matches.
+
+A password a person chooses (signup, `user add`, `user set-password` and
+invitations) must be 8 to 1024 bytes. The password in the config file is
+exempt, so an existing short one keeps working. `user set-password` ends that
+account's sessions at once; its API keys stay valid.
 
 ### Hardening the Subsonic API
 
@@ -818,7 +832,7 @@ The JSON endpoints below are described in [`docs/openapi.yaml`](docs/openapi.yam
 
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |
-| POST | `/api/register` | none | Create an account. With `invite` and `password`: active and signed in (returns a session `token`). Without an invite: pending, needs `allow_registration`, and needs a password |
+| POST | `/api/register` | none | Create an account. With `invite` and `password`: active and signed in (returns a session `token`). Without an invite: pending, needs `allow_registration`, and needs a password of 8 to 1024 bytes |
 | POST | `/api/keys` | session | Create an API key (shown once). `expires_days` sets its lifetime; without it the key lives `api_key_ttl_days` |
 | GET | `/api/keys` | session | List own keys |
 | GET | `/api/stream-url?id=so-…` | session | Signed stream URL for one song, valid 2 hours. Play it at `/rest/stream.view` or `/rest/download.view` with no other credentials |
@@ -834,7 +848,7 @@ The JSON endpoints below are described in [`docs/openapi.yaml`](docs/openapi.yam
 | POST | `/api/passkey/register/begin` · `/finish` | session | Enrol a passkey |
 | POST | `/api/passkey/login/begin` · `/finish` | none | Sign in with a passkey |
 | POST | `/api/register/passkey/begin` · `/finish` | none | Sign up with an invite and a passkey, no password. The account is created only after the passkey is verified |
-| POST | `/api/login` | none | Sign in with username and password |
+| POST | `/api/login` | none | Sign in with username and password. Refused with 429 when the address has failed too often (`Retry-After`), or `server_busy` when all password checks are in use |
 | POST | `/api/logout` | Bearer | End a session |
 | GET | `/account` | page | Account page: API keys, pairing QR, passkeys and linked identities. Redirects to sign-in when there is no session |
 | POST | `/api/pair/qr` | session | Create a pairing token and return its QR code, SVG by default; PNG with `Accept: image/png` or `?format=png` |
@@ -1262,7 +1276,7 @@ internal/
   cli/                         flag parsing, synthwave banner
   config/                      TOML loader
   passwords/                   argon2id password hashing
-  db/                          schema + migrations + FTS5 backfill
+  db/                          schema, numbered migrations (user_version) + FTS5 backfill
   models/                      Artist / Album / Song / Playlist row types
   audioinfo/                   per-format duration + bitrate probers
   scanner/                     filepath.WalkDir + tag extraction + cover art
