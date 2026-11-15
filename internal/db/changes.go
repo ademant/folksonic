@@ -16,8 +16,9 @@ import (
 // change_tombstones. Triggers maintain both, so the scanner, the watcher and
 // the handlers need no change-tracking code of their own.
 //
-// The triggers are dropped and created again on every start, so editing them
-// here takes effect without a migration.
+// The triggers are dropped and created again on every start
+// (installChangeTriggers), so editing them here takes effect without a
+// migration.
 
 // changeFloorKey stores the oldest since value the feed can answer. A client
 // that last synced before it is told to resync fully, because tombstones
@@ -72,7 +73,7 @@ var changeTables = []changeTable{
 			"path", "title", "artist", "artist_id", "album", "album_id", "genre",
 			"track_number", "disc_number", "year", "duration_ms", "bitrate", "filesize",
 			"suffix", "content_type", "cover_art", "mtime", "mbid", "tags", "meter",
-			"bpm", "bpm_source", "rg_track_gain", "rg_album_gain", "rg_track_peak",
+			"bpm", "bpm_source", "bpm_confidence", "rg_track_gain", "rg_album_gain", "rg_track_peak",
 			"rg_album_peak", "rg_base_gain",
 		},
 		key:   byID,
@@ -100,6 +101,20 @@ var changeTables = []changeTable{
 		key:   func(ref string) string { return "user_id IS " + ref + ".user_id AND id = " + ref + ".id" },
 		owner: "OLD.user_id",
 	},
+}
+
+// SongObjectValues are the song_values names that song objects carry (in
+// tinysonicTempo). Adding, changing or removing one counts as a change of
+// the song, so the change feed sends it again.
+var SongObjectValues = []string{"rhythm"}
+
+// sqlNameList is names as an SQL list of string literals: ('a', 'b').
+func sqlNameList(names []string) string {
+	q := make([]string, len(names))
+	for i, n := range names {
+		q[i] = "'" + strings.ReplaceAll(n, "'", "''") + "'"
+	}
+	return "(" + strings.Join(q, ", ") + ")"
 }
 
 // changedWhen is true when any tracked column differs between OLD and NEW.
@@ -152,6 +167,22 @@ func changeTriggerSQL() []string {
 		)
 	}
 
+	// A song's updated_ms moves when a song_values row its song object
+	// carries is added, changed or removed.
+	in := sqlNameList(SongObjectValues)
+	for _, op := range []struct{ suffix, event, when, ref string }{
+		{"ins", "INSERT", "NEW.name IN " + in, "NEW"},
+		{"upd", "UPDATE", "NEW.name IN " + in + " AND (OLD.value IS NOT NEW.value OR OLD.name IS NOT NEW.name)", "NEW"},
+		{"del", "DELETE", "OLD.name IN " + in, "OLD"},
+	} {
+		name := "chg_song_values_" + op.suffix
+		out = append(out,
+			"DROP TRIGGER IF EXISTS "+name,
+			"CREATE TRIGGER "+name+" AFTER "+op.event+" ON song_values WHEN "+op.when+" BEGIN\n"+
+				"UPDATE songs SET updated_ms = "+nowMsSQL+" WHERE id = "+op.ref+".song_id;\nEND",
+		)
+	}
+
 	// A playlist's updated_ms moves when its entries are added or removed.
 	// Reordering is a delete and an insert, so it is covered too.
 	for _, op := range []struct{ suffix, ref string }{{"ins", "NEW"}, {"del", "OLD"}} {
@@ -179,7 +210,7 @@ func joinStmts(stmts []string) string {
 }
 
 // migrateChangeFeed adds the change-feed columns and tables to a database
-// created before them, backfills updated_ms, installs the triggers and prunes
+// created before them, backfills updated_ms and prunes
 // old tombstones. It is idempotent.
 func migrateChangeFeed(d *sql.DB) error {
 	for _, t := range changeTables {
@@ -215,6 +246,13 @@ func migrateChangeFeed(d *sql.DB) error {
 		return err
 	}
 
+	// The triggers follow in migrate, once every table they watch exists.
+	return PruneChangeTombstones(context.Background(), d, time.Now())
+}
+
+// installChangeTriggers drops and creates every change trigger in one
+// transaction. migrate runs it on every start, after the numbered steps.
+func installChangeTriggers(d *sql.DB) error {
 	tx, err := d.Begin()
 	if err != nil {
 		return err
@@ -225,10 +263,7 @@ func migrateChangeFeed(d *sql.DB) error {
 			return fmt.Errorf("change triggers: %w", err)
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	return PruneChangeTombstones(context.Background(), d, time.Now())
+	return tx.Commit()
 }
 
 // ChangeFloor returns the epoch-millisecond floor below which the change feed

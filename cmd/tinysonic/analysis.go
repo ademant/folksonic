@@ -18,14 +18,15 @@ import (
 	"github.com/tsirysndr/tinysonic/internal/logging"
 )
 
-// runAnalysis handles `tinysonic analysis recalc|pending|export|import`.
+// runAnalysis handles `tinysonic analysis recalc|pending|export|import|tempo`.
 // recalc and pending run the assigned tools in this process, against the
 // database directly; a running server sees the results on its next read.
 func runAnalysis(args []string) error {
 	const synopsis = "analysis recalc [-c config] [-features key,beats] (-all | SONG_ID…)\n" +
 		"       tinysonic analysis pending [-c config]\n" +
 		"       tinysonic analysis export [-c config] [-features …] (-all | -pending | SONG_ID…) -out jobs.json\n" +
-		"       tinysonic analysis import [-c config] [-dry-run] [-size-only] results.jsonl"
+		"       tinysonic analysis import [-c config] [-dry-run] [-size-only] results.jsonl\n" +
+		"       tinysonic analysis tempo [-c config] [-tsv] [-summary]"
 	if len(args) == 0 {
 		return errors.New("usage: tinysonic " + synopsis)
 	}
@@ -35,6 +36,8 @@ func runAnalysis(args []string) error {
 		return runAnalysisExport(args[1:])
 	case "import":
 		return runAnalysisImport(args[1:])
+	case "tempo":
+		return runAnalysisTempo(args[1:])
 	default:
 		return errors.New("usage: tinysonic " + synopsis)
 	}

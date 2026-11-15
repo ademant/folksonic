@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -54,7 +55,12 @@ func TestFailedMigrationLeavesPreviousVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer d.Close()
-	before, _ := userVersion(d)
+	// Start at the baseline, so the test steps are the next versions
+	// whatever the real migrations are.
+	if _, err := d.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaBaseline)); err != nil {
+		t.Fatal(err)
+	}
+	before := schemaBaseline
 	steps := []migration{
 		{name: "ok", up: func(tx *sql.Tx) error {
 			_, err := tx.Exec("CREATE TABLE step_one (x INTEGER)")

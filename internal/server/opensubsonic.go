@@ -11,6 +11,7 @@ var baseOpenSubsonicExtensions = []J{
 	{"name": "tinysonicLibraryInfo", "versions": []int{1}},       // tinysonicLibraryInfo endpoint
 	{"name": "tinysonicMinimal", "versions": []int{1}},           // Prefer: tinysonic-minimal, see minimal.go
 	{"name": "tinysonicMeter", "versions": []int{1}},             // tinysonicMeter on songs from METER/TIME_SIGNATURE tags
+	{"name": "tinysonicTempo", "versions": []int{1}},             // tinysonicTempo on songs, see tempo.go
 	{"name": "tinysonicLibraryChanges", "versions": []int{1, 2}}, // getLibraryChanges; 2 adds include=items, see changes.go
 	{"name": "tinysonicAnalysis", "versions": []int{1, 2, 3}},    // GET /api/analysis; 2 adds fingerprints and GET /api/duplicates, 3 onsets, rhythm and spectral
 	{"name": "tinysonicDevicePairing", "versions": []int{1}},     // key-bound pairing with a verification code confirmed on both sides (#101, #103)

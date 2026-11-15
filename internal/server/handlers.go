@@ -172,6 +172,9 @@ func (st *State) songToChild(s models.Song) J {
 	if s.BPM.Valid {
 		out["bpm"] = int64(math.Round(s.BPM.Float64))
 	}
+	if t := songTempo(s); t != nil {
+		out["tinysonicTempo"] = t // vendor extension tinysonicTempo, see tempo.go
+	}
 	if s.Meter.Valid && s.Meter.String != "" {
 		out["tinysonicMeter"] = s.Meter.String // vendor extension tinysonicMeter
 	}
