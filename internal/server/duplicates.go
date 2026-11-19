@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"sync"
 	"time"
@@ -15,9 +16,9 @@ import (
 // duplicatesRetryAfter is the Retry-After (seconds) while the first search runs.
 const duplicatesRetryAfter = 10
 
-// duplicateIndex holds the last duplicate search. It is recomputed in the
-// background (at startup and after analysis jobs that changed values), never
-// in a request.
+// duplicateIndex holds the last duplicate search. It is computed in the
+// background, never in a request: first when /api/duplicates is asked for,
+// then again after analysis jobs that changed values.
 type duplicateIndex struct {
 	mu           sync.Mutex
 	groups       []analysis.DuplicateGroup
@@ -51,6 +52,9 @@ func (s *State) refreshDuplicates() {
 			if !d.dirty {
 				d.running = false
 				d.mu.Unlock()
+				// The search decodes every fingerprint; give that memory
+				// back instead of keeping the peak as resident memory.
+				debug.FreeOSMemory()
 				return
 			}
 			d.dirty = false

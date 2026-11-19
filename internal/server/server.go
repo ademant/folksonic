@@ -157,7 +157,9 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 		Progress:          progress,
 		Analysis:          analysis.NewPlan(cfg.Analysis, cfg.FFmpegPath),
 	}
-	go s.refreshDuplicates()
+	// The duplicate search is not started here: it takes tens of seconds and
+	// a few hundred MB on a large library, and nothing needs it at startup.
+	// The first GET /api/duplicates starts it (see APIDuplicates).
 	if s.Analysis.Auto {
 		// Scans and watcher updates queue analysis of what they changed; the
 		// first pass also covers a startup scan that finished before this.

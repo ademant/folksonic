@@ -40,6 +40,11 @@ RestartSec=5s
 # whole service, and a restart loop follows (see #75).
 OOMPolicy=continue
 
+# Soft limit for the Go heap: the runtime collects garbage harder as it gets
+# close, so peaks (e.g. the duplicate search) don't leave the process large.
+# It does not count analysis tools, which run as separate processes.
+Environment=GOMEMLIMIT=400MiB
+
 # Optional caps for the whole service, including its tools. Set them to leave
 # room for other services on the host. MemoryHigh slows the service down when
 # it is reached; MemoryMax makes the kernel kill processes in the unit when

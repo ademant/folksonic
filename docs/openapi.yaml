@@ -1533,8 +1533,10 @@ paths:
         fingerprints match: the bit error rate at the best alignment is at
         most 0.15, so re-encodes (FLAC and MP3) and copies on several albums
         match, other recordings of the same tune do not. The groups come from
-        a background search at startup and after analysis jobs that changed
-        values; songs removed since then are left out.
+        a background search, started by the first request after a server
+        start (answered 202 with Retry-After until it is done) and again
+        after analysis jobs that changed values; songs removed since then
+        are left out.
       responses:
         '200':
           description: The groups.
