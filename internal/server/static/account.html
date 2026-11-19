@@ -16,9 +16,15 @@
 
   <section aria-labelledby="h-app">
     <h2 id="h-app">Connect the Android app</h2>
-    <p>Show a QR code and scan it in the app. It works once and expires after five minutes, and the app then gets its own key.</p>
+    <p>Show a QR code and scan it in the app. It works once and expires after fifteen minutes, and the app then gets its own key.</p>
     <button id="showQR">Show pairing QR code</button>
     <div id="qr"><img id="qrImg" alt="Pairing QR code"></div>
+    <div id="pairLinkBox" hidden>
+      <p>A desktop app with no camera can take the same pairing as a link. Anyone who has it can pair a device for fifteen minutes, so treat it like the QR code.</p>
+      <label for="pairLink">Pairing link</label>
+      <input id="pairLink" readonly autocomplete="off" spellcheck="false">
+      <button id="copyPairLink" class="secondary">Copy link</button>
+    </div>
   </section>
 
   <section aria-labelledby="h-devices">
