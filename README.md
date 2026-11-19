@@ -865,6 +865,14 @@ The first one confirmed on both sides **uses it up**: every other pairing on it
 is rejected (`pairing_rejected`), and further scans get `pairing_token_used`.
 Rejecting a pairing on the account page also retires its QR code, so a rejected
 device cannot simply scan again; pairings already waiting on it stay open.
+The same pairing is also offered as a link, `<base_url>/pair#token=…`, on the
+account page beside the QR code. A desktop app with no camera (DanceSonic
+Studio) takes the link, or the bare token from it. The token sits in the URL
+fragment, so a browser does not send it to the server, and the server's logs
+never show it. The `/pair` page only shows the link with a copy button; it does
+not complete the pairing. Link and QR code are one token: whichever is used
+first counts, and the other is then refused. The link is a pairing secret, like
+the QR code.
 Cancelling on the phone leaves the QR code usable. Nothing is granted before
 both confirmations, and the wait ends with the QR code's 15 minutes. A paired
 device appears under "Devices", where it can be removed at any time. A device
@@ -885,7 +893,7 @@ The JSON endpoints below are described in [`docs/openapi.yaml`](docs/openapi.yam
 | GET | `/api/keys` | session | List own keys |
 | GET | `/api/stream-url?id=so-…` | session | Signed stream URL for one song, valid 2 hours. Play it at `/rest/stream.view` or `/rest/download.view` with no other credentials |
 | DELETE | `/api/keys/{id}` | session | Revoke an own key |
-| POST | `/api/pair/start` | session | Create a pairing token and QR payload |
+| POST | `/api/pair/start` | session | Create a pairing token, its QR payload (`uri`) and its link (`link`) |
 | POST | `/api/pair/complete` | token | Redeem a pairing token. With `jwk` (the app's public P-256 key) the pairing waits for both confirmations and no secret is returned (202, `"confirm": true`). Without `jwk` the legacy form returns an API key, for apps that predate device keys |
 | POST | `/api/pair/confirm` | proof of the pending key | The device's answer to the verification code: `{"result": "match"}` or `"cancel"`. 200 with the device once both sides confirmed, 202 while the owner has not |
 | GET | `/api/device/me` | device proof | The device this proof belongs to. The app polls it while the pairing waits |
@@ -898,8 +906,9 @@ The JSON endpoints below are described in [`docs/openapi.yaml`](docs/openapi.yam
 | POST | `/api/register/passkey/begin` · `/finish` | none | Sign up with an invite and a passkey, no password. The account is created only after the passkey is verified |
 | POST | `/api/login` | none | Sign in with username and password. Refused with 429 when the address has failed too often (`Retry-After`), or `server_busy` when all password checks are in use |
 | POST | `/api/logout` | Bearer | End a session |
-| GET | `/account` | page | Account page: API keys, pairing QR, passkeys and linked identities. Redirects to sign-in when there is no session |
-| POST | `/api/pair/qr` | session | Create a pairing token and return its QR code, SVG by default; PNG with `Accept: image/png` or `?format=png` |
+| GET | `/account` | page | Account page: API keys, pairing QR and link, passkeys and linked identities. Redirects to sign-in when there is no session |
+| GET | `/pair` | page | Shows a pairing link with a copy button. The token is read from the URL fragment in the browser and never sent to the server |
+| POST | `/api/pair/qr` | session | Create a pairing token and return its QR code, SVG by default; PNG with `Accept: image/png` or `?format=png`. The same token's link is in the `X-Pairing-Link` header |
 | GET | `/api/passkeys` | session | List own passkeys (`id`, `label`, `createdAt`) |
 | DELETE | `/api/passkeys/{id}` | session | Remove an own passkey. Refused (409) when it is the account's last sign-in method |
 | GET | `/api/oidc/status` | none | `{"enabled": bool}`, so the page knows whether to offer single sign-on |
@@ -930,7 +939,7 @@ passkey endpoints return 503, and every other method keeps working.
 manage sign-in. After sign-in the browser goes there. It offers:
 
 - **Pairing QR**, generated only when the button is pressed. It is an SVG
-  (PNG as fallback) that works once and expires after five minutes.
+  (PNG as fallback) that works once and expires after fifteen minutes.
 - **API keys**: create one with a label and an optional expiry (shown once),
   list them, and revoke them.
 - **Passkeys**: add one with a name, list them, and remove them.

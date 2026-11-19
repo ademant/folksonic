@@ -251,9 +251,12 @@ components:
         uri:
           type: string
           description: '`tinysonic://pair?server=<base_url>&token=<token>`. This is what the QR code encodes.'
+        link:
+          type: string
+          description: '`<base_url>/pair#token=<token>`. The token is in the fragment, so a browser does not send it to the server.'
         expiresIn:
           type: integer
-          description: Seconds until the token expires (300).
+          description: Seconds until the token expires (900).
     Passkey:
       type: object
       required: [id, label, createdAt]
@@ -725,8 +728,8 @@ paths:
       security:
         - bearerAuth: []
       tags: [Device pairing]
-      summary: Create a pairing token and its QR payload
-      description: The token is single-use and expires after 5 minutes. The app redeems it at `/api/pair/complete`.
+      summary: Create a pairing token, its QR payload and its link
+      description: The token is single-use and expires after 15 minutes. The app redeems it at `/api/pair/complete`. `link` is the same token as an HTTPS link for a desktop app (see `GET /pair`).
       responses:
         '201':
           description: Token created.
@@ -818,7 +821,8 @@ paths:
         Creates the same token as `/api/pair/start` and returns it as a QR
         code. SVG is the default. PNG is returned when the request has
         `Accept: image/png` (and not `image/svg+xml`) or `?format=png`.
-        Responses are not cached.
+        The same token is also returned as the link `<base_url>/pair#token=…`
+        in the `X-Pairing-Link` response header. Responses are not cached.
       responses:
         '200':
           description: QR code image.

@@ -519,6 +519,7 @@ func (s *State) routes() *http.ServeMux {
 	mux.HandleFunc("DELETE /api/oidc/identities/{id}", s.APIUnlinkIdentity)
 	mux.HandleFunc("GET /login", s.ServeLoginPage)
 	mux.HandleFunc("GET /account", s.ServeAccountPage)
+	mux.HandleFunc("GET /pair", s.ServePairPage)
 	mux.HandleFunc("GET /library", s.ServeLibraryPage)
 	mux.HandleFunc("GET /impressum", s.ServeImpressum)
 	mux.HandleFunc("GET /static/{name}", s.ServeStatic)

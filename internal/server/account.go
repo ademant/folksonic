@@ -99,6 +99,8 @@ func (s *State) APIPairQR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
+	// The same token as a link, for a desktop app that cannot scan (#129).
+	w.Header().Set("X-Pairing-Link", PairLink(s.serverURL(r), token))
 	if wantPNG(r) {
 		png, err := code.PNG(256)
 		if err != nil {

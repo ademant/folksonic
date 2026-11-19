@@ -261,6 +261,7 @@ func (s *State) APIPairStart(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, J{
 		"token":     token,
 		"uri":       PairURI(server, token, s.tlsPin),
+		"link":      PairLink(server, token),
 		"pin":       nullableString(s.tlsPin),
 		"expiresIn": int(users.PairingTTL / time.Second),
 	})

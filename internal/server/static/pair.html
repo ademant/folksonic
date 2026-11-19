@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Pair a device</title>
+<link rel="stylesheet" href="static/login.css">
+</head>
+<body>
+<main>
+  <h1>Pair a device</h1>
+  <p>Copy this link and paste it into the app that pairs with this server, such as DanceSonic Studio. The link works once and expires after 15 minutes.</p>
+  <p>Anyone who has the link can pair a device for those 15 minutes, so keep it private. The app then asks you to confirm a six-digit code on your account page, as for the QR code.</p>
+  <label for="link">Pairing link</label>
+  <input id="link" readonly autocomplete="off" spellcheck="false">
+  <button id="copy" disabled>Copy link</button>
+  <div id="msg" role="status"></div>
+</main>
+<script src="static/pair.js"></script>
+</body>
+</html>

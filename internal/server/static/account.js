@@ -203,22 +203,38 @@
     $("qrImg").src = qrURL;
     $("qr").style.display = "block";
   }
+  // pairingImage returns the QR image and the pairing link for the same token.
   async function pairingImage(accept) {
     var r = await raw("POST", "pair/qr", undefined, accept);
     if (!r.ok) throw new Error((await r.json().catch(function () { return {}; })).error || ("HTTP " + r.status));
-    return r.blob();
+    return { blob: await r.blob(), link: r.headers.get("X-Pairing-Link") || "" };
+  }
+  function showPairLink(link) {
+    $("pairLink").value = link;
+    $("pairLinkBox").hidden = !link;
   }
   $("showQR").addEventListener("click", async function () {
     try {
-      var blob;
-      try { blob = await pairingImage("image/svg+xml"); } catch (e) { blob = await pairingImage("image/png"); }
-      showQR(blob);
-      say("Scan the code in the app within five minutes.");
+      var got;
+      try { got = await pairingImage("image/svg+xml"); } catch (e) { got = await pairingImage("image/png"); }
+      showQR(got.blob);
+      showPairLink(got.link);
+      say("Scan the code in the app within fifteen minutes.");
     } catch (e) { say(e.message); }
   });
   $("qrImg").addEventListener("error", async function () {
     if (qrURL && $("qrImg").dataset.png !== "1") {
-      try { showQR(await pairingImage("image/png")); $("qrImg").dataset.png = "1"; } catch (e) { say(e.message); }
+      try { showQR((await pairingImage("image/png")).blob); $("qrImg").dataset.png = "1"; } catch (e) { say(e.message); }
+    }
+  });
+  $("copyPairLink").addEventListener("click", async function () {
+    var input = $("pairLink");
+    try {
+      await navigator.clipboard.writeText(input.value);
+      say("Pairing link copied.");
+    } catch (e) {
+      input.select();
+      say("Select the link and copy it.");
     }
   });
 
