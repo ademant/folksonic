@@ -162,8 +162,11 @@ func RevokeAPIKey(ctx context.Context, db *sql.DB, userID, keyID int64) error {
 }
 
 // CreatePairingToken issues a single-use token a device can redeem for an
-// API key. It expires after PairingTTL.
+// API key. It expires after PairingTTL. Old tokens are pruned first.
 func CreatePairingToken(ctx context.Context, db *sql.DB, userID int64) (string, error) {
+	if _, err := PrunePairingTokens(ctx, db, time.Now()); err != nil {
+		return "", err
+	}
 	plain, err := randomToken(pairingPrefix)
 	if err != nil {
 		return "", err
@@ -175,6 +178,19 @@ func CreatePairingToken(ctx context.Context, db *sql.DB, userID int64) (string, 
 		return "", err
 	}
 	return plain, nil
+}
+
+// PrunePairingTokens deletes pairing tokens, used or not, that expired more
+// than pairingKeep before now (#134). Until then a late or repeated request
+// with the token still learns that it expired or was used; afterwards it is
+// refused like any unknown token. It returns how many were deleted.
+func PrunePairingTokens(ctx context.Context, db *sql.DB, now time.Time) (int64, error) {
+	res, err := db.ExecContext(ctx,
+		"DELETE FROM pairing_tokens WHERE expires_at < ?", ts(now.Add(-pairingKeep)))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // ErrPairingExpired is returned for a pairing token past its time limit. It

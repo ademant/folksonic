@@ -211,3 +211,88 @@ func TestExpiredInviteIsDistinguished(t *testing.T) {
 		t.Fatalf("unknown code: err = %v, want plain ErrInviteInvalid", err)
 	}
 }
+
+// TestPrunePairingTokens: tokens are deleted pairingKeep after they expire,
+// used or not (#134); until then they keep their specific refusal.
+func TestPrunePairingTokens(t *testing.T) {
+	ctx := context.Background()
+	pool := testDB(t)
+	bob, _ := Create(ctx, pool, "bob", "pw", RoleUser, StatusActive)
+	now := time.Now()
+	// Tokens are created first and aged afterwards: CreatePairingToken
+	// itself prunes, which would remove the ones aged before it.
+	toks := make([]string, 5)
+	for i := range toks {
+		tok, err := CreatePairingToken(ctx, pool, bob.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		toks[i] = tok
+	}
+	next := 0
+	set := func(tok string, expires time.Time, used bool) string {
+		t.Helper()
+		var usedAt any
+		if used {
+			usedAt = ts(expires.Add(-time.Minute))
+		}
+		if _, err := pool.ExecContext(ctx, "UPDATE pairing_tokens SET expires_at = ?, used_at = ? WHERE token_hash = ?",
+			ts(expires), usedAt, hashToken(tok)); err != nil {
+			t.Fatal(err)
+		}
+		return tok
+	}
+	mk := func(expires time.Time, used bool) string {
+		t.Helper()
+		next++
+		return set(toks[next-1], expires, used)
+	}
+	oldUnused := mk(now.Add(-pairingKeep-time.Hour), false)
+	oldUsed := mk(now.Add(-pairingKeep-time.Minute), true)
+	recentExpired := mk(now.Add(-pairingKeep+time.Hour), false)
+	recentUsed := mk(now.Add(time.Minute), true)
+	live := mk(now.Add(PairingTTL), false)
+
+	n, err := PrunePairingTokens(ctx, pool, now)
+	if err != nil || n != 2 {
+		t.Fatalf("pruned %d, %v; want 2", n, err)
+	}
+	exists := func(tok string) bool {
+		var c int
+		if err := pool.QueryRowContext(ctx, "SELECT COUNT(*) FROM pairing_tokens WHERE token_hash = ?", hashToken(tok)).Scan(&c); err != nil {
+			t.Fatal(err)
+		}
+		return c == 1
+	}
+	for name, tok := range map[string]string{"old unused": oldUnused, "old used": oldUsed} {
+		if exists(tok) {
+			t.Errorf("%s token kept", name)
+		}
+	}
+	for name, tok := range map[string]string{"recently expired": recentExpired, "recently used": recentUsed, "live": live} {
+		if !exists(tok) {
+			t.Errorf("%s token deleted", name)
+		}
+	}
+	// Within the grace period the refusal still says why.
+	if _, _, err := RedeemPairingToken(ctx, pool, recentExpired, "phone"); !errors.Is(err, ErrPairingExpired) {
+		t.Fatalf("recently expired: %v, want ErrPairingExpired", err)
+	}
+	if _, err := CompleteDevicePairing(ctx, pool, recentUsed, "Phone", "jkt-1", "203.0.113.5", now); !errors.Is(err, ErrPairingTokenUsed) {
+		t.Fatalf("recently used: %v, want ErrPairingTokenUsed", err)
+	}
+	// A pruned token is unknown.
+	if _, _, err := RedeemPairingToken(ctx, pool, oldUnused, "phone"); !errors.Is(err, ErrNotFound) || errors.Is(err, ErrPairingExpired) {
+		t.Fatalf("pruned: %v, want plain ErrNotFound", err)
+	}
+
+	// Creating a token prunes too.
+	set(live, now.Add(-pairingKeep-time.Hour), false)
+	if _, err := CreatePairingToken(ctx, pool, bob.ID); err != nil {
+		t.Fatal(err)
+	}
+	var left int
+	if err := pool.QueryRowContext(ctx, "SELECT COUNT(*) FROM pairing_tokens WHERE expires_at < ?", ts(now.Add(-pairingKeep))).Scan(&left); err != nil || left != 0 {
+		t.Fatalf("old tokens after create: %d, %v", left, err)
+	}
+}

@@ -162,6 +162,10 @@
   }
   async function refreshDevices() {
     var pending = (await api("GET", "pair/pending")).pending || [];
+    // A pairing that started after the QR code was shown has used it (#133).
+    if (qrBaseline && pending.some(function (p) { return !qrBaseline[p.id]; })) {
+      hidePairing("Compare the code with the one in the app.");
+    }
     renderPending(pending);
     renderDevices((await api("GET", "devices")).devices || []);
   }
@@ -196,7 +200,22 @@
   });
 
   // Pairing QR: SVG first, PNG when the SVG cannot be fetched or shown.
+  // QR code and link are hidden again once a pairing has started or the
+  // token has expired (#133): the token works once, for fifteen minutes.
   var qrURL = null;
+  var qrBaseline = null; // ids of pairings pending when the QR was shown
+  var qrTimer = null;
+  function hidePairing(message) {
+    qrBaseline = null;
+    clearTimeout(qrTimer);
+    $("qr").style.display = "none";
+    $("qrImg").removeAttribute("src");
+    delete $("qrImg").dataset.png;
+    if (qrURL) URL.revokeObjectURL(qrURL);
+    qrURL = null;
+    showPairLink("");
+    say(message);
+  }
   function showQR(blob) {
     if (qrURL) URL.revokeObjectURL(qrURL);
     qrURL = URL.createObjectURL(blob);
@@ -215,10 +234,17 @@
   }
   $("showQR").addEventListener("click", async function () {
     try {
+      var baseline = {};
+      ((await api("GET", "pair/pending")).pending || []).forEach(function (p) { baseline[p.id] = true; });
       var got;
       try { got = await pairingImage("image/svg+xml"); } catch (e) { got = await pairingImage("image/png"); }
       showQR(got.blob);
       showPairLink(got.link);
+      qrBaseline = baseline;
+      clearTimeout(qrTimer);
+      qrTimer = setTimeout(function () {
+        hidePairing("The pairing code expired. Show a new one to pair a device.");
+      }, 15 * 60 * 1000);
       say("Scan the code in the app within fifteen minutes.");
     } catch (e) { say(e.message); }
   });

@@ -138,7 +138,7 @@ func TestAccountPageServedWithoutSessionCheck(t *testing.T) {
 	s := newTestState(t)
 	rec := httptest.NewRecorder()
 	s.routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/account", nil))
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Connect the Android app") {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Connect an app") {
 		t.Fatalf("account page: status %d", rec.Code)
 	}
 	if !strings.Contains(rec.Header().Get("Content-Security-Policy"), "img-src 'self' blob:") {

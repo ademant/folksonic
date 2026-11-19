@@ -552,17 +552,22 @@ func mountAt(prefix string, h http.Handler) http.Handler {
 	return outer
 }
 
-// maintainKeys revokes keys that have gone unused for KeyIdle, at start and once
-// a day, and logs each one so an administrator can see it.
+// maintainKeys revokes keys that have gone unused for KeyIdle and deletes
+// expired pairing tokens, at start and once a day, and logs each revoked key
+// so an administrator can see it.
 func (s *State) maintainKeys(ctx context.Context) {
 	sweep := func() {
 		revoked, err := users.RevokeIdleKeys(ctx, s.Pool, users.KeyIdle)
 		if err != nil {
 			logging.Warnf("api key idle check failed: %v", err)
-			return
 		}
 		for _, k := range revoked {
 			logging.Infof("api key revoked: idle id=%d label=%q", k.ID, k.Label)
+		}
+		if n, err := users.PrunePairingTokens(ctx, s.Pool, time.Now()); err != nil {
+			logging.Warnf("pairing token cleanup failed: %v", err)
+		} else if n > 0 {
+			logging.Infof("pairing tokens: %d expired removed", n)
 		}
 	}
 	sweep()
