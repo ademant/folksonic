@@ -874,6 +874,11 @@ never show it. The `/pair` page only shows the link with a copy button; it does
 not complete the pairing. Link and QR code are one token: whichever is used
 first counts, and the other is then refused. The link is a pairing secret, like
 the QR code.
+The account page hides QR code and link as soon as a pairing on them starts
+waiting for confirmation, and when their 15 minutes are up; "Show pairing QR
+code" makes a new one. Used and expired pairing tokens are deleted a day after
+they expire, at the next pairing or in the daily sweep; until then a late
+request still learns that the token expired or was used.
 Cancelling on the phone leaves the QR code usable. Nothing is granted before
 both confirmations, and the wait ends with the QR code's 15 minutes. A paired
 device appears under "Devices", where it can be removed at any time. A device
