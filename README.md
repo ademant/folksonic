@@ -469,10 +469,11 @@ Fingerprints are decoded in Go and compared by bit error rate at their best
 alignment; candidate pairs come from an index of sub-fingerprints, so the
 library is not compared pair by pair. Re-encodes and copies on several albums
 match, other recordings of the same tune do not. The search runs in the
-background at startup and after analysis jobs that changed values (about 2 s
-for 5,000 tracks); fingerprints added with the CLI while the server runs are
-included after the next job or restart. 202 with `Retry-After` while the first
-search runs.
+background, first when `/api/duplicates` is asked for after a start, then after
+analysis jobs that changed values (40 s and a few hundred MB for 5,000 tracks
+on a small server; the memory is given back afterwards). Fingerprints added
+with the CLI while the server runs are included after the next job or restart.
+202 with `Retry-After` while the first search runs.
 
 Each feature is assigned to one tool in the config. A feature without a tool
 is not computed:
