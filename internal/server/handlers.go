@@ -607,35 +607,6 @@ func (s *State) GetAlbumList(w http.ResponseWriter, r *http.Request) {
 	s.albumList(w, r, "albumList")
 }
 
-func (s *State) albumList(w http.ResponseWriter, r *http.Request, wrap string) {
-	if !s.requireAuth(w, r) {
-		return
-	}
-	listType := queryFirst(r, "type")
-	if listType == "" {
-		listType = "alphabeticalByName"
-	}
-	size := clamp(intParam(r, "size", 10), 1, 500)
-	offset := max0(intParam(r, "offset", 0))
-	ctx := r.Context()
-	if total, err := repoCount(ctx, s.Pool, "SELECT COUNT(*) FROM albums"); err == nil {
-		setTotal(w, total)
-	}
-	if headDone(w, r) {
-		return
-	}
-	albums, err := repoAlbumsPaginated(ctx, s.Pool, listType, size, offset)
-	if err != nil {
-		s.dbFailed(w, "albumList", err)
-		return
-	}
-	out := make([]J, 0, len(albums))
-	for _, a := range albums {
-		out = append(out, albumToChild(a))
-	}
-	writeOK(w, J{wrap: J{"album": out}})
-}
-
 // ── Folder browsing ─────────────────────────────────────────────────────────
 
 func (s *State) GetIndexes(w http.ResponseWriter, r *http.Request) {
@@ -1161,20 +1132,6 @@ func (s *State) Scrobble(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, J{})
 }
 
-func (s *State) GetNowPlaying(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAuth(w, r) {
-		return
-	}
-	writeOK(w, J{"nowPlaying": J{"entry": []J{}}})
-}
-
-func (s *State) UpdateNowPlaying(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAuth(w, r) {
-		return
-	}
-	writeOK(w, J{})
-}
-
 // ── Search ──────────────────────────────────────────────────────────────────
 
 func (s *State) Search3(w http.ResponseWriter, r *http.Request) {
@@ -1577,50 +1534,6 @@ func (s *State) GetAlbumInfo(w http.ResponseWriter, r *http.Request) {
 			"largeImageUrl":  "",
 		},
 	})
-}
-
-func (s *State) GetSimilarSongs(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAuth(w, r) {
-		return
-	}
-	writeOK(w, J{"similarSongs": J{"song": []J{}}})
-}
-
-func (s *State) GetSimilarSongs2(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAuth(w, r) {
-		return
-	}
-	writeOK(w, J{"similarSongs2": J{"song": []J{}}})
-}
-
-func (s *State) GetTopSongs(w http.ResponseWriter, r *http.Request) {
-	caller, ok := s.requireCaller(w, r)
-	if !ok {
-		return
-	}
-	artist := queryFirst(r, "artist")
-	if artist == "" {
-		writeOK(w, J{"topSongs": J{"song": []J{}}})
-		return
-	}
-	count := clamp(intParam(r, "count", 50), 1, 500)
-	songs, err := repoSearchSongs(r.Context(), s.Pool, artist, count, 0)
-	if err != nil {
-		s.dbFailed(w, "GetTopSongs", err)
-		return
-	}
-	plays, err := s.playsFor(r.Context(), caller.ID, songs)
-	if err != nil {
-		s.dbFailed(w, "GetTopSongs", err)
-		return
-	}
-	children := make([]J, 0, len(songs))
-	for _, sg := range songs {
-		if strings.EqualFold(sg.Artist, artist) {
-			children = append(children, s.songToChild(sg, plays))
-		}
-	}
-	writeOK(w, J{"topSongs": J{"song": children}})
 }
 
 func (s *State) GetLyrics(w http.ResponseWriter, r *http.Request) {

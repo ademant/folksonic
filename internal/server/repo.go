@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"strings"
 	"unicode"
 
@@ -107,35 +106,6 @@ func repoFindAlbum(ctx context.Context, db *sql.DB, id string) (*models.Album, e
 		return nil, err
 	}
 	return &a, nil
-}
-
-func repoAlbumsPaginated(ctx context.Context, db *sql.DB, listType string, size, offset int64) ([]models.Album, error) {
-	// The album id breaks ties, so paging through a list is stable.
-	order := "ORDER BY a.title COLLATE NOCASE, a.id"
-	switch listType {
-	case "alphabeticalByArtist":
-		order = "ORDER BY a.artist COLLATE NOCASE, a.title COLLATE NOCASE, a.id"
-	case "newest":
-		// Subsonic "newest" means recently added, not release year.
-		order = "ORDER BY a_created DESC, a.id"
-	case "random":
-		order = "ORDER BY RANDOM()"
-	}
-	q := fmt.Sprintf("SELECT %s FROM albums a %s LIMIT ? OFFSET ?", albumCols, order)
-	rows, err := db.QueryContext(ctx, q, size, offset)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []models.Album
-	for rows.Next() {
-		a, err := scanAlbum(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, a)
-	}
-	return out, rows.Err()
 }
 
 // ── Songs ────────────────────────────────────────────────────────────────────
