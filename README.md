@@ -390,6 +390,24 @@ the account's players and their last reported state. (#157)
 - Audio still comes from the library. Bluetooth is not part of this server; it
   belongs to the apps.
 
+### Device relay
+
+Devices of one account can find each other and exchange messages without the
+local network (#159). A device publishes its record with
+`PUT /api/relay/devices/{id}` (kind `studio` or `phone`, a name, and public key
+material that folksonic never reads), lists its account's records with
+`GET /api/relay/devices`, and removes its own with `DELETE`. Another account
+never sees them.
+
+The relay is a WebSocket at `GET /api/relay/connect?device={id}`, written on the
+standard library (RFC 6455). It forwards each binary frame to the recipient of
+the same account and nothing else. The devices encrypt the payload end to end,
+so folksonic sees only sizes, addresses and times. Nothing is stored or logged.
+A frame to a device that is not connected is dropped, and the sender gets a
+`{"type":"undelivered"}` note. Limits: 16 KiB per message, 30 messages a second
+(burst 60), 8 devices connected per account, and a drop after 60 seconds of
+silence. Credentials are headers, never the URL.
+
 ### Personal ratings
 
 `setRating` (`id`, `rating` 0 to 5) stores the caller's star rating of a song;

@@ -26,6 +26,8 @@ import (
 
 // State is shared by all handlers.
 type State struct {
+	// relay routes frames between a user's devices (#159); the zero value is ready.
+	relay     relayHub
 	Pool      *sql.DB
 	MusicDirs []string
 	// stream caches the key that signs stream URLs; see streamurl.go.
@@ -321,6 +323,10 @@ type recordedResponse struct {
 	log         *reqLog
 }
 
+// Unwrap lets http.ResponseController reach the connection, for the WebSocket
+// relay to hijack it (#159).
+func (r *recordedResponse) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
 func (r *recordedResponse) WriteHeader(s int) {
 	if r.wroteHeader {
 		return
@@ -516,6 +522,10 @@ func (s *State) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/remote/players/{id}/state", s.APIRemoteReport)
 	mux.HandleFunc("GET /api/remote/players/{id}/commands", s.APIRemoteCommands)
 	mux.HandleFunc("POST /api/remote/players/{id}/commands", s.APIRemoteSend)
+	mux.HandleFunc("GET /api/relay/devices", s.APIRelayDevices)
+	mux.HandleFunc("PUT /api/relay/devices/{id}", s.APIRelayPutDevice)
+	mux.HandleFunc("DELETE /api/relay/devices/{id}", s.APIRelayDeleteDevice)
+	mux.HandleFunc("GET /api/relay/connect", s.APIRelayConnect)
 	mux.HandleFunc("GET /api/pair/pending", s.APIPendingPairings)
 	mux.HandleFunc("POST /api/pair/pending/{id}/confirm", s.APIConfirmPendingPairing)
 	mux.HandleFunc("POST /api/pair/confirm", s.APIPairConfirm)

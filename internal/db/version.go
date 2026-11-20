@@ -30,6 +30,7 @@ var migrations = []migration{
 	{"device authorization grant and tokens", migrateDeviceGrants},
 	{"personal song ratings", migrateUserRatings},
 	{"remote playback control", migrateRemotePlayback},
+	{"device registry for remote control", migrateRelayDevices},
 }
 
 // migrateBookmarks (version 4, #139) adds one bookmark per user and song. The
@@ -269,4 +270,21 @@ func migrateRemotePlayback(tx *sql.Tx) error {
 		}
 	}
 	return nil
+}
+
+// migrateRelayDevices (version 10, #159) adds the device registry: each device of
+// a user publishes a public record (kind, name and public key material). The
+// relay only rendezvouses on it; trust comes from the devices. The table is
+// created only when missing, so the step is idempotent.
+func migrateRelayDevices(tx *sql.Tx) error {
+	_, err := tx.Exec(`CREATE TABLE IF NOT EXISTS relay_devices (
+		user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		device_id   TEXT NOT NULL,
+		kind        TEXT NOT NULL,
+		name        TEXT NOT NULL DEFAULT '',
+		public_key  TEXT NOT NULL,
+		updated_ms  INTEGER NOT NULL,
+		PRIMARY KEY (user_id, device_id)
+	)`)
+	return err
 }
