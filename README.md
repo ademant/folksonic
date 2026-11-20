@@ -372,6 +372,24 @@ estimates match the BPM tag within 4%; most others are off by a 3:4 or 2:1
 ratio (cross-rhythms, half or double time), so treat calculated values as a
 starting point. Each one stores a confidence (0–1).
 
+### Remote playback
+
+A player (an app with its own player, such as DanceSonic Studio) reports its
+state with `POST /api/remote/players/{id}/state` and long-polls
+`GET /api/remote/players/{id}/commands` for commands. Any app of the same account
+sends a command with `POST /api/remote/players/{id}/commands`
+(`play`, `pause`, `seek`, `next`, `previous`). `GET /api/remote/players` lists
+the account's players and their last reported state. (#157)
+
+- Commands are obeyed in the order sent, so the last one wins. The player
+  reports the controller it obeyed last.
+- A player acknowledges commands with `applied_seq`. Only commands after that
+  are delivered, and commands older than five minutes are never delivered, so
+  a reconnecting player does not replay stale commands.
+- Queue changes stay on the saved play queue, so they work without live control.
+- Audio still comes from the library. Bluetooth is not part of this server; it
+  belongs to the apps.
+
 ### Personal ratings
 
 `setRating` (`id`, `rating` 0 to 5) stores the caller's star rating of a song;
