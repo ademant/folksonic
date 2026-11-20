@@ -426,6 +426,8 @@ func (s *State) routes() *http.ServeMux {
 
 	// System
 	register("ping", s.Ping)
+	register("getLicense", s.GetLicense)
+	register("tokenInfo", s.GetTokenInfo)
 	register("getOpenSubsonicExtensions", s.GetOpenSubsonicExtensions)
 	register("getUser", s.GetUser)
 	register("getMusicFolders", s.GetMusicFolders)
