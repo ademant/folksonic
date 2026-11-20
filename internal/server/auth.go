@@ -49,6 +49,10 @@ func (s *State) resolveCaller(r *http.Request) (users.User, bool) {
 		}
 		return u, true
 	}
+	// A device grant's access token, with a proof from the key it was issued to (grant.go).
+	if tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "DPoP "); ok {
+		return s.verifyGrant(r, tok)
+	}
 	// A paired app signs each request with its key (devices.go). No secret is sent.
 	if proof := r.Header.Get("DPoP"); proof != "" {
 		return s.verifyDevice(r, proof)

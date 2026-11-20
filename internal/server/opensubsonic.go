@@ -15,6 +15,7 @@ var baseOpenSubsonicExtensions = []J{
 	{"name": "tinysonicLibraryChanges", "versions": []int{1, 2}}, // getLibraryChanges; 2 adds include=items, see changes.go
 	{"name": "tinysonicAnalysis", "versions": []int{1, 2, 3}},    // GET /api/analysis; 2 adds fingerprints and GET /api/duplicates, 3 onsets, rhythm and spectral
 	{"name": "tinysonicDevicePairing", "versions": []int{1}},     // key-bound pairing with a verification code confirmed on both sides (#101, #103)
+	{"name": "tinysonicDeviceGrant", "versions": []int{1}},       // device grant tokens for our apps: /api/device/*, see grant.go (#93)
 	{"name": "songLyrics", "versions": []int{1}},                 // getLyricsBySongId, lyrics from tags, unsynchronised only (#142)
 }
 

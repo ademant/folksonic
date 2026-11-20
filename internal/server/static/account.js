@@ -169,6 +169,22 @@
     renderPending(pending);
     renderDevices((await api("GET", "devices")).devices || []);
   }
+  $("approveCode").addEventListener("click", async function () {
+    var code = $("userCode").value.trim();
+    if (!code) { say("Type the code from the app first."); return; }
+    try {
+      await api("POST", "device/approve", { user_code: code });
+      $("userCode").value = "";
+      say("Approved. The app will finish signing in.");
+    } catch (e) { say(e.message); }
+  });
+  $("revokeGrants").addEventListener("click", async function () {
+    if (!confirm("Sign out every app that signed in with a code? Apps paired with a QR code are not affected.")) return;
+    try {
+      var j = await api("POST", "device/revoke");
+      say(j.revoked ? "Signed out " + j.revoked + " app(s)." : "No apps were signed in with a code.");
+    } catch (e) { say(e.message); }
+  });
   $("revokeAllKeys").addEventListener("click", async function () {
     if (!confirm("Revoke every API key on this account? Apps and players using them will have to pair again.")) return;
     try {

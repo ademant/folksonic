@@ -27,6 +27,25 @@
     </div>
   </section>
 
+  <section aria-labelledby="h-approve">
+    <h2 id="h-approve">Approve a device</h2>
+    <p>Some apps show a short code and ask you to type it here, instead of a QR
+      code. Type the code exactly as the app shows it. It works once and expires
+      after ten minutes.</p>
+    <div class="row">
+      <div>
+        <label for="userCode">Code from the app</label>
+        <input id="userCode" maxlength="12" autocomplete="off" spellcheck="false" placeholder="ABCD-EFGH">
+      </div>
+      <div>
+        <button id="approveCode">Approve</button>
+      </div>
+    </div>
+    <p>Ending the app's access signs it out at its next refresh. It does not
+      touch the devices paired with a QR code.</p>
+    <button id="revokeGrants" class="secondary">Sign out all apps that used a code</button>
+  </section>
+
   <section aria-labelledby="h-devices">
     <h2 id="h-devices">Devices</h2>
     <p>Apps paired with this account. Each one signs its requests with a key that

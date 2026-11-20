@@ -165,4 +165,5 @@ Advertised by `getOpenSubsonicExtensions`; details in the README.
 | `tinysonicMeter` v1 | `tinysonicMeter` on songs: the text of the `METER` / `TIME_SIGNATURE` / `TIMESIGNATURE` tag, e.g. `3/4`. Kept in minimal mode. |
 | `tinysonicTempo` v1 | `tinysonicTempo` on songs, each key only when known: `confidence` (0–1, of a calculated `bpm`), `barsPerMin`, `barPulses`. Ignore unknown keys; new ones raise the version. Kept in minimal mode. |
 | `tinysonicSongTags` v1 | `tinysonicTags` on songs, when `song_tags` is configured. |
-| `tinysonicStreamUrl` v1 | `GET /api/stream-url?id=` (session only) returns a signed `/rest/stream.view` link for one song, valid 2 hours. Accepted only on `stream` and `download`. |
+| `tinysonicStreamUrl` v1 | `GET /api/stream-url?id=` (session or device grant) returns a signed `/rest/stream.view` link for one song, valid 2 hours. Accepted only on `stream` and `download`. |
+| `tinysonicDeviceGrant` v1 | Our apps sign in with a short code (RFC 8628) and get DPoP-bound tokens: `/api/device/authorize`, `approve`, `token`, `refresh`, `revoke`. The access token is sent as `Authorization: DPoP` with a proof from the same key, valid 15 minutes, for `/rest/*` and `/api/*`. Subsonic clients do not use it. |
