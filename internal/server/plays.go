@@ -18,6 +18,8 @@ const playKeyRetention = 24 * time.Hour
 type playStat struct {
 	Count  int64
 	LastMs int64
+	// Rating is the caller's star rating (1 to 5, #140), 0 when unrated.
+	Rating int64
 }
 
 // playStats maps a song ID to the caller's count. A song without plays is
@@ -55,7 +57,28 @@ func repoPlayCounts(ctx context.Context, db *sql.DB, userID int64, ids []any) (p
 		}
 		out[id] = p
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// A song may be rated without any plays, so ratings get their own query.
+	rated, err := db.QueryContext(ctx,
+		"SELECT song_id, rating FROM user_ratings "+
+			"WHERE user_id = ? AND song_id IN ("+placeholders(len(ids))+")", args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rated.Close()
+	for rated.Next() {
+		var id string
+		var rating int64
+		if err := rated.Scan(&id, &rating); err != nil {
+			return nil, err
+		}
+		p := out[id]
+		p.Rating = rating
+		out[id] = p
+	}
+	return out, rated.Err()
 }
 
 // repoRecordPlay counts one play of songID for userID at playedMs. A play whose

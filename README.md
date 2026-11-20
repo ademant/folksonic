@@ -253,7 +253,7 @@ GET /rest/getScanStatus.view?u=…&t=…&s=…
 
 ## Supported endpoints
 
-tinysonic implements 54 of the OpenSubsonic endpoints. The full list, and the
+tinysonic implements 55 of the OpenSubsonic endpoints. The full list, and the
 endpoints that are not implemented, is in
 [`docs/opensubsonic-endpoints.md`](docs/opensubsonic-endpoints.md). Both
 `.view`-suffixed and plain paths are accepted, on both `GET` and `POST`. Responses are JSON with the Subsonic
@@ -371,6 +371,14 @@ cleared when the recording changed. On a folk dance library, about 60% of the
 estimates match the BPM tag within 4%; most others are off by a 3:4 or 2:1
 ratio (cross-rhythms, half or double time), so treat calculated values as a
 starting point. Each one stores a confidence (0–1).
+
+### Personal ratings
+
+`setRating` (`id`, `rating` 0 to 5) stores the caller's star rating of a song;
+0 removes it. Songs carry the caller's rating as `userRating` (absent when
+unrated). A rating is personal and is never shared. It is not the dancing
+shoes value, which stays on DanceBrainz. Only songs can be rated. Albums and
+artists are refused as not found. (#140)
 
 ### Play counts
 

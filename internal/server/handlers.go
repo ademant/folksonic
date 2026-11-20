@@ -186,6 +186,9 @@ func (st *State) songToChild(s models.Song, plays playStats) J {
 	if p.Count > 0 {
 		out["played"] = time.UnixMilli(p.LastMs).UTC().Format("2006-01-02T15:04:05Z")
 	}
+	if p.Rating > 0 {
+		out["userRating"] = p.Rating // the caller's star rating, set by setRating (#140); absent when unrated
+	}
 	if s.Tags.Valid {
 		var tags map[string][]string
 		if json.Unmarshal([]byte(s.Tags.String), &tags) == nil && len(tags) > 0 {
