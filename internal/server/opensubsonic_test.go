@@ -45,7 +45,7 @@ func TestExtensionsAdvertisedWithoutSignIn(t *testing.T) {
 }
 
 func TestMusicBrainzIDInResponses(t *testing.T) {
-	song := (&State{}).songToChild(models.Song{ID: "so-1", MBID: sql.NullString{String: mbid, Valid: true}})
+	song := (&State{}).songToChild(models.Song{ID: "so-1", MBID: sql.NullString{String: mbid, Valid: true}}, nil)
 	if song["musicBrainzId"] != mbid || song["mediaType"] != "song" {
 		t.Fatalf("song: %v", song)
 	}
@@ -60,12 +60,12 @@ func TestMusicBrainzIDInResponses(t *testing.T) {
 }
 
 func TestSongTagsExposedOnlyWhenConfigured(t *testing.T) {
-	song := (&State{}).songToChild(models.Song{ID: "so-1", Tags: sql.NullString{String: `{"DANCE":["Waltz","Mazurka"]}`, Valid: true}})
+	song := (&State{}).songToChild(models.Song{ID: "so-1", Tags: sql.NullString{String: `{"DANCE":["Waltz","Mazurka"]}`, Valid: true}}, nil)
 	tags, ok := song["tinysonicTags"].(map[string][]string)
 	if !ok || !reflect.DeepEqual(tags["DANCE"], []string{"Waltz", "Mazurka"}) {
 		t.Fatalf("tinysonicTags: %v", song["tinysonicTags"])
 	}
-	if _, ok := (&State{}).songToChild(models.Song{ID: "so-2"})["tinysonicTags"]; ok {
+	if _, ok := (&State{}).songToChild(models.Song{ID: "so-2"}, nil)["tinysonicTags"]; ok {
 		t.Fatal("tinysonicTags present without tags")
 	}
 

@@ -71,6 +71,9 @@ func main() {
 	if err := users.AdoptLegacyData(context.Background(), pool); err != nil {
 		logging.Fatalf("users: adopting existing playlists and stars: %v", err)
 	}
+	if err := server.PrunePlayKeys(context.Background(), pool); err != nil {
+		logging.Fatalf("db: pruning play keys: %v", err)
+	}
 	if changed, err := db.SyncSongTags(context.Background(), pool, cfg.SongTags); err != nil {
 		logging.Fatalf("db: song_tags: %v", err)
 	} else if changed {

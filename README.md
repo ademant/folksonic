@@ -334,7 +334,7 @@ endpoint; token auth (`t` with `s`) gets error 42.
 header `Prefer: tinysonic-minimal` (RFC 7240), objects omit optional fields that
 are constant, duplicated or derivable: songs drop `parent`, `isVideo`, `type`,
 `coverArt`, `path` and `suffix`; albums drop `title` (same as `name`) and
-`coverArt`; artists drop `coverArt`. `replayGain`, `bpm`, `tinysonicMeter` and `tinysonicTempo` stay. Cover art ids follow a fixed rule: an
+`coverArt`; artists drop `coverArt`. `replayGain`, `bpm`, `tinysonicMeter`, `tinysonicTempo`, `playCount` and `played` stay. Cover art ids follow a fixed rule: an
 album's or artist's is its `id`, a song's is its `albumId`. Required fields
 (`id`, `isDir`, `title` on songs, `albumCount`, …), `mediaType` and all data
 fields (`tinysonicTags`, …) always stay, and folder browsing keeps `parent`.
@@ -371,6 +371,23 @@ cleared when the recording changed. On a folk dance library, about 60% of the
 estimates match the BPM tag within 4%; most others are off by a 3:4 or 2:1
 ratio (cross-rhythms, half or double time), so treat calculated values as a
 starting point. Each one stores a confidence (0–1).
+
+### Play counts
+
+`scrobble` with `submission=true` (the default) counts one play for the calling
+user and the song. The optional `time` parameter (ms since the epoch) is the
+play's time; the n-th `time` goes with the n-th `id`. Without it the server
+clock is used. A retried submission with the same time counts once. Retry keys
+are kept for one day; the counts are kept indefinitely.
+
+Song objects carry `playCount` for the caller (0 when there are no plays) and,
+once there is a play, `played` (UTC time of the last play). `submission=false`
+(now playing) is accepted and not counted.
+
+Counts are per user and keyed by the song ID, so a retag starts a song's count
+again, and counts stay when a song leaves the library. Plays do not mark songs
+as changed, so a client that syncs with `getLibraryChanges` sees a count as of
+the song's last change.
 
 ### Tempo
 
@@ -606,8 +623,9 @@ under F); names themselves are unchanged.
 
 **Change feed** — `getLibraryChanges` (see *Change feed* above)
 
-**Playback** — `stream`, `download`, `getCoverArt`, `scrobble`,
-`getNowPlaying`, `updateNowPlaying`
+**Playback** — `stream`, `download`, `getCoverArt`, `scrobble` (counts plays,
+see *Play counts*), `getNowPlaying` and `updateNowPlaying` (stubs that store
+nothing)
 
 **Search** — `search3`, `search2` (alias)
 

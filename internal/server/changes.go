@@ -206,7 +206,7 @@ func (s *State) GetLibraryChanges(w http.ResponseWriter, r *http.Request) {
 
 	var items changeItemSet
 	if withItems {
-		items, err = s.changeItems(ctx, rows)
+		items, err = s.changeItems(ctx, caller.ID, rows)
 		if err != nil {
 			writeError(w, 0, err.Error())
 			return
@@ -266,7 +266,7 @@ type changeItemSet struct {
 // changeItems loads the artists, albums and songs of a page, one query per
 // kind. A page has at most maxPageSize rows, well inside SQLite's limit on
 // bound parameters.
-func (s *State) changeItems(ctx context.Context, rows []changeRow) (changeItemSet, error) {
+func (s *State) changeItems(ctx context.Context, userID int64, rows []changeRow) (changeItemSet, error) {
 	var artistIDs, albumIDs, songIDs []any
 	for _, r := range rows {
 		switch r.Kind {
@@ -316,8 +316,12 @@ func (s *State) changeItems(ctx context.Context, rows []changeRow) (changeItemSe
 		if err != nil {
 			return set, err
 		}
+		plays, err := repoPlayCounts(ctx, s.Pool, userID, songIDs)
+		if err != nil {
+			return set, err
+		}
 		for _, so := range ss {
-			set.songs[so.ID] = s.songToChild(so)
+			set.songs[so.ID] = s.songToChild(so, plays)
 		}
 	}
 	return set, nil
