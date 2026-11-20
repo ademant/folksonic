@@ -42,7 +42,9 @@ func TestMigrateAnalysis(t *testing.T) {
 		if err := d.QueryRow("SELECT mtime, bpm, file_size, file_mtime_ms FROM songs").Scan(&mtime, &bpm, &size, &mtimeMs); err != nil {
 			t.Fatal(err)
 		}
-		if mtime != 42 || bpm != 120 || size != nil || mtimeMs != nil {
+		// Re-running every numbered step resets mtime (the lyrics step asks for
+		// one re-read, #142). The analysis itself must survive.
+		if mtime != 0 || bpm != 120 || size != nil || mtimeMs != nil {
 			t.Fatalf("after migration: mtime %d bpm %v size %v mtime_ms %v", mtime, bpm, size, mtimeMs)
 		}
 		d.Close()

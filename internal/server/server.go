@@ -491,6 +491,7 @@ func (s *State) routes() *http.ServeMux {
 	register("getSimilarSongs2", s.GetSimilarSongs2)
 	register("getTopSongs", s.GetTopSongs)
 	register("getLyrics", s.GetLyrics)
+	register("getLyricsBySongId", s.GetLyricsBySongId)
 	register("getBookmarks", s.GetBookmarks)
 	register("createBookmark", s.CreateBookmark)
 	register("deleteBookmark", s.DeleteBookmark)

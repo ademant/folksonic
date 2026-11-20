@@ -213,6 +213,7 @@ type extracted struct {
 	TrackMBID     sql.NullString
 	AlbumMBID     sql.NullString
 	ArtistMBID    sql.NullString
+	Lyrics        sql.NullString
 	Audio         audioTags
 }
 
@@ -375,6 +376,9 @@ func processFile(pool *sql.DB, path, coversDir string, songTags []string) (proce
 	if err := storeTagValues(tx, songID, au, existed && audioChanged); err != nil {
 		return 0, err
 	}
+	if err := storeLyrics(tx, songID, ex.Lyrics); err != nil {
+		return 0, err
+	}
 	if err := markModified(tx); err != nil {
 		return 0, err
 	}
@@ -434,6 +438,7 @@ func extractMetadata(path string, filesize int64, coversDir string, songTags []s
 		ex.TrackMBID = readMBID(raw, trackMBID)
 		ex.AlbumMBID = readMBID(raw, albumMBID)
 		ex.ArtistMBID = readMBID(raw, artistMBID)
+		ex.Lyrics = lyricsValue(m.Lyrics())
 	}
 	var meta tag.Metadata
 	if terr == nil {
