@@ -26,6 +26,7 @@ var migrations = []migration{
 	{"play counts per user and song", migratePlayCounts},
 	{"bookmarks per user and song", migrateBookmarks},
 	{"play queue per user", migratePlayQueue},
+	{"lyrics from tags", migrateLyrics},
 }
 
 // migrateBookmarks (version 4, #139) adds one bookmark per user and song. The
@@ -156,4 +157,18 @@ func runMigration(d *sql.DB, m migration, version int) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// migrateLyrics (version 6, #142) adds the lyrics of each song. Every mtime is
+// reset to 0, so the next scan reads the tags again and fills the table; the
+// audio itself is not reanalysed. The rows go with their song.
+func migrateLyrics(tx *sql.Tx) error {
+	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS song_lyrics (
+		song_id  TEXT PRIMARY KEY REFERENCES songs(id) ON DELETE CASCADE,
+		text     TEXT NOT NULL
+	)`); err != nil {
+		return err
+	}
+	_, err := tx.Exec("UPDATE songs SET mtime = 0")
+	return err
 }

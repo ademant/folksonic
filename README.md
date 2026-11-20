@@ -253,7 +253,7 @@ GET /rest/getScanStatus.view?u=…&t=…&s=…
 
 ## Supported endpoints
 
-tinysonic implements 53 of the OpenSubsonic endpoints. The full list, and the
+tinysonic implements 54 of the OpenSubsonic endpoints. The full list, and the
 endpoints that are not implemented, is in
 [`docs/opensubsonic-endpoints.md`](docs/opensubsonic-endpoints.md). Both
 `.view`-suffixed and plain paths are accepted, on both `GET` and `POST`. Responses are JSON with the Subsonic
@@ -417,6 +417,19 @@ the counts in *Play counts*.
 
 The differences from the Subsonic descriptions are listed in
 [`docs/opensubsonic-endpoints.md`](docs/opensubsonic-endpoints.md#deviations-from-the-opensubsonic-description).
+
+### Lyrics
+
+The scanner reads each file's lyrics tag: `USLT` in MP3, `LYRICS` in FLAC and
+Vorbis (Ogg, Opus), and `©lyr` in M4A. The text is stored as it is in the tag,
+so LRC text keeps its timestamps, and nothing is written back to the file.
+After an upgrade every file is read once more at the next scan, so the lyrics
+fill in without a manual rescan; the audio is not reanalysed.
+
+`getLyricsBySongId` returns the lyrics as one unsynchronised entry, one line per
+line of text, and the language is `und`. `getLyrics` looks up the one song with
+the given artist and title, ignoring case, and returns its lyrics; when two
+songs share the name it gives no lyrics rather than a guess.
 
 ### Tempo
 
@@ -673,9 +686,12 @@ see *Play counts*), `getNowPlaying` and `updateNowPlaying` (in memory, see
 **Similar and top songs** — `getSimilarSongs`, `getSimilarSongs2`,
 `getTopSongs`; see *Listening state*.
 
+**Lyrics** — `getLyrics`, `getLyricsBySongId` (OpenSubsonic extension
+songLyrics); see *Lyrics*.
+
 **Artist / album info** — `getArtistInfo`, `getArtistInfo2`, `getAlbumInfo`,
-`getAlbumInfo2`, `getLyrics`. These return minimal stub shapes (no Last.fm or
-external lookups).
+`getAlbumInfo2`. These return minimal stub shapes (no Last.fm or external
+lookups).
 
 `GET /` returns a plain-text index of every endpoint and its query params.
 

@@ -1536,19 +1536,6 @@ func (s *State) GetAlbumInfo(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *State) GetLyrics(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAuth(w, r) {
-		return
-	}
-	writeOK(w, J{
-		"lyrics": J{
-			"artist": queryFirst(r, "artist"),
-			"title":  queryFirst(r, "title"),
-			"value":  "",
-		},
-	})
-}
-
 // keep imports tidy when functions are unused in some build modes
 var _ = errors.Is
 

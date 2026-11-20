@@ -18,7 +18,7 @@ Song `path` is relative to its music directory, `created` is when a file was
 first added, and `getAlbumList2?type=newest` sorts by that date. See the
 README's "Response conventions".
 
-## Implemented (53)
+## Implemented (54)
 
 Endpoints marked *stub* return the expected shape with minimal content. They
 make no Last.fm or other external lookups.
@@ -46,6 +46,10 @@ make no Last.fm or other external lookups.
 - `getRandomSongs` (filters genre, fromYear and toYear)
 - `getStarred`, `getStarred2`
 - `getAlbumList2` and `getAlbumList` types: alphabeticalByName, alphabeticalByArtist, newest, random, frequent and recent (the caller's own plays), byYear (fromYear and toYear; reversed when fromYear is greater) and byGenre (genre, case-insensitive). highest and starred are not implemented and list alphabetically. An unknown type, or a missing fromYear, toYear or genre, gets error 10.
+
+**Lyrics**
+- `getLyrics` (the one song with this artist and title, ignoring case; see *Deviations*)
+- `getLyricsBySongId` (OpenSubsonic extension songLyrics, version 1: unsynchronised lines only)
 
 **Similar and top songs**
 - `getSimilarSongs`, `getSimilarSongs2`: songs whose BPM is within 3 % of the seed song's, nearest first; empty when the seed has no BPM (see *Deviations*)
@@ -81,9 +85,8 @@ make no Last.fm or other external lookups.
 **Artist and album information** (stubs)
 - `getArtistInfo`, `getArtistInfo2`
 - `getAlbumInfo`, `getAlbumInfo2`
-- `getLyrics`
 
-## Not implemented (37)
+## Not implemented (36)
 
 These names appear in the OpenSubsonic endpoint list checked for this file, and
 tinysonic does not register them. A request for any of them gets HTTP 404 with
@@ -106,7 +109,6 @@ a plain-text body, not a Subsonic response.
 - `getCaptions`
 - `getChatMessages`
 - `getInternetRadioStations`
-- `getLyricsBySongId`
 - `getNewestPodcasts`
 - `getPodcastEpisode`
 - `getPodcasts`
@@ -135,6 +137,8 @@ These follow the decisions in the issues and differ from the endpoint pages.
 - `getNowPlaying` lists only the **caller's** players. The description lists what every user plays.
 - `getTopSongs` requires `artist`. The `id` form of the `topSongsByArtistId` extension is not implemented, and songs never played are left out instead of falling back to search order.
 - `playerId` in `updateNowPlaying` and `getNowPlaying` is sent back as a string.
+- `getLyrics` answers without a value when two or more songs share the artist and title, or when the one song has no lyrics. Lyrics are not searched by any other key.
+- `getLyricsBySongId` reports every lyrics text as unsynchronised, including LRC text with timestamps, and always gives the language as `und`, since the tags are read for their text only.
 - `getAlbumList2` and `getAlbumList` answer error 10 for an unknown `type`. Earlier versions listed albums alphabetically instead.
 
 ## Source and limits
