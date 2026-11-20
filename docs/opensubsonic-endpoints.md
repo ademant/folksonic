@@ -15,13 +15,15 @@ Song `path` is relative to its music directory, `created` is when a file was
 first added, and `getAlbumList2?type=newest` sorts by that date. See the
 README's "Response conventions".
 
-## Implemented (44)
+## Implemented (46)
 
 Endpoints marked *stub* return the expected shape with minimal content. They
 make no Last.fm or other external lookups.
 
 **System**
 - `ping`
+- `getLicense` (always valid, no expiry)
+- `tokenInfo` (the apiKeyAuthentication extension: the username of the key that signed the request; error 44 without a valid key)
 - `getUser`
 - `getMusicFolders`
 - `getScanStatus`
@@ -68,7 +70,7 @@ make no Last.fm or other external lookups.
 - `getTopSongs`
 - `getLyrics`
 
-## Not implemented (46)
+## Not implemented (44)
 
 These names appear in the OpenSubsonic endpoint list checked for this file, and
 tinysonic does not register them. A request for any of them gets HTTP 404 with
@@ -94,7 +96,6 @@ a plain-text body, not a Subsonic response.
 - `getCaptions`
 - `getChatMessages`
 - `getInternetRadioStations`
-- `getLicense`
 - `getLyricsBySongId`
 - `getNewestPodcasts`
 - `getPlayQueue`
@@ -116,7 +117,6 @@ a plain-text body, not a Subsonic response.
 - `savePlayQueueByIndex`
 - `search`
 - `setRating`
-- `tokenInfo`
 - `updateInternetRadioStation`
 - `updateShare`
 - `updateUser`

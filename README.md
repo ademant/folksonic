@@ -253,7 +253,7 @@ GET /rest/getScanStatus.view?u=…&t=…&s=…
 
 ## Supported endpoints
 
-tinysonic implements 42 of the OpenSubsonic endpoints. The full list, and the
+tinysonic implements 46 of the OpenSubsonic endpoints. The full list, and the
 endpoints that are not implemented, is in
 [`docs/opensubsonic-endpoints.md`](docs/opensubsonic-endpoints.md). Both
 `.view`-suffixed and plain paths are accepted, on both `GET` and `POST`. Responses are JSON with the Subsonic
