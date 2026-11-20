@@ -372,6 +372,23 @@ estimates match the BPM tag within 4%; most others are off by a 3:4 or 2:1
 ratio (cross-rhythms, half or double time), so treat calculated values as a
 starting point. Each one stores a confidence (0–1).
 
+### Play counts
+
+`scrobble` with `submission=true` (the default) counts one play for the calling
+user and the song. The optional `time` parameter (ms since the epoch) is the
+play's time; the n-th `time` goes with the n-th `id`. Without it the server
+clock is used. A retried submission with the same time counts once. Retry keys
+are kept for one day; the counts are kept indefinitely.
+
+Song objects carry `playCount` for the caller (0 when there are no plays) and,
+once there is a play, `played` (UTC time of the last play). `submission=false`
+(now playing) is accepted and not counted.
+
+Counts are per user and keyed by the song ID, so a retag starts a song's count
+again, and counts stay when a song leaves the library. Plays do not mark songs
+as changed, so a client that syncs with `getLibraryChanges` sees a count as of
+the song's last change.
+
 ### Tempo
 
 folksonic is the single source of a song's tempo. The tempo lives in the

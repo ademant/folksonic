@@ -139,7 +139,10 @@ func mbidValue(n sql.NullString) string {
 	return ""
 }
 
-func (st *State) songToChild(s models.Song) J {
+// songToChild is the song object. plays holds the caller's counts, so
+// playCount is always present (0 when the song has no plays) and played only
+// once it has one.
+func (st *State) songToChild(s models.Song, plays playStats) J {
 	out := J{
 		"id":            s.ID,
 		"musicBrainzId": mbidValue(s.MBID),
@@ -177,6 +180,11 @@ func (st *State) songToChild(s models.Song) J {
 	}
 	if s.Meter.Valid && s.Meter.String != "" {
 		out["tinysonicMeter"] = s.Meter.String // vendor extension tinysonicMeter
+	}
+	p := plays[s.ID]
+	out["playCount"] = p.Count
+	if p.Count > 0 {
+		out["played"] = time.UnixMilli(p.LastMs).UTC().Format("2006-01-02T15:04:05Z")
 	}
 	if s.Tags.Valid {
 		var tags map[string][]string
@@ -519,7 +527,8 @@ func (s *State) GetArtist(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *State) GetAlbum(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAuth(w, r) {
+	caller, ok := s.requireCaller(w, r)
+	if !ok {
 		return
 	}
 	id := queryFirst(r, "id")
@@ -548,9 +557,14 @@ func (s *State) GetAlbum(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	songs = pageSlice(songs, pageParams(r))
+	plays, err := s.playsFor(ctx, caller.ID, songs)
+	if err != nil {
+		s.dbFailed(w, "GetAlbum", err)
+		return
+	}
 	songJSONs := make([]J, 0, len(songs))
 	for _, sg := range songs {
-		songJSONs = append(songJSONs, s.songToChild(sg))
+		songJSONs = append(songJSONs, s.songToChild(sg, plays))
 	}
 	out := albumToChild(*album)
 	out["song"] = songJSONs
@@ -558,7 +572,8 @@ func (s *State) GetAlbum(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *State) GetSong(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAuth(w, r) {
+	caller, ok := s.requireCaller(w, r)
+	if !ok {
 		return
 	}
 	id := queryFirst(r, "id")
@@ -576,7 +591,12 @@ func (s *State) GetSong(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 70, "Song not found")
 		return
 	}
-	writeOK(w, J{"song": s.songToChild(*song)})
+	plays, err := s.playsFor(r.Context(), caller.ID, []models.Song{*song})
+	if err != nil {
+		s.dbFailed(w, "GetSong", err)
+		return
+	}
+	writeOK(w, J{"song": s.songToChild(*song, plays)})
 }
 
 func (s *State) GetAlbumList2(w http.ResponseWriter, r *http.Request) {
@@ -648,7 +668,8 @@ func (s *State) GetIndexes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *State) GetMusicDirectory(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAuth(w, r) {
+	caller, ok := s.requireCaller(w, r)
+	if !ok {
 		return
 	}
 	id := queryFirst(r, "id")
@@ -745,9 +766,14 @@ func (s *State) GetMusicDirectory(w http.ResponseWriter, r *http.Request) {
 			s.dbFailed(w, "GetMusicDirectory", err)
 			return
 		}
+		plays, err := s.playsFor(ctx, caller.ID, songs)
+		if err != nil {
+			s.dbFailed(w, "GetMusicDirectory", err)
+			return
+		}
 		children := make([]J, 0, len(songs))
 		for _, sg := range songs {
-			children = append(children, s.songToChild(sg))
+			children = append(children, s.songToChild(sg, plays))
 		}
 		setTotal(w, len(children))
 		if headDone(w, r) {
@@ -791,7 +817,8 @@ func (s *State) GetGenres(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *State) GetSongsByGenre(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAuth(w, r) {
+	caller, ok := s.requireCaller(w, r)
+	if !ok {
 		return
 	}
 	genre := queryFirst(r, "genre")
@@ -812,9 +839,14 @@ func (s *State) GetSongsByGenre(w http.ResponseWriter, r *http.Request) {
 		s.dbFailed(w, "GetSongsByGenre", err)
 		return
 	}
+	plays, err := s.playsFor(r.Context(), caller.ID, songs)
+	if err != nil {
+		s.dbFailed(w, "GetSongsByGenre", err)
+		return
+	}
 	children := make([]J, 0, len(songs))
 	for _, sg := range songs {
-		children = append(children, s.songToChild(sg))
+		children = append(children, s.songToChild(sg, plays))
 	}
 	writeOK(w, J{"songsByGenre": J{"song": children}})
 }
@@ -822,7 +854,8 @@ func (s *State) GetSongsByGenre(w http.ResponseWriter, r *http.Request) {
 // ── Random + Starred ────────────────────────────────────────────────────────
 
 func (s *State) GetRandomSongs(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAuth(w, r) {
+	caller, ok := s.requireCaller(w, r)
+	if !ok {
 		return
 	}
 	size := clamp(intParam(r, "size", 10), 1, 500)
@@ -840,9 +873,14 @@ func (s *State) GetRandomSongs(w http.ResponseWriter, r *http.Request) {
 		s.dbFailed(w, "GetRandomSongs", err)
 		return
 	}
+	plays, err := s.playsFor(r.Context(), caller.ID, songs)
+	if err != nil {
+		s.dbFailed(w, "GetRandomSongs", err)
+		return
+	}
 	children := make([]J, 0, len(songs))
 	for _, sg := range songs {
-		children = append(children, s.songToChild(sg))
+		children = append(children, s.songToChild(sg, plays))
 	}
 	writeOK(w, J{"randomSongs": J{"song": children}})
 }
@@ -880,9 +918,18 @@ func (s *State) GetStarred2(w http.ResponseWriter, r *http.Request) {
 	p := pageParams(r)
 	songs, albums, artists = pageSlice(songs, p), pageSlice(albums, p), pageSlice(artists, p)
 
+	plain := make([]models.Song, 0, len(songs))
+	for _, p := range songs {
+		plain = append(plain, p.Song)
+	}
+	plays, err := s.playsFor(ctx, caller.ID, plain)
+	if err != nil {
+		s.dbFailed(w, "GetStarred2", err)
+		return
+	}
 	songJSONs := make([]J, 0, len(songs))
 	for _, p := range songs {
-		v := s.songToChild(p.Song)
+		v := s.songToChild(p.Song, plays)
 		v["starred"] = p.When
 		songJSONs = append(songJSONs, v)
 	}
@@ -1056,9 +1103,60 @@ func (s *State) GetCoverArt(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, full)
 }
 
+// Scrobble counts plays (submission=true, the default) for the caller. The
+// n-th id takes the n-th time, in ms since the epoch, when one is given; it
+// falls back to the server clock. A now-playing report (submission=false) is
+// accepted and not counted.
 func (s *State) Scrobble(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAuth(w, r) {
+	caller, ok := s.requireCaller(w, r)
+	if !ok {
 		return
+	}
+	ids := queryAll(r, "id")
+	if len(ids) == 0 {
+		writeError(w, 10, "Required parameter is missing: id")
+		return
+	}
+	if sub := queryFirst(r, "submission"); sub != "" {
+		if submit, err := strconv.ParseBool(sub); err == nil && !submit {
+			writeOK(w, J{})
+			return
+		}
+	}
+	ctx := r.Context()
+	now := time.Now().UnixMilli()
+	times := queryAll(r, "time")
+	playedMs := make([]int64, len(ids))
+	for i := range ids {
+		playedMs[i] = now
+		if i < len(times) {
+			t, err := strconv.ParseInt(times[i], 10, 64)
+			if err != nil {
+				writeError(w, 10, "Invalid parameter: time")
+				return
+			}
+			if t > 0 {
+				playedMs[i] = t
+			}
+		}
+	}
+	// Check every song before counting any, so a bad id records nothing.
+	for _, id := range ids {
+		song, err := repoFindSong(ctx, s.Pool, id)
+		if err != nil {
+			s.dbFailed(w, "scrobble", err)
+			return
+		}
+		if song == nil {
+			writeError(w, 70, "Song not found")
+			return
+		}
+	}
+	for i, id := range ids {
+		if err := repoRecordPlay(ctx, s.Pool, caller.ID, id, playedMs[i], now); err != nil {
+			s.dbFailed(w, "scrobble", err)
+			return
+		}
 	}
 	writeOK(w, J{})
 }
@@ -1088,7 +1186,8 @@ func (s *State) Search2(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *State) searchN(w http.ResponseWriter, r *http.Request, wrap string) {
-	if !s.requireAuth(w, r) {
+	caller, ok := s.requireCaller(w, r)
+	if !ok {
 		return
 	}
 	ctx := r.Context()
@@ -1137,6 +1236,11 @@ func (s *State) searchN(w http.ResponseWriter, r *http.Request, wrap string) {
 		s.dbFailed(w, "searchN", err)
 		return
 	}
+	plays, err := s.playsFor(ctx, caller.ID, songs)
+	if err != nil {
+		s.dbFailed(w, "searchN", err)
+		return
+	}
 
 	artistJSONs := make([]J, 0, len(artists))
 	for _, a := range artists {
@@ -1148,7 +1252,7 @@ func (s *State) searchN(w http.ResponseWriter, r *http.Request, wrap string) {
 	}
 	songJSONs := make([]J, 0, len(songs))
 	for _, sg := range songs {
-		songJSONs = append(songJSONs, s.songToChild(sg))
+		songJSONs = append(songJSONs, s.songToChild(sg, plays))
 	}
 	writeOK(w, J{
 		wrap: J{
@@ -1244,9 +1348,14 @@ func (s *State) GetPlaylist(w http.ResponseWriter, r *http.Request) {
 		durMs += sg.DurationMs
 	}
 	paged := pageSlice(songs, pageParams(r))
+	plays, err := s.playsFor(r.Context(), caller.ID, paged)
+	if err != nil {
+		s.dbFailed(w, "GetPlaylist", err)
+		return
+	}
 	entry := make([]J, 0, len(paged))
 	for _, sg := range paged {
-		entry = append(entry, s.songToChild(sg))
+		entry = append(entry, s.songToChild(sg, plays))
 	}
 	writeOK(w, J{
 		"playlist": J{
@@ -1321,10 +1430,15 @@ func (s *State) CreatePlaylist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var durMs int64
+	plays, err := s.playsFor(ctx, caller.ID, songs)
+	if err != nil {
+		s.dbFailed(w, "CreatePlaylist", err)
+		return
+	}
 	entry := make([]J, 0, len(songs))
 	for _, sg := range songs {
 		durMs += sg.DurationMs
-		entry = append(entry, s.songToChild(sg))
+		entry = append(entry, s.songToChild(sg, plays))
 	}
 	writeOK(w, J{
 		"playlist": J{
@@ -1480,7 +1594,8 @@ func (s *State) GetSimilarSongs2(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *State) GetTopSongs(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAuth(w, r) {
+	caller, ok := s.requireCaller(w, r)
+	if !ok {
 		return
 	}
 	artist := queryFirst(r, "artist")
@@ -1494,10 +1609,15 @@ func (s *State) GetTopSongs(w http.ResponseWriter, r *http.Request) {
 		s.dbFailed(w, "GetTopSongs", err)
 		return
 	}
+	plays, err := s.playsFor(r.Context(), caller.ID, songs)
+	if err != nil {
+		s.dbFailed(w, "GetTopSongs", err)
+		return
+	}
 	children := make([]J, 0, len(songs))
 	for _, sg := range songs {
 		if strings.EqualFold(sg.Artist, artist) {
-			children = append(children, s.songToChild(sg))
+			children = append(children, s.songToChild(sg, plays))
 		}
 	}
 	writeOK(w, J{"topSongs": J{"song": children}})

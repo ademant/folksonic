@@ -23,6 +23,36 @@ type migration struct {
 // new ones at the end; never change or reorder one that has shipped.
 var migrations = []migration{
 	{"song tempo in the change feed", migrateTempoChanges},
+	{"play counts per user and song", migratePlayCounts},
+}
+
+// migratePlayCounts (version 3, #136) adds the per-user play counts written by
+// scrobble and the short-lived keys that make a retried submission harmless.
+// Both tables reference users and are created only when missing, so the step
+// is idempotent.
+func migratePlayCounts(tx *sql.Tx) error {
+	for _, q := range []string{
+		`CREATE TABLE IF NOT EXISTS play_counts (
+			user_id         INTEGER REFERENCES users(id) ON DELETE CASCADE,
+			song_id         TEXT NOT NULL,
+			play_count      INTEGER NOT NULL,
+			last_played_ms  INTEGER NOT NULL,
+			PRIMARY KEY (user_id, song_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS play_keys (
+			user_id     INTEGER REFERENCES users(id) ON DELETE CASCADE,
+			song_id     TEXT NOT NULL,
+			played_ms   INTEGER NOT NULL,
+			seen_ms     INTEGER NOT NULL,
+			PRIMARY KEY (user_id, song_id, played_ms)
+		)`,
+		`CREATE INDEX IF NOT EXISTS play_keys_seen ON play_keys(seen_ms)`,
+	} {
+		if _, err := tx.Exec(q); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // migrateTempoChanges (version 2, #127) marks the songs that gain
