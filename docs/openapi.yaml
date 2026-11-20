@@ -655,6 +655,166 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           description: A key or a device was used; the request needs a session.
+  /api/remote/players:
+    get:
+      security:
+        - bearerAuth: []
+      tags: [Remote playback]
+      summary: List the account's players
+      description: >-
+        Every player of the signed-in user with its last reported state. A
+        player is online when it reported within the last 60 seconds.
+      responses:
+        '200':
+          description: The players.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  players:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: {type: string}
+                        name: {type: string}
+                        status: {type: string, enum: [playing, paused, stopped]}
+                        songId: {type: string}
+                        positionMs: {type: integer}
+                        reportedAt: {type: string, format: date-time}
+                        appliedSeq: {type: integer}
+                        controller: {type: string, description: The controller the player obeyed last.}
+                        online: {type: boolean}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/remote/players/{id}/state:
+    post:
+      security:
+        - bearerAuth: []
+      tags: [Remote playback]
+      summary: Report a player's state
+      description: >-
+        Called by a player on start and on every change. Creates the player on
+        first report. `applied_seq` is the last command sequence the player has
+        applied; it only moves forward, so an old report cannot make commands
+        replay.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+          description: The player's own id, 1 to 64 letters, digits, dots, dashes or underscores.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                name: {type: string, description: Name shown to controllers (up to 64 characters.)}
+                status: {type: string, enum: [playing, paused, stopped]}
+                song_id: {type: string}
+                position_ms: {type: integer}
+                applied_seq: {type: integer}
+                controller: {type: string}
+      responses:
+        '200':
+          description: Stored.
+        '400':
+          description: Invalid id, status, position or sequence.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/remote/players/{id}/commands:
+    get:
+      security:
+        - bearerAuth: []
+      tags: [Remote playback]
+      summary: Long poll for a player's commands
+      description: >-
+        Returns the commands after `after`, or after the player's applied
+        sequence if that is higher, in order. Waits up to `wait` seconds (at most
+        30) when there are none, and returns as soon as one arrives. Commands
+        older than five minutes are never returned.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+        - name: after
+          in: query
+          schema: {type: integer, minimum: 0}
+          description: The last sequence number the player has seen.
+        - name: wait
+          in: query
+          schema: {type: integer, minimum: 0, maximum: 30}
+          description: Seconds to wait for a command.
+      responses:
+        '200':
+          description: The commands, possibly none.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  commands:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        seq: {type: integer}
+                        command: {type: string, enum: [play, pause, seek, next, previous]}
+                        positionMs: {type: integer}
+                        songId: {type: string}
+                        controller: {type: string}
+                        sentAt: {type: string, format: date-time}
+        '400':
+          description: Invalid id, `after` or `wait`.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      security:
+        - bearerAuth: []
+      tags: [Remote playback]
+      summary: Send a command to a player
+      description: >-
+        Any app of the signed-in user may send. Commands are obeyed in the order
+        they were sent, so the last one wins. A player must have reported at
+        least once (404 otherwise). At most 100 commands wait for a player (429).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [command]
+              properties:
+                command: {type: string, enum: [play, pause, seek, next, previous]}
+                position_ms: {type: integer, description: Required for seek.}
+                song_id: {type: string}
+      responses:
+        '200':
+          description: Queued, with its sequence number.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  seq: {type: integer}
+        '400':
+          description: Unknown command or a bad seek position.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: No such player for this account.
+        '429':
+          description: Too many commands are waiting for this player.
   /api/device/me:
     get:
       tags: [Device pairing]

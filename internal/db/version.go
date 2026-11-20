@@ -29,6 +29,7 @@ var migrations = []migration{
 	{"lyrics from tags", migrateLyrics},
 	{"device authorization grant and tokens", migrateDeviceGrants},
 	{"personal song ratings", migrateUserRatings},
+	{"remote playback control", migrateRemotePlayback},
 }
 
 // migrateBookmarks (version 4, #139) adds one bookmark per user and song. The
@@ -231,4 +232,41 @@ func migrateUserRatings(tx *sql.Tx) error {
 		PRIMARY KEY (user_id, song_id)
 	)`)
 	return err
+}
+
+// migrateRemotePlayback (version 9, #157) adds the state of each player and the
+// commands controllers send to it. Players are per user. A command has a global
+// sequence number, which players use to acknowledge what they applied. Both
+// tables are created only when missing, so the step is idempotent.
+func migrateRemotePlayback(tx *sql.Tx) error {
+	for _, q := range []string{
+		`CREATE TABLE IF NOT EXISTS remote_players (
+			user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			player_id    TEXT NOT NULL,
+			name         TEXT NOT NULL DEFAULT '',
+			status       TEXT NOT NULL,
+			song_id      TEXT NOT NULL DEFAULT '',
+			position_ms  INTEGER NOT NULL DEFAULT 0,
+			reported_ms  INTEGER NOT NULL,
+			applied_seq  INTEGER NOT NULL DEFAULT 0,
+			controller   TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (user_id, player_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS remote_commands (
+			seq          INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			player_id    TEXT NOT NULL,
+			command      TEXT NOT NULL,
+			position_ms  INTEGER NOT NULL DEFAULT 0,
+			song_id      TEXT NOT NULL DEFAULT '',
+			controller   TEXT NOT NULL,
+			created_ms   INTEGER NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS remote_commands_player ON remote_commands(user_id, player_id, seq)`,
+	} {
+		if _, err := tx.Exec(q); err != nil {
+			return err
+		}
+	}
+	return nil
 }
