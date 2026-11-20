@@ -23,9 +23,11 @@ Record the user's decisions in the issue body. If the user only asked for the is
 ## 3. Implement
 
 - Read the current code first; files change between sessions (other branches get merged).
+- Run `git status` before starting. Uncommitted changes that predate the task are common; they are not yours to commit. Leave them out, and never use `git add -A` or `git add .`.
 - For a bug fix, write the regression test from the real failing path and **show it fails without the fix** (temporarily restore the old file, run the test, restore the fix). Quote the failure; it proves the test catches the bug.
 - Schema changes need an idempotent step in `migrate()`; think about how long it takes on the production database (5k+ songs, FTS triggers).
 - Update README (and CLAUDE.md layout table if files moved) in the same change.
+- New `/api` routes, Subsonic endpoints and refusal codes have their own checklist: see the `add-endpoint` skill.
 
 ## 4. Verify
 
@@ -33,9 +35,14 @@ Record the user's decisions in the issue body. If the user only asked for the is
 ```bash
 export GOGC=20 GOFLAGS='-p=1 -gcflags=all=-c=1'
 ```
+Run `make check` itself, not only `go test`: it also runs gofmt and vet, and it is what CLAUDE.md requires. The doc-consistency tests in `internal/server/apidocs_test.go` are part of it (see *Repo gotchas*), so a doc left out of date fails the build.
 For user-facing flows, also smoke-test a real binary on a temporary config/database (separate port, `--no-scan --no-watch`). Report anything you could not check (e.g. browser JavaScript).
 
 ## 5. Commit — only when asked
+
+"Close on commit" or "commit" is the user's request to commit. It does not authorise a push.
+
+Before committing, check the branch: `git branch --show-current`. On `main`, create the feature branch first. Uncommitted work carries over to a new branch with `git checkout -b`, so this works after the code is written.
 
 Git has no global identity here. Commit as the user, per command, without changing git config:
 ```bash
@@ -49,7 +56,7 @@ Closes #N
 Co-Authored-By: <attribution line from the current system reminder>
 EOF
 ```
-One `Closes #N` line per issue.
+One `Closes #N` line per issue. Stage the files by name, the ones this change touched, and check with `git status` that nothing else is staged.
 
 ## 6. Push and PR — only when asked
 
@@ -70,3 +77,9 @@ gh pr view <PR> --json state; gh issue view <N> --json state
 ```
 
 If production runs a branch build, say that `main` lacks the fix until merged; after merging, deploying `main` is safe again (prod-deploy skill).
+
+## Repo gotchas
+
+- **Endpoint docs are tested.** `TestOpenAPIDocumentsEveryAPIRoute` fails when an `/api` route is missing from `docs/openapi.yaml`. `TestOpenSubsonicListMatchesRegistrations` compares the `## Implemented` list in `docs/opensubsonic-endpoints.md` with the `register(...)` calls. Every backticked word under `## Implemented` counts as an endpoint name, so write parameter and type words there as plain text.
+- **Migrations are re-run in tests.** `TestMigrateAnalysis` runs the migrations again and checks the values. A migration that rewrites rows (for example `UPDATE songs SET mtime = 0`) can change what an existing assertion sees, so update that assertion and say why in a comment.
+- **Build-time memory.** `make check` sets the low-memory Go flags. Plain `go test` on this 4 GB host can be OOM-killed, so run it with `GOGC=20 GOFLAGS='-p=1 -gcflags=all=-c=1'` exported.
