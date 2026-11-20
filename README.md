@@ -334,7 +334,7 @@ endpoint; token auth (`t` with `s`) gets error 42.
 header `Prefer: tinysonic-minimal` (RFC 7240), objects omit optional fields that
 are constant, duplicated or derivable: songs drop `parent`, `isVideo`, `type`,
 `coverArt`, `path` and `suffix`; albums drop `title` (same as `name`) and
-`coverArt`; artists drop `coverArt`. `replayGain`, `bpm`, `tinysonicMeter` and `tinysonicTempo` stay. Cover art ids follow a fixed rule: an
+`coverArt`; artists drop `coverArt`. `replayGain`, `bpm`, `tinysonicMeter`, `tinysonicTempo`, `playCount` and `played` stay. Cover art ids follow a fixed rule: an
 album's or artist's is its `id`, a song's is its `albumId`. Required fields
 (`id`, `isDir`, `title` on songs, `albumCount`, …), `mediaType` and all data
 fields (`tinysonicTags`, …) always stay, and folder browsing keeps `parent`.
@@ -623,8 +623,9 @@ under F); names themselves are unchanged.
 
 **Change feed** — `getLibraryChanges` (see *Change feed* above)
 
-**Playback** — `stream`, `download`, `getCoverArt`, `scrobble`,
-`getNowPlaying`, `updateNowPlaying`
+**Playback** — `stream`, `download`, `getCoverArt`, `scrobble` (counts plays,
+see *Play counts*), `getNowPlaying` and `updateNowPlaying` (stubs that store
+nothing)
 
 **Search** — `search3`, `search2` (alias)
 

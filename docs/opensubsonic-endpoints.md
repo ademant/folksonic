@@ -10,7 +10,10 @@ envelope and carry `"openSubsonic": true`.
 
 Optional fields without a value are omitted rather than sent as `null`.
 Songs carry the standard `replayGain` object and `bpm` field when the files
-have the values (BPM can also be calculated on the library page).
+have the values (BPM can also be calculated on the library page). They also
+carry `playCount` (0 when the caller has no plays) and, once there is one,
+`played`: the caller's own plays, counted by `scrobble`. See the README's
+"Play counts".
 Song `path` is relative to its music directory, `created` is when a file was
 first added, and `getAlbumList2?type=newest` sorts by that date. See the
 README's "Response conventions".
@@ -46,9 +49,9 @@ make no Last.fm or other external lookups.
 **Playback**
 - `stream`, `download`
 - `getCoverArt`
-- `scrobble`
-- `getNowPlaying`
-- `updateNowPlaying` (not in the OpenSubsonic list checked; kept as registered)
+- `scrobble` (counts plays for the caller; `submission=false` is accepted and not counted)
+- `getNowPlaying` (*stub*: always empty)
+- `updateNowPlaying` (*stub*, not in the OpenSubsonic list checked; kept as registered)
 
 **Search**
 - `search2`, `search3`
