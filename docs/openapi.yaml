@@ -815,6 +815,122 @@ paths:
           description: No such player for this account.
         '429':
           description: Too many commands are waiting for this player.
+  /api/relay/devices:
+    get:
+      security:
+        - bearerAuth: []
+      tags: [Relay]
+      summary: List the account's device records
+      description: >-
+        The public records of the signed-in user's devices (#159). Another user
+        never sees them. folksonic does not read the public key; devices trust
+        each other by their own pairing check.
+      responses:
+        '200':
+          description: The records.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  devices:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: {type: string}
+                        kind: {type: string, enum: [studio, phone]}
+                        name: {type: string}
+                        publicKey: {type: string}
+                        updatedAt: {type: string, format: date-time}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/relay/devices/{id}:
+    put:
+      security:
+        - bearerAuth: []
+      tags: [Relay]
+      summary: Publish or update a device record
+      description: >-
+        A device publishes its own record: kind, display name and public key
+        material (base64url, at most 1024 characters, never interpreted by the
+        server). Names are cut to 64 characters.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+          description: The device's id, 1 to 64 letters, digits, dots, dashes or underscores.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, publicKey]
+              properties:
+                kind: {type: string, enum: [studio, phone]}
+                name: {type: string}
+                publicKey: {type: string}
+      responses:
+        '200':
+          description: Stored.
+        '400':
+          description: Invalid id, kind or key.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      security:
+        - bearerAuth: []
+      tags: [Relay]
+      summary: Remove a device record
+      description: >-
+        Removes one of the account's records. The device's relay connection, if it
+        has one, is closed.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Removed.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: No such device on this account.
+  /api/relay/connect:
+    get:
+      security:
+        - bearerAuth: []
+      tags: [Relay]
+      summary: Open a device's relay (WebSocket)
+      description: >-
+        Upgrades to a WebSocket (RFC 6455) for one of the account's devices. The
+        device must have a record (404 otherwise). Credentials are headers, never
+        the URL. Messages are binary frames `[1-byte recipient length][recipient id][payload]`;
+        the recipient gets `[1-byte sender length][sender id][payload]`. The
+        payload is end-to-end encrypted by the devices and is not stored or
+        logged. A frame to a device that is not connected gets a text note
+        `{"type":"undelivered","to":…}`. Limits: 16 KiB per message, 30 messages
+        per second (burst 60), 8 devices connected per account, a ping every 30
+        seconds and a drop after 60 seconds of silence. Text messages and
+        fragmented messages are refused (close codes 1003 and 1002).
+      parameters:
+        - name: device
+          in: query
+          required: true
+          schema: {type: string}
+          description: The device's id; it must have a record on the account.
+      responses:
+        '101':
+          description: Switching Protocols; the relay is open.
+        '400':
+          description: Not a WebSocket upgrade, or an invalid device id.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: No record for this device on the account.
   /api/device/me:
     get:
       tags: [Device pairing]
