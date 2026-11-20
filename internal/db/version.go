@@ -24,6 +24,49 @@ type migration struct {
 var migrations = []migration{
 	{"song tempo in the change feed", migrateTempoChanges},
 	{"play counts per user and song", migratePlayCounts},
+	{"bookmarks per user and song", migrateBookmarks},
+	{"play queue per user", migratePlayQueue},
+}
+
+// migrateBookmarks (version 4, #139) adds one bookmark per user and song. The
+// table is created only when missing, so the step is idempotent.
+func migrateBookmarks(tx *sql.Tx) error {
+	_, err := tx.Exec(`CREATE TABLE IF NOT EXISTS bookmarks (
+		user_id      INTEGER REFERENCES users(id) ON DELETE CASCADE,
+		song_id      TEXT NOT NULL,
+		position_ms  INTEGER NOT NULL,
+		comment      TEXT NOT NULL DEFAULT '',
+		created_ms   INTEGER NOT NULL,
+		changed_ms   INTEGER NOT NULL,
+		PRIMARY KEY (user_id, song_id)
+	)`)
+	return err
+}
+
+// migratePlayQueue (version 5, #138) adds the saved play queue per user: the
+// state row and its songs in order. Both are created only when missing.
+func migratePlayQueue(tx *sql.Tx) error {
+	for _, q := range []string{
+		`CREATE TABLE IF NOT EXISTS play_queues (
+			user_id        INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+			current_song   TEXT NOT NULL DEFAULT '',
+			current_index  INTEGER NOT NULL DEFAULT 0,
+			position_ms    INTEGER NOT NULL DEFAULT 0,
+			changed_ms     INTEGER NOT NULL,
+			changed_by     TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE TABLE IF NOT EXISTS play_queue_items (
+			user_id  INTEGER REFERENCES users(id) ON DELETE CASCADE,
+			pos      INTEGER NOT NULL,
+			song_id  TEXT NOT NULL,
+			PRIMARY KEY (user_id, pos)
+		)`,
+	} {
+		if _, err := tx.Exec(q); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // migratePlayCounts (version 3, #136) adds the per-user play counts written by

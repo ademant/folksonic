@@ -253,7 +253,7 @@ GET /rest/getScanStatus.view?u=…&t=…&s=…
 
 ## Supported endpoints
 
-tinysonic implements 46 of the OpenSubsonic endpoints. The full list, and the
+tinysonic implements 53 of the OpenSubsonic endpoints. The full list, and the
 endpoints that are not implemented, is in
 [`docs/opensubsonic-endpoints.md`](docs/opensubsonic-endpoints.md). Both
 `.view`-suffixed and plain paths are accepted, on both `GET` and `POST`. Responses are JSON with the Subsonic
@@ -388,6 +388,35 @@ Counts are per user and keyed by the song ID, so a retag starts a song's count
 again, and counts stay when a song leaves the library. Plays do not mark songs
 as changed, so a client that syncs with `getLibraryChanges` sees a count as of
 the song's last change.
+
+### Listening state
+
+**Bookmarks** (`createBookmark`, `getBookmarks`, `deleteBookmark`): one bookmark
+per user and song, with a position in ms and a comment of up to 256
+characters. Creating one again replaces the position and comment. A bookmark
+whose song has left the library is kept but not returned.
+
+**Play queue** (`savePlayQueue`, `getPlayQueue`, and the `ByIndex` pair): one
+saved queue per user, kept until the next save. `savePlayQueue` takes the song
+ids in order, `current` (one of them) and `position` in ms;
+`savePlayQueueByIndex` takes `currentIndex` instead. Songs that have left the
+library are dropped when the queue is read, and the index counts the songs that
+remain. Saving with no ids clears the queue.
+
+**Now playing** (`updateNowPlaying`, `getNowPlaying`): what each of a user's
+players reports as playing. A player's report replaces its previous one and
+expires after 30 minutes without an update. The reports are kept in memory
+only, so a restart clears them. `getNowPlaying` lists the caller's players only.
+
+**Similar and top songs**: `getSimilarSongs` and `getSimilarSongs2` take a song
+id and return songs whose BPM is within 3 % of its BPM, nearest first, with the
+seed's genre first among equal tempos. A seed without a BPM gives an empty
+list. `getTopSongs` takes an `artist` and returns its songs by the caller's
+play count, so the `frequent` and `recent` lists and `getTopSongs` all come from
+the counts in *Play counts*.
+
+The differences from the Subsonic descriptions are listed in
+[`docs/opensubsonic-endpoints.md`](docs/opensubsonic-endpoints.md#deviations-from-the-opensubsonic-description).
 
 ### Tempo
 
@@ -619,13 +648,15 @@ under F); names themselves are unchanged.
 
 **Genres** — `getGenres`, `getSongsByGenre`
 
-**Lists** — `getRandomSongs`, `getStarred2`, `getStarred` (alias)
+**Lists** — `getRandomSongs`, `getStarred2`, `getStarred` (alias). The
+`getAlbumList2` types `frequent` and `recent` use the caller's own plays, and
+`byYear` and `byGenre` filter albums; see *Listening state*.
 
 **Change feed** — `getLibraryChanges` (see *Change feed* above)
 
 **Playback** — `stream`, `download`, `getCoverArt`, `scrobble` (counts plays,
-see *Play counts*), `getNowPlaying` and `updateNowPlaying` (stubs that store
-nothing)
+see *Play counts*), `getNowPlaying` and `updateNowPlaying` (in memory, see
+*Listening state*)
 
 **Search** — `search3`, `search2` (alias)
 
@@ -634,9 +665,17 @@ nothing)
 
 **Starring** — `star`, `unstar`
 
+**Bookmarks** — `getBookmarks`, `createBookmark`, `deleteBookmark`
+
+**Play queue** — `getPlayQueue`, `savePlayQueue`, `getPlayQueueByIndex`,
+`savePlayQueueByIndex`
+
+**Similar and top songs** — `getSimilarSongs`, `getSimilarSongs2`,
+`getTopSongs`; see *Listening state*.
+
 **Artist / album info** — `getArtistInfo`, `getArtistInfo2`, `getAlbumInfo`,
-`getAlbumInfo2`, `getSimilarSongs`, `getSimilarSongs2`, `getTopSongs`,
-`getLyrics`. These return minimal stub shapes (no Last.fm or external lookups).
+`getAlbumInfo2`, `getLyrics`. These return minimal stub shapes (no Last.fm or
+external lookups).
 
 `GET /` returns a plain-text index of every endpoint and its query params.
 

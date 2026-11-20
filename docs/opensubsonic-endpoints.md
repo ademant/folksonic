@@ -18,7 +18,7 @@ Song `path` is relative to its music directory, `created` is when a file was
 first added, and `getAlbumList2?type=newest` sorts by that date. See the
 README's "Response conventions".
 
-## Implemented (46)
+## Implemented (53)
 
 Endpoints marked *stub* return the expected shape with minimal content. They
 make no Last.fm or other external lookups.
@@ -43,15 +43,20 @@ make no Last.fm or other external lookups.
 - `getGenres`, `getSongsByGenre`
 
 **Lists**
-- `getRandomSongs`
+- `getRandomSongs` (filters genre, fromYear and toYear)
 - `getStarred`, `getStarred2`
+- `getAlbumList2` and `getAlbumList` types: alphabeticalByName, alphabeticalByArtist, newest, random, frequent and recent (the caller's own plays), byYear (fromYear and toYear; reversed when fromYear is greater) and byGenre (genre, case-insensitive). highest and starred are not implemented and list alphabetically. An unknown type, or a missing fromYear, toYear or genre, gets error 10.
+
+**Similar and top songs**
+- `getSimilarSongs`, `getSimilarSongs2`: songs whose BPM is within 3 % of the seed song's, nearest first; empty when the seed has no BPM (see *Deviations*)
+- `getTopSongs`: the artist's songs by the caller's play count (see *Deviations*)
 
 **Playback**
 - `stream`, `download`
 - `getCoverArt`
 - `scrobble` (counts plays for the caller; `submission=false` is accepted and not counted)
-- `getNowPlaying` (*stub*: always empty)
-- `updateNowPlaying` (*stub*, not in the OpenSubsonic list checked; kept as registered)
+- `getNowPlaying` (the caller's own players only, see *Deviations*)
+- `updateNowPlaying` (not in the OpenSubsonic list checked; kept as registered)
 
 **Search**
 - `search2`, `search3`
@@ -62,6 +67,13 @@ make no Last.fm or other external lookups.
 **Starring**
 - `star`, `unstar`
 
+**Bookmarks** (one per user and song)
+- `getBookmarks`, `createBookmark`, `deleteBookmark`
+
+**Play queue** (one per user)
+- `getPlayQueue`, `savePlayQueue`
+- `getPlayQueueByIndex`, `savePlayQueueByIndex` (OpenSubsonic indexBasedQueue extension)
+
 **tinysonic vendor extensions** (see below)
 - `tinysonicLibraryInfo`
 - `getLibraryChanges` (extension tinysonicLibraryChanges)
@@ -69,11 +81,9 @@ make no Last.fm or other external lookups.
 **Artist and album information** (stubs)
 - `getArtistInfo`, `getArtistInfo2`
 - `getAlbumInfo`, `getAlbumInfo2`
-- `getSimilarSongs`, `getSimilarSongs2`
-- `getTopSongs`
 - `getLyrics`
 
-## Not implemented (44)
+## Not implemented (37)
 
 These names appear in the OpenSubsonic endpoint list checked for this file, and
 tinysonic does not register them. A request for any of them gets HTTP 404 with
@@ -81,12 +91,10 @@ a plain-text body, not a Subsonic response.
 
 - `addChatMessage`
 - `changePassword`
-- `createBookmark`
 - `createInternetRadioStation`
 - `createPodcastChannel`
 - `createShare`
 - `createUser`
-- `deleteBookmark`
 - `deleteInternetRadioStation`
 - `deletePodcastChannel`
 - `deletePodcastEpisode`
@@ -95,14 +103,11 @@ a plain-text body, not a Subsonic response.
 - `downloadPodcastEpisode`
 - `findSonicPath`
 - `getAvatar`
-- `getBookmarks`
 - `getCaptions`
 - `getChatMessages`
 - `getInternetRadioStations`
 - `getLyricsBySongId`
 - `getNewestPodcasts`
-- `getPlayQueue`
-- `getPlayQueueByIndex`
 - `getPodcastEpisode`
 - `getPodcasts`
 - `getShares`
@@ -116,13 +121,21 @@ a plain-text body, not a Subsonic response.
 - `jukeboxControl`
 - `refreshPodcasts`
 - `reportPlayback`
-- `savePlayQueue`
-- `savePlayQueueByIndex`
 - `search`
 - `setRating`
 - `updateInternetRadioStation`
 - `updateShare`
 - `updateUser`
+
+## Deviations from the OpenSubsonic description
+
+These follow the decisions in the issues and differ from the endpoint pages.
+
+- `getSimilarSongs2` takes a **song** id as the seed. The description takes an artist id.
+- `getNowPlaying` lists only the **caller's** players. The description lists what every user plays.
+- `getTopSongs` requires `artist`. The `id` form of the `topSongsByArtistId` extension is not implemented, and songs never played are left out instead of falling back to search order.
+- `playerId` in `updateNowPlaying` and `getNowPlaying` is sent back as a string.
+- `getAlbumList2` and `getAlbumList` answer error 10 for an unknown `type`. Earlier versions listed albums alphabetically instead.
 
 ## Source and limits
 

@@ -35,6 +35,8 @@ type State struct {
 	tlsPin string
 	// proofs remembers DPoP proof ids so a proof is used once (devices.go).
 	proofs users.ProofReplay
+	// nowPlaying holds the players' reports in memory (nowplaying.go).
+	nowPlaying nowPlayingStore
 	// SongTags is the allowlist of file tags exposed on songs (song_tags).
 	SongTags []string
 	// IgnoredArticles are the leading words skipped when indexing artists
@@ -489,6 +491,13 @@ func (s *State) routes() *http.ServeMux {
 	register("getSimilarSongs2", s.GetSimilarSongs2)
 	register("getTopSongs", s.GetTopSongs)
 	register("getLyrics", s.GetLyrics)
+	register("getBookmarks", s.GetBookmarks)
+	register("createBookmark", s.CreateBookmark)
+	register("deleteBookmark", s.DeleteBookmark)
+	register("getPlayQueue", s.GetPlayQueue)
+	register("savePlayQueue", s.SavePlayQueue)
+	register("getPlayQueueByIndex", s.GetPlayQueueByIndex)
+	register("savePlayQueueByIndex", s.SavePlayQueueByIndex)
 
 	// Account and device management (JSON, not Subsonic)
 	mux.HandleFunc("POST /api/register", s.APIRegister)
