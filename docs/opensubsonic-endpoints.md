@@ -18,7 +18,7 @@ Song `path` is relative to its music directory, `created` is when a file was
 first added, and `getAlbumList2?type=newest` sorts by that date. See the
 README's "Response conventions".
 
-## Implemented (54)
+## Implemented (55)
 
 Endpoints marked *stub* return the expected shape with minimal content. They
 make no Last.fm or other external lookups.
@@ -71,6 +71,9 @@ make no Last.fm or other external lookups.
 **Starring**
 - `star`, `unstar`
 
+**Personal rating** (0 to 5, separate from stars and from shoes; #140)
+- `setRating` (0 removes the rating; songs only, so id must be a song)
+
 **Bookmarks** (one per user and song)
 - `getBookmarks`, `createBookmark`, `deleteBookmark`
 
@@ -86,7 +89,7 @@ make no Last.fm or other external lookups.
 - `getArtistInfo`, `getArtistInfo2`
 - `getAlbumInfo`, `getAlbumInfo2`
 
-## Not implemented (36)
+## Not implemented (35)
 
 These names appear in the OpenSubsonic endpoint list checked for this file, and
 tinysonic does not register them. A request for any of them gets HTTP 404 with
@@ -124,7 +127,6 @@ a plain-text body, not a Subsonic response.
 - `refreshPodcasts`
 - `reportPlayback`
 - `search`
-- `setRating`
 - `updateInternetRadioStation`
 - `updateShare`
 - `updateUser`
@@ -162,6 +164,7 @@ Advertised by `getOpenSubsonicExtensions`; details in the README.
 | `tinysonicLibraryInfo` v1 | Endpoint `tinysonicLibraryInfo`: `artists`, `albums`, `songs`, `duration`, `lastModified` (last library change). |
 | `tinysonicMinimal` v1 | `Prefer: tinysonic-minimal` removes optional derivable fields. Song: `parent` (kept in folder browsing), `isVideo`, `type`, `coverArt`, `path`, `suffix`. Album: `title`, `coverArt`. Artist: `coverArt`. Response header `Preference-Applied: tinysonic-minimal`; `Vary: Prefer` on all JSON responses. |
 | `tinysonicLibraryChanges` v1 | Endpoint `getLibraryChanges?since=<ms>`: ids of artists, albums, songs, playlists and starred items changed since `since` (`{id, updated}`), and `deleted` tombstones (`{type, id, deleted}`), kept 90 days. `full: true` when `since` is missing or older than the floor, or the library was reset. `size` and `cursor` page one snapshot. Playlists and starred items are per account. `serverTime` lags the clock by 2 s. |
+| `userRating` (songs) | The caller's own star rating, 1 to 5, set with `setRating`. Absent when unrated. It is personal and not shared; it is not the dancing shoes value, which stays on DanceBrainz. |
 | `tinysonicMeter` v1 | `tinysonicMeter` on songs: the text of the `METER` / `TIME_SIGNATURE` / `TIMESIGNATURE` tag, e.g. `3/4`. Kept in minimal mode. |
 | `tinysonicTempo` v1 | `tinysonicTempo` on songs, each key only when known: `confidence` (0–1, of a calculated `bpm`), `barsPerMin`, `barPulses`. Ignore unknown keys; new ones raise the version. Kept in minimal mode. |
 | `tinysonicSongTags` v1 | `tinysonicTags` on songs, when `song_tags` is configured. |

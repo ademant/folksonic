@@ -480,6 +480,7 @@ func (s *State) routes() *http.ServeMux {
 
 	// Starring
 	register("star", s.Star)
+	register("setRating", s.SetRating)
 	register("unstar", s.Unstar)
 
 	// Artist / album info stubs

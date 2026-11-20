@@ -28,6 +28,7 @@ var migrations = []migration{
 	{"play queue per user", migratePlayQueue},
 	{"lyrics from tags", migrateLyrics},
 	{"device authorization grant and tokens", migrateDeviceGrants},
+	{"personal song ratings", migrateUserRatings},
 }
 
 // migrateBookmarks (version 4, #139) adds one bookmark per user and song. The
@@ -217,4 +218,17 @@ func migrateDeviceGrants(tx *sql.Tx) error {
 		}
 	}
 	return nil
+}
+
+// migrateUserRatings (version 8, #140) adds the personal star rating of a song,
+// 1 to 5 per user. It is not the dancing shoes value, which stays on
+// DanceBrainz. The table is created only when missing, so the step is idempotent.
+func migrateUserRatings(tx *sql.Tx) error {
+	_, err := tx.Exec(`CREATE TABLE IF NOT EXISTS user_ratings (
+		user_id   INTEGER REFERENCES users(id) ON DELETE CASCADE,
+		song_id   TEXT NOT NULL,
+		rating    INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+		PRIMARY KEY (user_id, song_id)
+	)`)
+	return err
 }
