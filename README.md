@@ -823,13 +823,22 @@ signed with a key that never leaves its Keystore.
    days, and is revoked after `api_key_idle_days` (180) without use.
 2. **Session token** (`Authorization: Bearer <token>`): issued by a passkey or
    password sign-in on the web page at `/login`.
-3. **Signed stream URL** (`tinysonicStreamUrl`): `GET /api/stream-url?id=so-…` with a
-   session returns a link to one song that works for 2 hours, carrying `uid`,
+3. **Device grant token** (`Authorization: DPoP <token>` with a fresh `DPoP` proof):
+   an app that signed in with a code (RFC 8628, #93) gets an access token bound
+   to the key it proves with, valid 15 minutes. The proof is checked as in method
+   0 and must come from the same key, so a stolen token alone is useless. Such a
+   request may use `/rest/*` and `/api/*` for reading and streaming, but not
+   manage the account. Refresh with `POST /api/device/refresh`: each refresh
+   token is single-use and rotates. Using a rotated one again revokes the whole
+   grant (`invalid_grant`), and so does 30 days without use. Revoke all grants
+   on the account page or with `POST /api/device/revoke`.
+4. **Signed stream URL** (`tinysonicStreamUrl`): `GET /api/stream-url?id=so-…` with a
+   session or a device grant returns a link to one song that works for 2 hours, carrying `uid`,
    `exp` and `sig` (an HMAC over the song, user and expiry). It is accepted only on
    `/rest/stream` and `/rest/download`, for that song only. A changed or expired
    link gets HTTP 403 with `stream_url_invalid` or `stream_url_expired`. API keys
    cannot mint links. Subsonic clients keep method 1 and do not use this.
-4. **Subsonic username and password**: `u` with `p`, plain or `p=enc:<hex>`.
+5. **Subsonic username and password**: `u` with `p`, plain or `p=enc:<hex>`.
    Clients that offer a password option use this. Token auth (`t` with `s`) is
    refused with Subsonic error 42. Set `legacy_password_auth = false` to turn
    this method off: such requests then get error 42, and API keys are the only
@@ -970,7 +979,12 @@ The JSON endpoints below are described in [`docs/openapi.yaml`](docs/openapi.yam
 | POST | `/api/register` | none | Create an account. With `invite` and `password`: active and signed in (returns a session `token`). Without an invite: pending, needs `allow_registration`, and needs a password of 8 to 1024 bytes |
 | POST | `/api/keys` | session | Create an API key (shown once). `expires_days` sets its lifetime; without it the key lives `api_key_ttl_days` |
 | GET | `/api/keys` | session | List own keys |
-| GET | `/api/stream-url?id=so-…` | session | Signed stream URL for one song, valid 2 hours. Play it at `/rest/stream.view` or `/rest/download.view` with no other credentials |
+| GET | `/api/stream-url?id=so-…` | session or device grant | Signed stream URL for one song, valid 2 hours. Play it at `/rest/stream.view` or `/rest/download.view` with no other credentials |
+| POST | `/api/device/authorize` | none | Start a device grant: returns `device_code`, `user_code` (`XXXX-XXXX`), `interval`, `expires_in` (10 minutes) |
+| POST | `/api/device/approve` | session | Approve the `user_code` of a waiting app |
+| POST | `/api/device/token` | DPoP proof | Exchange the `device_code` for tokens (`grant_type=urn:ietf:params:oauth:grant-type:device_code`) |
+| POST | `/api/device/refresh` | DPoP proof | Rotate the refresh token (`grant_type=refresh_token`) |
+| POST | `/api/device/revoke` | session | End every device grant of the account |
 | DELETE | `/api/keys/{id}` | session | Revoke an own key |
 | POST | `/api/pair/start` | session | Create a pairing token, its QR payload (`uri`) and its link (`link`) |
 | POST | `/api/pair/complete` | token | Redeem a pairing token. With `jwk` (the app's public P-256 key) the pairing waits for both confirmations and no secret is returned (202, `"confirm": true`). Without `jwk` the legacy form returns an API key, for apps that predate device keys |
@@ -1019,6 +1033,8 @@ manage sign-in. After sign-in the browser goes there. It offers:
 
 - **Pairing QR**, generated only when the button is pressed. It is an SVG
   (PNG as fallback) that works once and expires after fifteen minutes.
+- **Approve a device**: type the code an app shows (RFC 8628 device grant, #93),
+  and end all apps that signed in with a code.
 - **API keys**: create one with a label and an optional expiry (shown once),
   list them, and revoke them.
 - **Passkeys**: add one with a name, list them, and remove them.
@@ -1313,6 +1329,8 @@ message text is for people; apps should not parse it.
 | `scope_forbidden` | The key may not be used for this request (a key with a scope, such as the removed analysis worker keys) |
 | `session_required` | The request needs a signed-in session, not an API key (account and library management) |
 | `stream_url_expired` | The signed stream link is past its expiry; ask `/api/stream-url` for a new one (403) |
+| `token_expired` | The device grant's access token is past its 15 minutes; refresh it with `/api/device/refresh`. Logged as a failed credential; the response is 401 |
+| `token_invalid` | The device grant's access token is unknown, belongs to another key, or its grant was revoked; sign in on the device again. Logged as a failed credential; the response is 401 |
 | `stream_url_invalid` | The signed stream link was changed, is for another song, or its key was rotated (403) |
 | `proof_invalid` | A device proof is malformed, signed by another key, or for another method or URL (401) |
 | `proof_replayed` | A device proof's `jti` was used before (401) |

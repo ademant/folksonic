@@ -96,7 +96,7 @@ func (s *State) verifySignedStream(r *http.Request, q url.Values) (users.User, b
 // caller. Only sessions may ask (#93 decision 4): a leaked API key must not
 // be able to mint links.
 func (s *State) APIStreamURL(w http.ResponseWriter, r *http.Request) {
-	u, ok := s.requireSession(w, r)
+	u, ok := s.requireSessionOrGrant(w, r)
 	if !ok {
 		return
 	}

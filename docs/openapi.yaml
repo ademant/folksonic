@@ -456,7 +456,8 @@ paths:
       tags: [Stream]
       summary: Signed stream URL for one song
       description: >-
-        Session only; an API key gets 403 `session_required`. The returned URL
+        A signed-in session or a device grant (DPoP access token); an API key
+        gets 403 `session_required`. The returned URL
         plays the song at `/rest/stream.view` with no other credentials, until
         `expiresAt` (2 hours). The URL is bound to the song, the user and the
         expiry; changing any of them gets 403 `stream_url_invalid`.
@@ -484,6 +485,176 @@ paths:
           description: A key was used, or the request needs a session.
         '404':
           description: No song with that id.
+  /api/device/authorize:
+    post:
+      security: []
+      tags: [Device grant]
+      summary: Start a device grant (RFC 8628)
+      description: >-
+        Called by one of our apps. Returns a device code the app keeps and a
+        user code the person types on the account page. The codes expire after
+        ten minutes; poll `/api/device/token` at most once per `interval`
+        seconds. Refused with 503 when too many grants wait for approval.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label: {type: string, description: Name shown on the account page (up to 64 characters.)}
+      responses:
+        '200':
+          description: The codes.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  device_code: {type: string}
+                  user_code: {type: string, description: '`XXXX-XXXX`.'}
+                  verification_uri: {type: string}
+                  expires_in: {type: integer}
+                  interval: {type: integer}
+        '400':
+          description: Invalid JSON body.
+        '503':
+          description: Too many grants wait for approval.
+  /api/device/approve:
+    post:
+      security:
+        - bearerAuth: []
+      tags: [Device grant]
+      summary: Approve a device's user code
+      description: >-
+        Session only. Gives the pending grant with this user code to the
+        signed-in user. The dash and case of the code do not matter.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_code]
+              properties:
+                user_code: {type: string}
+      responses:
+        '200':
+          description: Approved.
+        '400':
+          description: Invalid JSON body.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: A key or a device was used; the request needs a session.
+        '404':
+          description: The code is unknown, used or expired.
+  /api/device/token:
+    post:
+      security: []
+      tags: [Device grant]
+      summary: Exchange a device code for tokens (RFC 8628, DPoP)
+      description: >-
+        Form body with `grant_type=urn:ietf:params:oauth:grant-type:device_code`
+        and `device_code`. Needs a `DPoP` proof signed by the device's key; the
+        tokens are bound to that key. Errors use the RFC names:
+        `authorization_pending`, `slow_down` (poll less often), `expired_token`,
+        `invalid_grant`, `invalid_dpop_proof`. The access token lasts 15 minutes
+        and is sent as `Authorization: DPoP <token>` with a fresh proof on every
+        request, to `/rest/*` and `/api/*`.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [grant_type, device_code]
+              properties:
+                grant_type: {type: string}
+                device_code: {type: string}
+      responses:
+        '200':
+          description: The tokens.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token: {type: string}
+                  token_type: {type: string, enum: [DPoP]}
+                  expires_in: {type: integer}
+                  refresh_token: {type: string}
+        '400':
+          description: One of the RFC error codes above.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: {type: string}
+  /api/device/refresh:
+    post:
+      security: []
+      tags: [Device grant]
+      summary: Rotate a device's refresh token
+      description: >-
+        Form body with `grant_type=refresh_token` and `refresh_token`, with a
+        DPoP proof from the grant's key. Both tokens are replaced. Using a
+        refresh token a second time revokes the whole grant (`invalid_grant`),
+        and so does an unused refresh token left for 30 days. Access tokens of a
+        revoked grant stop at once.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [grant_type, refresh_token]
+              properties:
+                grant_type: {type: string}
+                refresh_token: {type: string}
+      responses:
+        '200':
+          description: The new tokens.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token: {type: string}
+                  token_type: {type: string, enum: [DPoP]}
+                  expires_in: {type: integer}
+                  refresh_token: {type: string}
+        '400':
+          description: One of the RFC error codes.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: {type: string}
+  /api/device/revoke:
+    post:
+      security:
+        - bearerAuth: []
+      tags: [Device grant]
+      summary: End every device grant of the account
+      description: >-
+        Session only. Revokes all grants of the signed-in user: their access and
+        refresh tokens stop working at once.
+      responses:
+        '200':
+          description: How many grants were revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  revoked: {type: integer}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: A key or a device was used; the request needs a session.
   /api/device/me:
     get:
       tags: [Device pairing]

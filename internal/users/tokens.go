@@ -361,6 +361,8 @@ const (
 	CodePairingRejected     = "pairing_rejected"
 	CodePairingTokenUsed    = "pairing_token_used"
 	CodePairingBusy         = "pairing_busy"
+	CodeTokenExpired        = "token_expired"
+	CodeTokenInvalid        = "token_invalid"
 	// RevokedIdle is the revoked_reason of a key the idle sweep revoked.
 	RevokedIdle = "idle"
 )

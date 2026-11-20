@@ -38,6 +38,8 @@ var refusalMessages = map[string]string{
 	users.CodeProofReplayed:       "This request was already sent. The app should sign a new request.",
 	users.CodePairingPending:      "This pairing waits for confirmation: compare the code on this device with the one on the account page, and confirm on both.",
 	users.CodeDeviceUnknown:       "This device was removed from the account. Pair it again.",
+	users.CodeTokenExpired:        "The access token has expired. Refresh it with the refresh token.",
+	users.CodeTokenInvalid:        "The access token is not valid for this device. Sign in on the device again.",
 	users.CodePairingRejected:     "This pairing was rejected. Create a new code on the account page and pair again.",
 	users.CodePairingTokenUsed:    "This QR code can no longer be used. Create a new code on the account page.",
 	users.CodePairingBusy:         "Too many devices are waiting on this QR code. Create a new code on the account page.",

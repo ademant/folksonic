@@ -27,6 +27,7 @@ var migrations = []migration{
 	{"bookmarks per user and song", migrateBookmarks},
 	{"play queue per user", migratePlayQueue},
 	{"lyrics from tags", migrateLyrics},
+	{"device authorization grant and tokens", migrateDeviceGrants},
 }
 
 // migrateBookmarks (version 4, #139) adds one bookmark per user and song. The
@@ -171,4 +172,49 @@ func migrateLyrics(tx *sql.Tx) error {
 	}
 	_, err := tx.Exec("UPDATE songs SET mtime = 0")
 	return err
+}
+
+// migrateDeviceGrants (version 7, #93) adds the device authorization grant: the
+// pending device codes, the grants an approved code creates, the refresh tokens
+// already rotated away (kept to recognise a reuse) and the access tokens. Each
+// table is created only when missing.
+func migrateDeviceGrants(tx *sql.Tx) error {
+	for _, q := range []string{
+		`CREATE TABLE IF NOT EXISTS oauth_device_codes (
+			device_hash   TEXT PRIMARY KEY,
+			user_code     TEXT NOT NULL UNIQUE,
+			label         TEXT NOT NULL DEFAULT '',
+			user_id       INTEGER REFERENCES users(id) ON DELETE CASCADE,
+			expires_ms    INTEGER NOT NULL,
+			interval_ms   INTEGER NOT NULL,
+			last_poll_ms  INTEGER NOT NULL DEFAULT 0,
+			created_ms    INTEGER NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS oauth_grants (
+			id            INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			label         TEXT NOT NULL DEFAULT '',
+			jkt           TEXT NOT NULL,
+			refresh_hash  TEXT NOT NULL UNIQUE,
+			created_ms    INTEGER NOT NULL,
+			last_used_ms  INTEGER NOT NULL,
+			revoked_ms    INTEGER
+		)`,
+		`CREATE TABLE IF NOT EXISTS oauth_refresh_used (
+			refresh_hash  TEXT PRIMARY KEY,
+			grant_id      INTEGER NOT NULL REFERENCES oauth_grants(id) ON DELETE CASCADE,
+			used_ms       INTEGER NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS oauth_refresh_used_age ON oauth_refresh_used(used_ms)`,
+		`CREATE TABLE IF NOT EXISTS oauth_access_tokens (
+			token_hash    TEXT PRIMARY KEY,
+			grant_id      INTEGER NOT NULL REFERENCES oauth_grants(id) ON DELETE CASCADE,
+			expires_ms    INTEGER NOT NULL
+		)`,
+	} {
+		if _, err := tx.Exec(q); err != nil {
+			return err
+		}
+	}
+	return nil
 }
