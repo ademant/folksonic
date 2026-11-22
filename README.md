@@ -1229,6 +1229,14 @@ strip it.
 Subsonic clients take the full address as the server URL. Passkeys are not
 affected, since the RP ID is the hostname only.
 
+The device relay (`/api/relay/connect`) is a WebSocket. The proxy must forward
+the `Upgrade` and `Connection` headers for that path alone. Apache needs
+`ProxyPass … upgrade=websocket` on that path, placed before the general
+`/folksonic` line, and nginx needs an exact `location` with the upgrade headers.
+Without this the relay answers 400 (#161). Caddy needs nothing extra. For the
+Apache setup of cloud.ademant.de, `make apache HOST=<host>` adds the lines to the
+HTTPS vhost (see `deploy/remote.sh`).
+
 ## Running over HTTPS
 
 HTTPS can come from a reverse proxy (nginx, Caddy or Apache; templates in

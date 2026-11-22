@@ -8,6 +8,8 @@
 # deploy/nginx-subpath.conf and deploy/Caddyfile.
 
 HOST   ?=
+# The HTTPS vhost that serves tinysonic under /folksonic (make apache, #161).
+APACHE_VHOST ?= /etc/apache2/sites-enabled/000-default-le-ssl.conf
 GOOS   ?= linux
 GOARCH ?= amd64
 
@@ -25,7 +27,7 @@ STAGE := $(NAME)-deploy
 # stage copies files into a fresh ~/$(STAGE) on the server.
 stage = ssh $(HOST) 'rm -rf $(STAGE) && mkdir -m 0700 $(STAGE)' && scp $(1) $(HOST):$(STAGE)/
 
-.PHONY: build check setup deploy rollback status logs clean require-host
+.PHONY: build check setup deploy rollback apache status logs clean require-host
 
 build:
 	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -trimpath -o $(DIST) ./cmd/$(NAME)
@@ -48,6 +50,12 @@ deploy: require-host check build
 rollback: require-host
 	$(call stage,deploy/remote.sh)
 	ssh -t $(HOST) sh $(STAGE)/remote.sh rollback
+
+# apache adds the device relay's WebSocket proxy lines to the HTTPS vhost (#161).
+# It is idempotent and keeps a backup. Override the vhost with APACHE_VHOST=…
+apache: require-host
+	$(call stage,deploy/remote.sh deploy/apache-subpath.conf)
+	ssh -t $(HOST) sh $(STAGE)/remote.sh apache '$(APACHE_VHOST)'
 
 status: require-host
 	ssh -t $(HOST) systemctl --no-pager status $(NAME)
