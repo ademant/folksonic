@@ -34,6 +34,8 @@ music.example.com {
     #     }
     # }
 
+    # WebSocket upgrades (the device relay, #159) are proxied by reverse_proxy
+    # without extra configuration.
     reverse_proxy 127.0.0.1:4534 {
         # Stream audio without buffering it.
         flush_interval -1

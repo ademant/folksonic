@@ -8,6 +8,7 @@
 #   sh remote.sh setup      # user, directories, unit, config if absent
 #   sh remote.sh deploy     # install the uploaded binary, restart, health check
 #   sh remote.sh rollback   # restore the previous binary
+#   sh remote.sh apache [vhost]   # add the relay proxy lines to the HTTPS vhost (#161)
 set -eu
 
 NAME=tinysonic
@@ -90,6 +91,68 @@ rollback() {
 	healthy
 }
 
+# apache adds the WebSocket relay lines of apache-subpath.conf to the HTTPS vhost,
+# above its single "ProxyPass /folksonic" line (the first match wins). It is
+# idempotent, keeps a backup, and restores that backup if configtest fails.
+apache() {
+	vhost=${1:-/etc/apache2/sites-enabled/000-default-le-ssl.conf}
+	snippet=apache-subpath.conf
+	if ! sudo test -f "$vhost"; then
+		echo "$vhost not found; pass the HTTPS vhost with APACHE_VHOST=" >&2
+		exit 1
+	fi
+	if [ ! -f "$snippet" ]; then
+		echo "$snippet is missing from the upload" >&2
+		exit 1
+	fi
+	relay=$(mktemp)
+	grep -E '^ProxyPass(Reverse)?[[:space:]]+/folksonic/api/relay/connect[[:space:]]' "$snippet" > "$relay"
+	if [ "$(wc -l < "$relay")" -ne 2 ]; then
+		echo "$snippet does not carry the two relay lines" >&2
+		rm -f "$relay"
+		exit 1
+	fi
+
+	# Modules first: if one is missing, nothing in the vhost has changed yet.
+	# mod_proxy_wstunnel carries the upgrade; the others are the proxy itself.
+	for m in proxy proxy_http proxy_wstunnel headers; do
+		sudo a2enmod "$m" >/dev/null
+	done
+
+	backup=
+	if sudo grep -q '^[[:space:]]*ProxyPass[[:space:]][[:space:]]*/folksonic/api/relay/connect[[:space:]]' "$vhost"; then
+		echo "the relay proxy line is already in $vhost"
+	else
+		n=$(sudo grep -c '^[[:space:]]*ProxyPass[[:space:]][[:space:]]*/folksonic[[:space:]]' "$vhost" || true)
+		if [ "$n" -ne 1 ]; then
+			echo "$vhost has $n 'ProxyPass /folksonic' lines; add the relay lines by hand" >&2
+			rm -f "$relay"
+			exit 1
+		fi
+		backup="$vhost.bak-$(date -u +%Y%m%d%H%M%S)"
+		sudo cp -p "$vhost" "$backup"
+		tmp=$(mktemp)
+		sudo awk -v relayfile="$relay" '
+			BEGIN { while ((getline l < relayfile) > 0) block = block l "\n" }
+			/^[ \t]*ProxyPass[ \t]+\/folksonic[ \t]/ && !done { printf "%s", block; done = 1 }
+			{ print }' "$vhost" > "$tmp"
+		sudo install -m 0644 -o root -g root "$tmp" "$vhost"
+		rm -f "$tmp"
+		echo "added the relay lines to $vhost (backup: $backup)"
+	fi
+	rm -f "$relay"
+
+	if ! sudo apache2ctl configtest; then
+		if [ -n "$backup" ]; then
+			echo "configtest failed; restoring $backup" >&2
+			sudo cp -p "$backup" "$vhost"
+		fi
+		exit 1
+	fi
+	sudo systemctl reload apache2
+	echo "apache reloaded with the relay proxy line"
+}
+
 cd "$(dirname "$0")"
 stage=$(pwd)
 if [ "$(basename "$stage")" = "$NAME-deploy" ]; then
@@ -100,8 +163,9 @@ case "${1:-}" in
 setup) setup ;;
 deploy) deploy ;;
 rollback) rollback ;;
+apache) apache "${2:-}" ;;
 *)
-	echo "usage: $0 setup|deploy|rollback" >&2
+	echo "usage: $0 setup|deploy|rollback|apache [vhost]" >&2
 	exit 2
 	;;
 esac

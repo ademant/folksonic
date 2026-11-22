@@ -19,6 +19,8 @@ Production runs on **this machine** (hostname `nextcloud-ubuntu-4gb-hel1-13`), n
 
 Never restart Apache for a tinysonic deploy; if the vhost ever needs editing, back it up, run `apache2ctl configtest` and `systemctl reload apache2`.
 
+**The relay needs its own proxy line (#161).** The vhost must carry `ProxyPass /folksonic/api/relay/connect http://127.0.0.1:4534/folksonic/api/relay/connect upgrade=websocket` (plus its `ProxyPassReverse`) **above** the general `ProxyPass /folksonic` line, as in `deploy/apache-subpath.conf`. Without it every relay connect gets HTTP 400, and DanceSonic Studio retries with backoff. Install it with `make apache HOST=<host>` (#161). The target stages `deploy/apache-subpath.conf` and runs `remote.sh apache` on the host. That adds the two relay lines above the single `ProxyPass /folksonic` line of the HTTPS vhost, keeps a timestamped backup, enables `proxy_wstunnel`, runs `apache2ctl configtest`, and reloads. It restores the backup if configtest fails, and a second run changes nothing. The vhost defaults to `/etc/apache2/sites-enabled/000-default-le-ssl.conf`; override it with `APACHE_VHOST=…`. If the vhost has zero or several `ProxyPass /folksonic` lines, the target stops and the lines have to go in by hand.
+
 ## Steps
 
 1. **Decide what to deploy.** Usually `main`: `git checkout main && git pull`. List what is new since the running version (`git log --oneline --no-merges <deployed>..HEAD`; the running commit is in the name of the newest `/var/lib/tinysonic/backup-*-pre-<sha>` directory). If the user wants an unmerged branch, say that production will then be ahead of `main` and that the next deploy from `main` would drop the change until it is merged.
