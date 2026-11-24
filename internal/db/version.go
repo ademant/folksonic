@@ -31,6 +31,7 @@ var migrations = []migration{
 	{"personal song ratings", migrateUserRatings},
 	{"remote playback control", migrateRemotePlayback},
 	{"device registry for remote control", migrateRelayDevices},
+	{"analysis import grant on api keys", migrateAnalysisImportGrant},
 }
 
 // migrateBookmarks (version 4, #139) adds one bookmark per user and song. The
@@ -286,5 +287,21 @@ func migrateRelayDevices(tx *sql.Tx) error {
 		updated_ms  INTEGER NOT NULL,
 		PRIMARY KEY (user_id, device_id)
 	)`)
+	return err
+}
+
+// migrateAnalysisImportGrant (version 11, #163) records on an API key when a
+// librarian allowed it to fetch analysis jobs and upload results. NULL means
+// not allowed. The column is added only when missing, so the step is
+// idempotent.
+func migrateAnalysisImportGrant(tx *sql.Tx) error {
+	var n int
+	if err := tx.QueryRow("SELECT COUNT(*) FROM pragma_table_info('api_keys') WHERE name = 'analysis_import_at'").Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	_, err := tx.Exec("ALTER TABLE api_keys ADD COLUMN analysis_import_at TEXT")
 	return err
 }

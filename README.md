@@ -143,6 +143,7 @@ Configuration is checked at startup:
 | `trusted_proxies`    | Addresses (IPs or CIDR ranges) of reverse proxies whose `X-Forwarded-For` is believed. Empty by default: the connecting address is the client. See [Sign-in limits](#sign-in-limits). |
 | `api_key_ttl_days`   | Lifetime of an API key, in days (1–3650). Default 365. Every key expires; a key in use within its last 30 days is renewed to a full lifetime. A request can ask for its own `expires_days`. |
 | `api_key_idle_days`  | A key unused for this many days is revoked (1–3650). Default 180. Revoked keys are logged as `api key revoked: idle`. |
+| `analysis_upload_max_mb` | Largest upload to `POST /api/analysis/results`, in MiB after decompression (1–4096). Default 64. See [Analysis over the API](#analysis-over-the-api). |
 | `require_https`      | Refuse plain HTTP on every endpoint. Default on, for a LAN install too. Set `false` only on a trusted test network. See [Running over HTTPS](#running-over-https). |
 | `tls_cert`, `tls_key` | PEM certificate and private key: serve HTTPS directly, without a proxy. Both or neither. `tinysonic cert` makes them. When set, the server accepts only HTTPS. |
 | `[site]` table       | Public description: `name`, `description`, `contact` (email or URL), `repository` (default `https://github.com/ademant/folksonic`) and `impressum_file` (a Markdown file). Empty fields are not shown. See [Public pages](#public-pages). |
@@ -830,6 +831,50 @@ sudo setpriv --reuid=tinysonic --regid=tinysonic --groups=tinysonic,music \
     env HOME=/var/lib/tinysonic tinysonic analysis import -c /etc/tinysonic/tinysonic.toml results.jsonl
 ```
 
+#### Analysis over the API
+
+The same round trip works without shell access to the server (#163), for
+DanceSonic Studio or a script on the desktop:
+
+- `GET /api/analysis/jobs` with exactly one of `all=1`, `pending=1` or
+  `id=so-…` (repeated), and optionally `features=bpm,beats,…`, returns the
+  `jobs.json` above.
+- `POST /api/analysis/results` takes `results.jsonl` as the body
+  (`Content-Type: application/x-ndjson`, optionally `Content-Encoding: gzip`)
+  and runs the import above, the same code as `tinysonic analysis import`:
+  `dryRun=1` checks and stores nothing, `sizeOnly=1` is `-size-only`. The
+  answer is the report as JSON:
+
+```json
+{"dryRun": false, "lines": 3, "applied": 2, "changed": 1, "unchanged": 1, "failed": 0,
+ "rejected": 0, "skipped": {"stale": 1}, "changedBy": {"bpm": 1, "beats": 1},
+ "entries": [{"line": 2, "songId": "so-…", "status": "skipped", "reason": "stale"}],
+ "changedSongs": [{"songId": "so-…", "features": ["bpm", "beats"]}]}
+```
+
+`entries` lists every skipped, rejected (`not_json`, `no_job`,
+`bad_skipped`, `no_result`, `schema`) and failed (`tool_error`) line; lines
+stored without a change are only counted.
+
+**Limits.** One import runs at a time (`409` for a second one). A body may
+hold `analysis_upload_max_mb` (default 64 MiB, after decompression) and
+50,000 lines; a larger one is refused with `413` before anything is stored.
+A full library's results are usually larger, so upload them in batches:
+each call stands on its own, and repeating one changes nothing. The body is
+written to a temporary file next to the database while it is imported and
+removed afterwards. The log gets one line per call with the counts, never
+the body or the key.
+
+**Credentials.** Both endpoints take a librarian's session, or one API key a
+librarian allowed to import analysis results: on the account page,
+**Allow analysis import** on the key (`POST /api/keys/{id}/analysis-import`
+with a session). One key per account holds the grant; giving it to another
+key takes it from the first. The key must be sent in the `X-Api-Key` header,
+never as `apiKey=` in the URL, and the account must still be a librarian on
+each call. Apart from these two endpoints the key stays an ordinary key: it
+cannot reach the library administration (`/api/library/*`) or manage the
+account. Granting and removing are logged; revoking the key ends the grant.
+
 ## Tested clients
 
 Anything that speaks Subsonic API 1.16.x and prefers tag-based browsing should
@@ -862,7 +907,10 @@ signed with a key that never leaves its Keystore.
    rights as its user and can be revoked. A key may call the Subsonic API, the
    analysis reads, but not manage the account: creating,
    listing or revoking keys, pairing devices, passkeys, identities and library
-   jobs need a signed-in session (`session_required`). Every key expires after
+   jobs need a signed-in session (`session_required`). The one exception is a
+   key a librarian allowed to import analysis results: it may also fetch
+   analysis jobs and upload results, in the header only (see [Analysis over
+   the API](#analysis-over-the-api)). Every key expires after
    `api_key_ttl_days` (365 by default), is renewed when it is used in its last 30
    days, and is revoked after `api_key_idle_days` (180) without use.
 2. **Session token** (`Authorization: Bearer <token>`): issued by a passkey or
@@ -1030,6 +1078,7 @@ The JSON endpoints below are described in [`docs/openapi.yaml`](docs/openapi.yam
 | POST | `/api/device/refresh` | DPoP proof | Rotate the refresh token (`grant_type=refresh_token`) |
 | POST | `/api/device/revoke` | session | End every device grant of the account |
 | DELETE | `/api/keys/{id}` | session | Revoke an own key |
+| POST, DELETE | `/api/keys/{id}/analysis-import` | session, librarian | Allow one own key to fetch analysis jobs and upload results, or take that away; see [Analysis over the API](#analysis-over-the-api) |
 | POST | `/api/pair/start` | session | Create a pairing token, its QR payload (`uri`) and its link (`link`) |
 | POST | `/api/pair/complete` | token | Redeem a pairing token. With `jwk` (the app's public P-256 key) the pairing waits for both confirmations and no secret is returned (202, `"confirm": true`). Without `jwk` the legacy form returns an API key, for apps that predate device keys |
 | POST | `/api/pair/confirm` | proof of the pending key | The device's answer to the verification code: `{"result": "match"}` or `"cancel"`. 200 with the device once both sides confirmed, 202 while the owner has not |
@@ -1060,6 +1109,8 @@ The JSON endpoints below are described in [`docs/openapi.yaml`](docs/openapi.yam
 | GET | `/api/library/analysis/failed` | session | Tracks whose last analysis failed, with tool and error; `?limit=` up to 1000 (default 200). Retry with the POST above |
 | POST | `/api/library/jobs/cancel` | session | Stop the running job after the current track |
 | GET | `/api/analysis?id=` | user | Stored analysis of one track; see [Track analysis](#track-analysis) |
+| GET | `/api/analysis/jobs` | librarian session or granted key | Job list for an offline folksentia run; see [Analysis over the API](#analysis-over-the-api) |
+| POST | `/api/analysis/results` | librarian session or granted key | Import folksentia's result lines; see [Analysis over the API](#analysis-over-the-api) |
 | GET | `/api/duplicates` | user | Groups of songs with matching audio fingerprints; see [Track analysis](#track-analysis) |
 | GET | `/api/oidc/identities` | session | List linked identities |
 | DELETE | `/api/oidc/identities/{id}` | session | Unlink an identity. Refused (409) when it is the account's last sign-in method |
@@ -1380,6 +1431,7 @@ message text is for people; apps should not parse it.
 | `user_disabled` | The account is disabled |
 | `scope_forbidden` | The key may not be used for this request (a key with a scope, such as the removed analysis worker keys) |
 | `session_required` | The request needs a signed-in session, not an API key (account and library management) |
+| `analysis_import_required` | `/api/analysis/jobs` and `/api/analysis/results` take a librarian's session, or the key a librarian allowed to import analysis results, in `X-Api-Key`: a key without that grant, a key in the URL or a device is refused (403). Logged as a refused credential |
 | `stream_url_expired` | The signed stream link is past its expiry; ask `/api/stream-url` for a new one (403) |
 | `token_expired` | The device grant's access token is past its 15 minutes; refresh it with `/api/device/refresh`. Logged as a failed credential; the response is 401 |
 | `token_invalid` | The device grant's access token is unknown, belongs to another key, or its grant was revoked; sign in on the device again. Logged as a failed credential; the response is 401 |

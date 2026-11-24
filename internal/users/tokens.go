@@ -29,6 +29,9 @@ type APIKey struct {
 	// Scope is "" for a full key. A key with a scope (the analysis worker
 	// keys removed in #105) is refused everywhere.
 	Scope string
+	// AnalysisImport is true when a librarian allowed this key to fetch
+	// analysis jobs and upload results (#163). One key per account at most.
+	AnalysisImport bool
 }
 
 // KeyTTL is the lifetime of a new key when the caller gives none, and KeyIdle
@@ -132,7 +135,8 @@ func LookupAPIKeyInfo(ctx context.Context, db *sql.DB, plain string) (User, KeyI
 
 func ListAPIKeys(ctx context.Context, db *sql.DB, userID int64) ([]APIKey, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT id, label, prefix, created_at, expires_at, last_used_at, revoked_at, scope
+		SELECT id, label, prefix, created_at, expires_at, last_used_at, revoked_at, scope,
+		       analysis_import_at IS NOT NULL
 		FROM api_keys WHERE user_id = ? AND revoked_at IS NULL ORDER BY id`, userID)
 	if err != nil {
 		return nil, err
@@ -141,12 +145,65 @@ func ListAPIKeys(ctx context.Context, db *sql.DB, userID int64) ([]APIKey, error
 	var out []APIKey
 	for rows.Next() {
 		var k APIKey
-		if err := rows.Scan(&k.ID, &k.Label, &k.Prefix, &k.CreatedAt, &k.ExpiresAt, &k.LastUsedAt, &k.RevokedAt, &k.Scope); err != nil {
+		if err := rows.Scan(&k.ID, &k.Label, &k.Prefix, &k.CreatedAt, &k.ExpiresAt, &k.LastUsedAt, &k.RevokedAt, &k.Scope, &k.AnalysisImport); err != nil {
 			return nil, err
 		}
 		out = append(out, k)
 	}
 	return out, rows.Err()
+}
+
+// GrantAnalysisImport allows one of userID's keys to fetch analysis jobs and
+// upload results (#163). The grant moves: any other key of the account loses
+// it. Revoked, expired and scoped keys, and keys of other accounts, report
+// ErrNotFound. The caller checks that the account is a librarian.
+func GrantAnalysisImport(ctx context.Context, db *sql.DB, userID, keyID int64) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE api_keys SET analysis_import_at = NULL WHERE user_id = ? AND id <> ? AND analysis_import_at IS NOT NULL",
+		userID, keyID); err != nil {
+		return err
+	}
+	res, err := tx.ExecContext(ctx,
+		`UPDATE api_keys SET analysis_import_at = COALESCE(analysis_import_at, ?)
+		 WHERE id = ? AND user_id = ? AND revoked_at IS NULL AND scope = ''
+		   AND (expires_at IS NULL OR expires_at > ?)`,
+		Now(), keyID, userID, Now())
+	if err != nil {
+		return err
+	}
+	if err := requireOne(res); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// RemoveAnalysisImport takes the grant away from one of userID's keys. A key
+// without the grant is not an error; another account's key is ErrNotFound.
+func RemoveAnalysisImport(ctx context.Context, db *sql.DB, userID, keyID int64) error {
+	res, err := db.ExecContext(ctx,
+		"UPDATE api_keys SET analysis_import_at = NULL WHERE id = ? AND user_id = ? AND revoked_at IS NULL",
+		keyID, userID)
+	if err != nil {
+		return err
+	}
+	return requireOne(res)
+}
+
+// KeyAllowsAnalysisImport reports whether a presented key holds the analysis
+// import grant. It does not check the key's validity; LookupAPIKeyInfo does.
+func KeyAllowsAnalysisImport(ctx context.Context, db *sql.DB, plain string) (bool, error) {
+	var ok bool
+	err := db.QueryRowContext(ctx,
+		"SELECT analysis_import_at IS NOT NULL FROM api_keys WHERE key_hash = ?", hashToken(plain)).Scan(&ok)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return ok, err
 }
 
 // RevokeAPIKey revokes one of userID's keys. Keys belonging to other users
@@ -363,6 +420,10 @@ const (
 	CodePairingBusy         = "pairing_busy"
 	CodeTokenExpired        = "token_expired"
 	CodeTokenInvalid        = "token_invalid"
+	// CodeAnalysisImportRequired: the analysis jobs and results endpoints
+	// take a librarian's session, or the one API key a librarian allowed to
+	// import analysis results, in the X-Api-Key header (#163).
+	CodeAnalysisImportRequired = "analysis_import_required"
 	// RevokedIdle is the revoked_reason of a key the idle sweep revoked.
 	RevokedIdle = "idle"
 )

@@ -219,9 +219,12 @@ func (s *State) APIListKeys(w http.ResponseWriter, r *http.Request) {
 			"createdAt":  k.CreatedAt,
 			"lastUsedAt": nsToAny(k.LastUsedAt),
 			"expiresAt":  nsToAny(k.ExpiresAt),
+			// The key may fetch analysis jobs and upload results (#163).
+			"analysisImport": k.AnalysisImport,
 		})
 	}
-	writeJSON(w, http.StatusOK, J{"keys": out})
+	// canGrantAnalysisImport tells the account page to offer the grant.
+	writeJSON(w, http.StatusOK, J{"keys": out, "canGrantAnalysisImport": u.Role == users.RoleLibrarian})
 }
 
 func (s *State) APIRevokeKey(w http.ResponseWriter, r *http.Request) {

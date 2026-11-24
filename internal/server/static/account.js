@@ -70,7 +70,7 @@
   // API keys
   // Keys unused the longest come first, so the stale ones are easy to spot.
   function lastActivity(k) { return k.lastUsedAt || k.createdAt || ""; }
-  function renderKeys(keys) {
+  function renderKeys(keys, canGrant) {
     var list = $("keys");
     list.textContent = "";
     if (!keys.length) list.appendChild(el("li", "No API keys yet.", "meta"));
@@ -83,7 +83,20 @@
       info.appendChild(el("div", "Created " + when(k.createdAt) +
         (k.lastUsedAt ? " · last used " + when(k.lastUsedAt) : " · never used") +
         (k.expiresAt ? " · expires " + when(k.expiresAt) : ""), "meta"));
+      if (k.analysisImport) info.appendChild(el("div", "May fetch analysis jobs and upload results (DanceSonic Studio)", "meta"));
       li.appendChild(info);
+      // Librarians allow one key to import analysis results (#163); granting moves it.
+      if (canGrant) {
+        var g = el("button", k.analysisImport ? "Remove analysis import" : "Allow analysis import", "small");
+        g.addEventListener("click", async function () {
+          try {
+            await api(k.analysisImport ? "DELETE" : "POST", "keys/" + k.id + "/analysis-import");
+            say(k.analysisImport ? "Analysis import removed from the key." : "The key may now import analysis results; other keys lost that right.");
+            await loadKeys();
+          } catch (e) { say(e.message); }
+        });
+        li.appendChild(g);
+      }
       var b = el("button", "Revoke", "danger small");
       b.addEventListener("click", async function () {
         try { await api("DELETE", "keys/" + k.id); say("Key revoked."); await loadKeys(); } catch (e) { say(e.message); }
@@ -92,7 +105,7 @@
       list.appendChild(li);
     });
   }
-  async function loadKeys() { renderKeys((await api("GET", "keys")).keys || []); }
+  async function loadKeys() { var j = await api("GET", "keys"); renderKeys(j.keys || [], !!j.canGrantAnalysisImport); }
 
   // Devices (#101): paired apps. A new pairing (#103) shows the verification
   // code that the app shows too; the owner confirms here when both match, and

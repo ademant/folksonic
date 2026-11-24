@@ -52,6 +52,12 @@ type State struct {
 	Analysis *analysis.Plan
 	// jobs runs background analysis jobs.
 	jobs jobRunner
+	// imports lets one analysis results upload run at a time (#163);
+	// uploadDir is where uploads are spooled ("" for the system temp dir)
+	// and analysisUploadMaxMB their limit (analysis_upload_max_mb).
+	imports             importGate
+	uploadDir           string
+	analysisUploadMaxMB int
 	// dups is the last duplicate search (GET /api/duplicates).
 	dups     duplicateIndex
 	Progress *scanner.Progress
@@ -148,18 +154,20 @@ func (s *State) preloadSongs(ctx context.Context) {
 
 func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scanner.Progress) error {
 	s := &State{
-		Pool:              pool,
-		BaseURL:           cfg.BaseURL,
-		Site:              cfg.Site,
-		BasePath:          cfg.BasePath,
-		AllowRegistration: cfg.AllowRegistration,
-		MusicDirs:         cfg.MusicDirs,
-		SongTags:          cfg.SongTags,
-		IgnoredArticles:   strings.Fields(cfg.IgnoredArticles),
-		FFmpegPath:        cfg.FFmpegPath,
-		CoversDir:         cfg.CoversDir,
-		Progress:          progress,
-		Analysis:          analysis.NewPlan(cfg.Analysis, cfg.FFmpegPath),
+		Pool:                pool,
+		BaseURL:             cfg.BaseURL,
+		Site:                cfg.Site,
+		BasePath:            cfg.BasePath,
+		AllowRegistration:   cfg.AllowRegistration,
+		MusicDirs:           cfg.MusicDirs,
+		SongTags:            cfg.SongTags,
+		IgnoredArticles:     strings.Fields(cfg.IgnoredArticles),
+		FFmpegPath:          cfg.FFmpegPath,
+		CoversDir:           cfg.CoversDir,
+		Progress:            progress,
+		Analysis:            analysis.NewPlan(cfg.Analysis, cfg.FFmpegPath),
+		uploadDir:           uploadDirFor(cfg.DatabasePath),
+		analysisUploadMaxMB: cfg.AnalysisUploadMaxMB,
 	}
 	// The duplicate search is not started here: it takes tens of seconds and
 	// a few hundred MB on a large library, and nothing needs it at startup.
@@ -260,9 +268,15 @@ func corsMiddleware(h http.Handler) http.Handler {
 }
 
 // limitBody caps request bodies. Subsonic only needs small form posts (playlist
-// edits), so anything larger is rejected before it is read into memory.
+// edits), so anything larger is rejected before it is read into memory. The
+// analysis results upload applies its own, configurable limit
+// (APIAnalysisResults).
 func limitBody(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, resultsPath) {
+			h.ServeHTTP(w, r)
+			return
+		}
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		h.ServeHTTP(w, r)
 	})
@@ -532,6 +546,8 @@ func (s *State) routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/devices", s.APIListDevices)
 	mux.HandleFunc("DELETE /api/devices/{id}", s.APIRemoveDevice)
 	mux.HandleFunc("DELETE /api/keys/{id}", s.APIRevokeKey)
+	mux.HandleFunc("POST /api/keys/{id}/analysis-import", s.APIGrantAnalysisImport)
+	mux.HandleFunc("DELETE /api/keys/{id}/analysis-import", s.APIRemoveAnalysisImport)
 	mux.HandleFunc("POST /api/pair/start", s.APIPairStart)
 	mux.HandleFunc("POST /api/pair/complete", s.APIPairComplete)
 	mux.HandleFunc("POST /api/passkey/register/begin", s.APIPasskeyRegisterBegin)
@@ -565,6 +581,8 @@ func (s *State) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/library/analysis", s.APILibraryAnalysis)
 	mux.HandleFunc("GET /api/library/analysis/failed", s.APILibraryFailed)
 	mux.HandleFunc("GET /api/analysis", s.APIAnalysis)
+	mux.HandleFunc("GET /api/analysis/jobs", s.APIAnalysisJobs)
+	mux.HandleFunc("POST /api/analysis/results", s.APIAnalysisResults) // resultsPath
 	mux.HandleFunc("GET /api/duplicates", s.APIDuplicates)
 	mux.HandleFunc("POST /api/library/jobs/cancel", s.APILibraryCancel)
 	return mux
