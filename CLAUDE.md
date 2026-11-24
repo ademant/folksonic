@@ -78,6 +78,7 @@ Copy `smolsonic.example.toml` to `smolsonic.toml` for local testing. Don't commi
 | `cmd/tinysonic/analysis.go` | `tinysonic analysis pending`, `recalc`, `export` and `import` |
 | `cmd/tinysonic/tempo.go`, `internal/analysis/tempo.go` | `tinysonic analysis tempo` report; `tinysonicTempo` keys on songs (`analysis.TempoKeys`) |
 | `internal/analysis/offline.go` | Offline analysis: job export for folksentia's batch mode, import of its result lines |
+| `internal/server/analysis_import.go` | `GET /api/analysis/jobs`, `POST /api/analysis/results` (same export/import code over the API) and the per-key analysis import grant |
 | `internal/server/login.go` | Password sign-in and the `/login` page (`static/login.html`) |
 | `internal/users/` | Accounts, API keys, invitation codes, pairing tokens, sessions, passkey storage |
 | `cmd/tinysonic/admin.go` | `tinysonic user …`, `tinysonic invite …` and `tinysonic pair` commands |

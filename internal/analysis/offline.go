@@ -182,6 +182,33 @@ type ImportOptions struct {
 	// SizeOnly accepts a result when the file size matches, whatever the
 	// mtime (for copies that did not keep modification times).
 	SizeOnly bool
+	// MaxLines stops the import with ErrTooManyLines when the results have
+	// more non-empty lines; 0 means no limit. Checked before anything is
+	// stored.
+	MaxLines int
+}
+
+// ErrTooManyLines is returned when the results exceed ImportOptions.MaxLines.
+var ErrTooManyLines = errors.New("too many result lines")
+
+// ImportEntry is one line of an import that was not stored unchanged-or-
+// changed as expected: skipped, rejected (not a result line) or a failed run.
+type ImportEntry struct {
+	Line   int    `json:"line"`
+	SongID string `json:"songId,omitempty"`
+	// Status is "skipped", "rejected" or "failed".
+	Status string `json:"status"`
+	// Reason is a code: a Skipped reason, a rejection code (not_json, no_job,
+	// bad_skipped, no_result, schema) or, for a failed run, "tool_error".
+	Reason string `json:"reason"`
+	// Message is a short explanation for rejected and failed lines.
+	Message string `json:"message,omitempty"`
+}
+
+// ChangedSong is a stored result that changed some of the song's values.
+type ChangedSong struct {
+	SongID   string   `json:"songId"`
+	Features []string `json:"features"`
 }
 
 // ImportReport counts the lines of an import.
@@ -201,6 +228,11 @@ type ImportReport struct {
 	Skipped map[string]int
 	// Problems are short messages for invalid lines, at most maxProblems.
 	Problems []string
+	// Entries are the skipped, rejected and failed lines, in file order;
+	// ChangedSongs lists the songs whose values changed. Lines stored without a
+	// change appear only in the counts.
+	Entries      []ImportEntry
+	ChangedSongs []ChangedSong
 }
 
 const maxProblems = 20
@@ -220,18 +252,23 @@ var ErrMusicUnreadable = errors.New("cannot read the music folder: run the impor
 // waveform and fingerprint stay far below it.
 const maxLine = 64 << 20
 
-func (r *ImportReport) skip(reason string) { r.Skipped[reason]++ }
+func (r *ImportReport) skip(line int, songID, reason string) {
+	r.Skipped[reason]++
+	r.Entries = append(r.Entries, ImportEntry{Line: line, SongID: songID, Status: "skipped", Reason: reason})
+}
 
-func (r *ImportReport) invalid(line int, msg string) {
-	r.skip("invalid")
+func (r *ImportReport) invalid(line int, songID, code, msg string) {
+	r.Skipped["invalid"]++
+	r.Entries = append(r.Entries, ImportEntry{Line: line, SongID: songID, Status: "rejected", Reason: code, Message: msg})
 	if len(r.Problems) < maxProblems {
 		r.Problems = append(r.Problems, fmt.Sprintf("line %d: %s", line, msg))
 	}
 }
 
-// readLines calls fn for every non-empty line of path with its 1-based number.
-func readLines(path string, fn func(n int, line []byte) error) error {
-	f, err := os.Open(path)
+// readLines calls fn for every non-empty line from open with its 1-based
+// number.
+func readLines(open func() (io.ReadCloser, error), fn func(n int, line []byte) error) error {
+	f, err := open()
 	if err != nil {
 		return err
 	}
@@ -266,11 +303,19 @@ func readLines(path string, fn func(n int, line []byte) error) error {
 }
 
 // ImportResults reads folksentia's result lines from path and stores each
-// result exactly like a local run, after checking that the song still has
-// the file the job was exported with. A bad line is counted and skipped; only
-// an unreadable results file, a database error, or a music folder it cannot
-// read (ErrMusicUnreadable) stops the import.
+// result exactly like a local run; see ImportResultsFrom.
 func (p *Plan) ImportResults(ctx context.Context, db *sql.DB, path string, opt ImportOptions) (ImportReport, error) {
+	return p.ImportResultsFrom(ctx, db, func() (io.ReadCloser, error) { return os.Open(path) }, opt)
+}
+
+// ImportResultsFrom reads folksentia's result lines and stores each result
+// exactly like a local run, after checking that the song still has the file
+// the job was exported with. open is called twice, once per pass, and must
+// return the same lines each time. A bad line is counted and skipped; only
+// unreadable results, too many lines (ErrTooManyLines), a database error, or
+// a music folder it cannot read (ErrMusicUnreadable) stops the import. The
+// CLI (tinysonic analysis import) and POST /api/analysis/results both use it.
+func (p *Plan) ImportResultsFrom(ctx context.Context, db *sql.DB, open func() (io.ReadCloser, error), opt ImportOptions) (ImportReport, error) {
 	rep := ImportReport{Skipped: map[string]int{}, ChangedBy: map[string]int{}}
 	g := p.group(OfflineTool)
 	if g == nil {
@@ -280,7 +325,11 @@ func (p *Plan) ImportResults(ctx context.Context, db *sql.DB, path string, opt I
 	// First pass: the last line of each song wins, as a resumed run may have
 	// written a song twice.
 	last := map[string]int{}
-	err := readLines(path, func(n int, line []byte) error {
+	lines := 0
+	err := readLines(open, func(n int, line []byte) error {
+		if lines++; opt.MaxLines > 0 && lines > opt.MaxLines {
+			return fmt.Errorf("%w: more than %d", ErrTooManyLines, opt.MaxLines)
+		}
 		var head struct {
 			Job *struct {
 				ID string `json:"id"`
@@ -298,41 +347,42 @@ func (p *Plan) ImportResults(ctx context.Context, db *sql.DB, path string, opt I
 	// readable and unreadable count the files that could and could not be
 	// checked against their job.
 	readable, unreadable := 0, 0
-	err = readLines(path, func(n int, line []byte) error {
+	err = readLines(open, func(n int, line []byte) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		rep.Lines++
 		var l resultLine
 		if err := json.Unmarshal(line, &l); err != nil {
-			rep.invalid(n, "not JSON: "+shortMessage(err.Error()))
+			rep.invalid(n, "", "not_json", "not JSON: "+shortMessage(err.Error()))
 			return nil
 		}
 		if l.Job == nil || l.Job.ID == "" {
-			rep.invalid(n, "no job")
+			rep.invalid(n, "", "no_job", "no job")
 			return nil
 		}
-		if last[l.Job.ID] != n {
-			rep.skip("duplicate")
+		id := l.Job.ID
+		if last[id] != n {
+			rep.skip(n, id, "duplicate")
 			return nil
 		}
 		switch l.Skipped {
 		case "":
 		case "missing", "changed":
-			rep.skip(l.Skipped)
+			rep.skip(n, id, l.Skipped)
 			return nil
 		default:
-			rep.invalid(n, fmt.Sprintf("skipped: %q", l.Skipped))
+			rep.invalid(n, id, "bad_skipped", fmt.Sprintf("skipped: %q", shortMessage(l.Skipped)))
 			return nil
 		}
 		if len(l.Result) == 0 || string(l.Result) == "null" {
-			rep.invalid(n, "no result")
+			rep.invalid(n, id, "no_result", "no result")
 			return nil
 		}
 		var songPath string
 		err := db.QueryRowContext(ctx, "SELECT path FROM songs WHERE id = ?", l.Job.ID).Scan(&songPath)
 		if errors.Is(err, sql.ErrNoRows) {
-			rep.skip("unknown")
+			rep.skip(n, id, "unknown")
 			return nil
 		}
 		if err != nil {
@@ -341,7 +391,7 @@ func (p *Plan) ImportResults(ctx context.Context, db *sql.DB, path string, opt I
 		info, err := os.Stat(songPath)
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			unreadable++
-			rep.skip("unreadable")
+			rep.skip(n, id, "unreadable")
 			if len(rep.Problems) < maxProblems {
 				rep.Problems = append(rep.Problems, fmt.Sprintf("line %d: %v", n, err))
 			}
@@ -352,13 +402,13 @@ func (p *Plan) ImportResults(ctx context.Context, db *sql.DB, path string, opt I
 		}
 		readable++
 		if err != nil || info.Size() != l.Job.Size || (!opt.SizeOnly && info.ModTime().UnixMilli() != l.Job.MtimeMs) {
-			rep.skip("stale")
+			rep.skip(n, id, "stale")
 			return nil
 		}
 		// Only features still assigned to folksentia are stored.
 		features := slices.DeleteFunc(slices.Clone(l.Job.Features), func(f string) bool { return !slices.Contains(g.Features, f) })
 		if len(features) == 0 {
-			rep.skip("unassigned")
+			rep.skip(n, id, "unassigned")
 			return nil
 		}
 
@@ -367,15 +417,18 @@ func (p *Plan) ImportResults(ctx context.Context, db *sql.DB, path string, opt I
 			Schema int `json:"schema"`
 		}
 		if json.Unmarshal(l.Result, &head) != nil || !slices.Contains(folksentiaSchemas, head.Schema) {
-			rep.invalid(n, fmt.Sprintf("result schema %d, expected 1 or 2", head.Schema))
+			rep.invalid(n, id, "schema", fmt.Sprintf("result schema %d, expected 1 or 2", head.Schema))
 			return nil
 		}
 		vals, runErr := parseFolksentia(l.Result, features)
 		if runErr == nil {
 			runErr = checkRanges(vals)
 		}
+		failedAt := -1
 		if runErr != nil {
 			rep.Failed++
+			failedAt = len(rep.Entries)
+			rep.Entries = append(rep.Entries, ImportEntry{Line: n, SongID: id, Status: "failed", Reason: "tool_error", Message: shortMessage(runErr.Error())})
 		}
 		rep.Stored++
 		version := l.ToolVersion
@@ -385,7 +438,11 @@ func (p *Plan) ImportResults(ctx context.Context, db *sql.DB, path string, opt I
 		changed, err := importStore(ctx, db, opt.DryRun, l.Job.ID, Run{Group: g, Features: features}, shortMessage(version), vals, runErr, stampOf(info))
 		if errors.Is(err, errSongGone) {
 			rep.Stored--
-			rep.skip("unknown")
+			if failedAt >= 0 {
+				rep.Failed--
+				rep.Entries = slices.Delete(rep.Entries, failedAt, failedAt+1)
+			}
+			rep.skip(n, id, "unknown")
 			return nil
 		}
 		if err != nil {
@@ -393,6 +450,7 @@ func (p *Plan) ImportResults(ctx context.Context, db *sql.DB, path string, opt I
 		}
 		if len(changed) > 0 {
 			rep.Changed++
+			rep.ChangedSongs = append(rep.ChangedSongs, ChangedSong{SongID: id, Features: changed})
 		}
 		for _, f := range changed {
 			rep.ChangedBy[f]++

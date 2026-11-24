@@ -242,6 +242,9 @@ components:
           type: [string, "null"]
         expiresAt:
           type: [string, "null"]
+        analysisImport:
+          type: boolean
+          description: The key may fetch analysis jobs and upload results (`/api/analysis/jobs`, `/api/analysis/results`). One key per account at most.
     PairingStart:
       type: object
       required: [token, uri, expiresIn]
@@ -1113,6 +1116,9 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/ApiKeyInfo'
+                  canGrantAnalysisImport:
+                    type: boolean
+                    description: The caller is a librarian and may grant analysis import to a key.
         '401':
           $ref: '#/components/responses/Unauthorized'
     post:
@@ -1168,6 +1174,59 @@ paths:
                     enum: [revoked]
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/keys/{id}/analysis-import:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      security:
+        - bearerAuth: []
+      tags: [API keys]
+      summary: Allow one key to fetch analysis jobs and upload results
+      description: >-
+        Librarians only, with a session (#163). The key may then use
+        `GET /api/analysis/jobs` and `POST /api/analysis/results`, in the
+        `X-Api-Key` header only, and nothing else of the library
+        administration. One key per account holds the grant: any other key
+        of the account loses it. Revoked and expired keys cannot get it. The
+        change is logged.
+      responses:
+        '200':
+          description: Granted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: {type: integer}
+                  analysisImport: {type: boolean, enum: [true]}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      security:
+        - bearerAuth: []
+      tags: [API keys]
+      summary: Take the analysis import grant away from a key
+      description: Librarians only, with a session. A key without the grant is not an error. The change is logged.
+      responses:
+        '200':
+          description: Removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: {type: integer}
+                  analysisImport: {type: boolean, enum: [false]}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
   /api/pair/start:
@@ -1971,6 +2030,203 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+  /api/analysis/jobs:
+    get:
+      security:
+        - bearerAuth: []
+        - apiKeyHeader: []
+      tags: [Analysis]
+      summary: Job list for an offline folksentia run
+      description: >-
+        The document `tinysonic analysis export` writes (#163). A librarian's
+        session, or the API key a librarian allowed to import analysis
+        results, in `X-Api-Key` (a key in the URL is refused). The account
+        must be a librarian on every call. Give exactly one of `all=1`,
+        `pending=1` or `id`.
+      parameters:
+        - name: all
+          in: query
+          schema: {type: string, enum: ['1']}
+          description: Every song.
+        - name: pending
+          in: query
+          schema: {type: string, enum: ['1']}
+          description: Only songs with features folksentia has not analysed yet.
+        - name: id
+          in: query
+          schema:
+            type: array
+            items: {type: string}
+          style: form
+          explode: true
+          description: Song ids (`so-…`), repeated.
+        - name: features
+          in: query
+          schema: {type: string}
+          description: Comma-separated features, each assigned to folksentia. Default every feature assigned to it.
+      responses:
+        '200':
+          description: >-
+            The job list (`format` `tinysonic-analysis-jobs`, `version` 1),
+            the same as the CLI's `jobs.json`; see the README.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [format, version, jobs]
+                properties:
+                  format: {type: string, enum: [tinysonic-analysis-jobs]}
+                  version: {type: integer}
+                  jobs:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: {type: string}
+                        path: {type: string, description: 'Relative to the music folder, `/`-separated.'}
+                        size: {type: integer}
+                        mtimeMs: {type: integer}
+                        durationMs: {type: integer}
+                        features:
+                          type: array
+                          items: {type: string}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: '`analysis_import_required` (a key without the grant, a key in the URL, or a device), or the account is not a librarian.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: folksentia is not assigned to any analysis feature.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/analysis/results:
+    post:
+      security:
+        - bearerAuth: []
+        - apiKeyHeader: []
+      tags: [Analysis]
+      summary: Import folksentia's result lines
+      description: >-
+        Runs the same import as `tinysonic analysis import` (#163): each line
+        is checked against the song's file on the server (it must still
+        exist with the exported size and modification time), only features
+        assigned to folksentia are stored, impossible values are recorded as
+        failed runs. Same credentials as `/api/analysis/jobs`. One import at
+        a time. The body is capped by `analysis_upload_max_mb` (default 64
+        MiB, after decompression) and 50,000 lines: upload a library in
+        batches; each call stands on its own, and repeating one changes
+        nothing.
+      parameters:
+        - name: dryRun
+          in: query
+          schema: {type: string, enum: ['1']}
+          description: Check every line and report what would change; store nothing.
+        - name: sizeOnly
+          in: query
+          schema: {type: string, enum: ['1']}
+          description: Accept a result when the file size matches, whatever the modification time.
+        - name: Content-Encoding
+          in: header
+          schema: {type: string, enum: [gzip]}
+          description: Optional gzip compression of the body.
+      requestBody:
+        required: true
+        content:
+          application/x-ndjson:
+            schema:
+              type: string
+              description: 'folksentia batch output: one JSON object per line, `{"job": …, "toolVersion": …, "result": …}` or `{"job": …, "skipped": "missing"|"changed"}`. `application/jsonl` and `text/plain` are accepted too.'
+      responses:
+        '200':
+          description: The import report.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dryRun: {type: boolean}
+                  lines: {type: integer, description: Non-empty lines read.}
+                  applied: {type: integer, description: Results stored (or that would be).}
+                  changed: {type: integer, description: Of those, results that changed a value.}
+                  unchanged: {type: integer}
+                  failed: {type: integer, description: Of those, failed runs (a tool error or an impossible value).}
+                  rejected: {type: integer, description: Lines that are not result lines.}
+                  skipped:
+                    type: object
+                    additionalProperties: {type: integer}
+                    description: 'Skipped lines by reason: `missing`, `changed` (reported by folksentia), `stale` (the file changed or is gone since the export), `unreadable`, `unknown` (no such song), `unassigned`, `duplicate` (a later line has the same song).'
+                  changedBy:
+                    type: object
+                    additionalProperties: {type: integer}
+                    description: Per feature, the results that changed its value.
+                  entries:
+                    type: array
+                    description: Every skipped, rejected and failed line, in order. Lines stored unchanged are only counted.
+                    items:
+                      type: object
+                      required: [line, status, reason]
+                      properties:
+                        line: {type: integer}
+                        songId: {type: string}
+                        status: {type: string, enum: [skipped, rejected, failed]}
+                        reason:
+                          type: string
+                          description: 'A skipped reason (see `skipped`), a rejection (`not_json`, `no_job`, `bad_skipped`, `no_result`, `schema`), or `tool_error` for a failed run.'
+                        message: {type: string}
+                  changedSongs:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        songId: {type: string}
+                        features:
+                          type: array
+                          items: {type: string}
+        '400':
+          description: The body is not valid gzip or cannot be read.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: '`analysis_import_required` (a key without the grant, a key in the URL, or a device), or the account is not a librarian.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Another import is running, or folksentia is not assigned to any analysis feature.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: The body is larger than `analysis_upload_max_mb` or has more than 50,000 lines.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '415':
+          description: Not `application/x-ndjson`, or a `Content-Encoding` other than gzip.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: A database error, or the server cannot read the music folder.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/duplicates:
     get:
       tags: [Analysis]

@@ -84,6 +84,9 @@ type Config struct {
 	// them. Clients pin the certificate: the pairing QR carries its pin.
 	TLSCert string `toml:"tls_cert"`
 	TLSKey  string `toml:"tls_key"`
+	// AnalysisUploadMaxMB caps one upload to POST /api/analysis/results, in
+	// MiB after decompression (#163). Load sets the default (64).
+	AnalysisUploadMaxMB int `toml:"analysis_upload_max_mb"`
 	// Analysis assigns the per-track analysis features to tools; see
 	// Analysis.
 	Analysis Analysis `toml:"analysis"`
@@ -103,6 +106,8 @@ const (
 	// used when the file does not set them.
 	DefaultAPIKeyTTLDays  = 365
 	DefaultAPIKeyIdleDays = 180
+	// DefaultAnalysisUploadMaxMB is the analysis results upload limit.
+	DefaultAnalysisUploadMaxMB = 64
 )
 
 // ParseTrustedProxy accepts one trusted_proxies entry: an IP address or a CIDR
@@ -148,13 +153,14 @@ type Site struct {
 // `tinysonic user …`.
 func Load(path string) (*Config, error) {
 	c := &Config{
-		Port:           4533,
-		Host:           "0.0.0.0",
-		DatabasePath:   "smolsonic.db",
-		CoversDir:      "covers",
-		APIKeyTTLDays:  DefaultAPIKeyTTLDays,
-		APIKeyIdleDays: DefaultAPIKeyIdleDays,
-		DBCacheMB:      DefaultDBCacheMB,
+		Port:                4533,
+		Host:                "0.0.0.0",
+		DatabasePath:        "smolsonic.db",
+		CoversDir:           "covers",
+		APIKeyTTLDays:       DefaultAPIKeyTTLDays,
+		APIKeyIdleDays:      DefaultAPIKeyIdleDays,
+		DBCacheMB:           DefaultDBCacheMB,
+		AnalysisUploadMaxMB: DefaultAnalysisUploadMaxMB,
 		// Same list as server.DefaultIgnoredArticles.
 		IgnoredArticles: "The El La Las Le Les Los Il L' An A Die Das Ein",
 	}
@@ -228,6 +234,9 @@ func Load(path string) (*Config, error) {
 	}
 	if c.APIKeyIdleDays < 1 || c.APIKeyIdleDays > 3650 {
 		return nil, errors.New("config: api_key_idle_days must be between 1 and 3650")
+	}
+	if c.AnalysisUploadMaxMB < 1 || c.AnalysisUploadMaxMB > 4096 {
+		return nil, errors.New("config: analysis_upload_max_mb must be between 1 and 4096")
 	}
 	if err := c.Analysis.normalise(md.IsDefined("analysis")); err != nil {
 		return nil, err
