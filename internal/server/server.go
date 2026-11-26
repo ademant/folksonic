@@ -638,6 +638,7 @@ func (s *State) routes() http.Handler {
 	mux.HandleFunc("POST /api/library/bpm", s.APILibraryBPM)
 	mux.HandleFunc("POST /api/library/analysis", s.APILibraryAnalysis)
 	mux.HandleFunc("GET /api/library/analysis/failed", s.APILibraryFailed)
+	mux.HandleFunc("GET /api/library/scan/failed", s.APILibraryScanFailed)
 	mux.HandleFunc("GET /api/analysis", s.APIAnalysis)
 	mux.HandleFunc("GET /api/analysis/jobs", s.APIAnalysisJobs)
 	mux.HandleFunc("POST /api/analysis/results", s.APIAnalysisResults) // resultsPath

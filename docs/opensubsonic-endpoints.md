@@ -47,7 +47,7 @@ make no Last.fm or other external lookups.
 - `tokenInfo` (the apiKeyAuthentication extension: the username of the key that signed the request; error 44 without a valid key)
 - `getUser`
 - `getMusicFolders`
-- `getScanStatus`
+- `getScanStatus` (also reports watchFailures, directories not watched, and scanFailures, files the scanner could not read, #219)
 - `startScan` (librarians only)
 - `getOpenSubsonicExtensions` (no sign-in required)
 

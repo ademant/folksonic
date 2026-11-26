@@ -16,7 +16,7 @@ func TestScanReportsSongChanges(t *testing.T) {
 	defer closeDB()
 	music, covers := t.TempDir(), t.TempDir()
 	song := filepath.Join(music, "a.mp3")
-	if err := os.WriteFile(song, []byte("audio"), 0o644); err != nil {
+	if err := os.WriteFile(song, fakeAudio("audio"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	pool, err := db.Init(dbPath)
@@ -54,7 +54,7 @@ func TestScanReportsSongChanges(t *testing.T) {
 
 	// The watcher's delete path reports the id too, and nothing for a path
 	// without a song.
-	if err := os.WriteFile(song, []byte("audio"), 0o644); err != nil {
+	if err := os.WriteFile(song, fakeAudio("audio"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Scan(pool, []string{music}, covers, nil, &p); err != nil {

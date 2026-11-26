@@ -20,7 +20,7 @@ var pngBytes = []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
 func TestFolderCoverMustBeAnImage(t *testing.T) {
 	music, covers := t.TempDir(), t.TempDir()
 	song := filepath.Join(music, "a.mp3")
-	if err := os.WriteFile(song, []byte("audio"), 0o644); err != nil {
+	if err := os.WriteFile(song, fakeAudio("audio"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	roots := []string{music}
@@ -90,7 +90,7 @@ func TestSameSecondRewriteIsNotSkipped(t *testing.T) {
 	defer closeDB()
 	music, covers := t.TempDir(), t.TempDir()
 	song := filepath.Join(music, "a.mp3")
-	if err := os.WriteFile(song, []byte("audio-1"), 0o644); err != nil {
+	if err := os.WriteFile(song, fakeAudio("audio-1"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	base := time.Unix(1_700_000_000, 100*int64(time.Millisecond))
@@ -109,7 +109,7 @@ func TestSameSecondRewriteIsNotSkipped(t *testing.T) {
 	if res, err := processFile(pool, roots, song, covers, nil); err != nil || res != resultSkipped {
 		t.Fatalf("unchanged file: %v %v", res, err)
 	}
-	if err := os.WriteFile(song, []byte("audio-2"), 0o644); err != nil {
+	if err := os.WriteFile(song, fakeAudio("audio-2"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	later := base.Add(500 * time.Millisecond) // same second, same size

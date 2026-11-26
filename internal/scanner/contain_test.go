@@ -55,14 +55,14 @@ func TestScanSkipsSymlinksOutsideTheMusicFolder(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(outside, "album"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(outside, "album", "x.mp3"), []byte("audio"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(outside, "album", "x.mp3"), fakeAudio("audio"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	inside := filepath.Join(music, "real", "song.mp3")
 	if err := os.MkdirAll(filepath.Dir(inside), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(inside, []byte("audio"), 0o644); err != nil {
+	if err := os.WriteFile(inside, fakeAudio("audio"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// A non-audio file outside, with an audio name inside the folder.
@@ -143,7 +143,7 @@ func TestScanPrunesSongsIndexedThroughAnEscapingLink(t *testing.T) {
 func TestOpenContained(t *testing.T) {
 	music, outside := t.TempDir(), t.TempDir()
 	song := filepath.Join(music, "a.mp3")
-	if err := os.WriteFile(song, []byte("audio"), 0o644); err != nil {
+	if err := os.WriteFile(song, fakeAudio("audio"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	secret := filepath.Join(outside, "passwd")
@@ -163,7 +163,7 @@ func TestOpenContained(t *testing.T) {
 		}
 		b, _ := io.ReadAll(f)
 		f.Close()
-		if string(b) != "audio" {
+		if string(b) != string(fakeAudio("audio")) {
 			t.Fatalf("%s: read %q", p, b)
 		}
 	}
@@ -196,7 +196,7 @@ func TestOpenContained(t *testing.T) {
 func TestSymlinkedRootIsAllowed(t *testing.T) {
 	real := t.TempDir()
 	song := filepath.Join(real, "a.mp3")
-	if err := os.WriteFile(song, []byte("audio"), 0o644); err != nil {
+	if err := os.WriteFile(song, fakeAudio("audio"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	root := filepath.Join(t.TempDir(), "music")

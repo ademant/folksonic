@@ -515,6 +515,50 @@ func (s *State) APILibraryFailed(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, J{"total": total, "songs": songs})
 }
 
+// APILibraryScanFailed lists the files the scanner could not index, newest
+// first: content that is no audio, or a parser that failed on it (#219).
+// They are tried again when they change. Paths are shown below "<music>".
+func (s *State) APILibraryScanFailed(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireLibrarian(w, r); !ok {
+		return
+	}
+	limit := 200
+	if v := queryFirst(r, "limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 1000 {
+			writeAPIError(w, http.StatusBadRequest, "limit must be between 1 and 1000")
+			return
+		}
+		limit = n
+	}
+	total, err := scanner.CountFailures(s.Pool)
+	if err != nil {
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
+		return
+	}
+	list, err := scanner.ListFailures(s.Pool, limit)
+	if err != nil {
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
+		return
+	}
+	files := []J{}
+	for _, f := range list {
+		files = append(files, J{"path": s.musicRelative(f.Path), "size": f.Size, "reason": f.Reason, "failedAt": f.FailedAt})
+	}
+	writeJSON(w, http.StatusOK, J{"total": total, "files": files})
+}
+
+// musicRelative shows a path below its music folder as "<music>/…", so the
+// server's directory layout stays out of responses.
+func (s *State) musicRelative(p string) string {
+	for _, dir := range s.MusicDirs {
+		if d := strings.TrimSuffix(dir, "/"); d != "" && strings.HasPrefix(p, d+"/") {
+			return "<music>/" + strings.TrimPrefix(p, d+"/")
+		}
+	}
+	return p
+}
+
 // APILibraryCancel stops the running job. Scans cannot be stopped.
 func (s *State) APILibraryCancel(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireLibrarian(w, r); !ok {

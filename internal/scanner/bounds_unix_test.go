@@ -15,7 +15,7 @@ import (
 func TestFIFOCoverDoesNotBlock(t *testing.T) {
 	music := t.TempDir()
 	song := filepath.Join(music, "a.mp3")
-	if err := os.WriteFile(song, []byte("audio"), 0o644); err != nil {
+	if err := os.WriteFile(song, fakeAudio("audio"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := syscall.Mkfifo(filepath.Join(music, "cover.jpg"), 0o644); err != nil {
