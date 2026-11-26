@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -24,7 +25,9 @@ func scrobble(t *testing.T, s *State, key, query string) string {
 func TestScrobbleCountsEachPlay(t *testing.T) {
 	s, _, key := keyFixture(t)
 	for i := 0; i < 2; i++ {
-		if body := scrobble(t, s, key, "id=so-1"); !strings.Contains(body, `"status":"ok"`) {
+		// Distinct times: plays of one song in the same millisecond are one
+		// play (the dedupe key), which made this test flaky.
+		if body := scrobble(t, s, key, fmt.Sprintf("id=so-1&time=%d", 1000*(i+1))); !strings.Contains(body, `"status":"ok"`) {
 			t.Fatalf("scrobble: %s", body)
 		}
 	}
@@ -76,8 +79,8 @@ func TestPlayCountsArePerUser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scrobble(t, s, bobKey, "id=so-1")
-	scrobble(t, s, bobKey, "id=so-1")
+	scrobble(t, s, bobKey, "id=so-1&time=1000")
+	scrobble(t, s, bobKey, "id=so-1&time=2000")
 	if body := songBody(t, s, workerKey, "so-1"); !strings.Contains(body, `"playCount":0`) {
 		t.Fatalf("worker sees bob's plays: %s", body)
 	}

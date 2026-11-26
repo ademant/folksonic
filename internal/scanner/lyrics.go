@@ -5,11 +5,16 @@ import (
 	"strings"
 )
 
+// maxLyricsBytes bounds the lyrics stored for one song (#198). Real lyrics,
+// synced or not, are a few kilobytes; a larger tag is not lyrics.
+const maxLyricsBytes = 256 << 10
+
 // lyricsValue is the lyrics of a file as the tags carry them, or an invalid
-// NullString when there are none. The text is kept as it is in the tag, so a
-// synced (LRC) text stays in its timestamped form (#142).
+// NullString when there are none or the text is over maxLyricsBytes. The text
+// is kept as it is in the tag, so a synced (LRC) text stays in its
+// timestamped form (#142).
 func lyricsValue(text string) sql.NullString {
-	if strings.TrimSpace(text) == "" {
+	if strings.TrimSpace(text) == "" || len(text) > maxLyricsBytes {
 		return sql.NullString{}
 	}
 	return sql.NullString{String: text, Valid: true}

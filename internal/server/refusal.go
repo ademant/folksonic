@@ -33,6 +33,8 @@ const (
 	codeImportRunning        = "import_running"
 	codeTooLarge             = "too_large"
 	codeToolUnavailable      = "tool_unavailable"
+	codeMethodNotAllowed     = "method_not_allowed"
+	codeUsernameTaken        = "username_taken"
 )
 
 // statusCodes are the generic codes of JSON API errors, by HTTP status.
@@ -41,6 +43,7 @@ var statusCodes = map[int]string{
 	http.StatusUnauthorized:          "unauthorized",
 	http.StatusForbidden:             "forbidden",
 	http.StatusNotFound:              "not_found",
+	http.StatusMethodNotAllowed:      codeMethodNotAllowed,
 	http.StatusConflict:              "conflict",
 	http.StatusRequestEntityTooLarge: codeTooLarge,
 	http.StatusUnsupportedMediaType:  "unsupported_media_type",
@@ -106,7 +109,17 @@ func refusalMessage(code string) string {
 
 // writeCoded answers with a JSON error whose code clients can decode.
 func writeCoded(w http.ResponseWriter, status int, code string) {
+	challenge(w, status)
 	writeJSON(w, status, J{"error": code, "message": refusalMessage(code)})
+}
+
+// challenge adds WWW-Authenticate to a 401, which HTTP requires (#193). A
+// session token is a Bearer token; API keys go in X-Api-Key, which has no
+// scheme of its own.
+func challenge(w http.ResponseWriter, status int) {
+	if status == http.StatusUnauthorized {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="tinysonic"`)
+	}
 }
 
 // writeRefusal answers a request whose credentials were refused, with the code

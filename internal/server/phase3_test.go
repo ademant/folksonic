@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -71,9 +72,11 @@ func errorCode(t *testing.T, body string) int {
 // albums without plays.
 func TestAlbumListFrequentCountsPlays(t *testing.T) {
 	s, _, key := keyFixture(t)
-	scrobble(t, s, key, "id=so-4") // al-3
-	scrobble(t, s, key, "id=so-4")
-	scrobble(t, s, key, "id=so-1") // al-1
+	// Distinct times: two plays of one song in the same millisecond are one
+	// play (the dedupe key), which made this test flaky.
+	scrobble(t, s, key, "id=so-4&time=1000") // al-3
+	scrobble(t, s, key, "id=so-4&time=2000")
+	scrobble(t, s, key, "id=so-1&time=3000") // al-1
 	body := getWith(t, s.routes(), "/rest/getAlbumList2.view?type=frequent", key, true).Body.String()
 	albums := subsonicBody(t, body)["albumList2"].(map[string]any)["album"]
 	assertIDs(t, "frequent", idsIn(t, albums), []string{"al-3", "al-1"})
@@ -135,8 +138,9 @@ func TestAlbumListRejectsBadParameters(t *testing.T) {
 // leaves out songs never played.
 func TestTopSongsByPlayCount(t *testing.T) {
 	s, _, key := keyFixture(t)
-	for _, q := range []string{"id=so-2", "id=so-2", "id=so-2", "id=so-1"} {
-		scrobble(t, s, key, q)
+	// Distinct times: plays of one song in the same millisecond are one play.
+	for i, q := range []string{"id=so-2", "id=so-2", "id=so-2", "id=so-1"} {
+		scrobble(t, s, key, q+"&time="+strconv.Itoa(1000*(i+1)))
 	}
 	body := getWith(t, s.routes(), "/rest/getTopSongs.view?artist=Alpha", key, true).Body.String()
 	songs := subsonicBody(t, body)["topSongs"].(map[string]any)["song"]

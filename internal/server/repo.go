@@ -487,7 +487,7 @@ func repoAllPlaylists(ctx context.Context, db *sql.DB, ownerID int64) ([]models.
 
 // repoFindPlaylist returns the playlist only if it belongs to ownerID, so a
 // playlist id from another account reads as not found.
-func repoFindPlaylist(ctx context.Context, db *sql.DB, ownerID int64, id string) (*models.Playlist, error) {
+func repoFindPlaylist(ctx context.Context, db sqlExec, ownerID int64, id string) (*models.Playlist, error) {
 	var p models.Playlist
 	err := db.QueryRowContext(ctx,
 		"SELECT id, name, comment, public, created_at, updated_at FROM playlists WHERE id = ? AND owner_id = ?",
@@ -502,21 +502,32 @@ func repoFindPlaylist(ctx context.Context, db *sql.DB, ownerID int64, id string)
 	return &p, nil
 }
 
-func repoCreatePlaylist(ctx context.Context, db *sql.DB, ownerID int64, id, name, now string) error {
+// sqlExec is a *sql.DB or a *sql.Tx, so a multi-step playlist edit can run
+// in one transaction (#173).
+type sqlExec interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// repoCreatePlaylist stores a new playlist. It is private (public = 0):
+// playlists are read by their owner only, so a public flag would promise
+// sharing that does not exist (#190).
+func repoCreatePlaylist(ctx context.Context, db sqlExec, ownerID int64, id, name, now string) error {
 	_, err := db.ExecContext(ctx,
 		"INSERT INTO playlists (id, name, comment, public, created_at, updated_at, owner_id) "+
-			"VALUES (?, ?, NULL, 1, ?, ?, ?)",
+			"VALUES (?, ?, NULL, 0, ?, ?, ?)",
 		id, name, now, now, ownerID)
 	return err
 }
 
-func repoRenamePlaylist(ctx context.Context, db *sql.DB, id, name, now string) error {
+func repoRenamePlaylist(ctx context.Context, db sqlExec, id, name, now string) error {
 	_, err := db.ExecContext(ctx,
 		"UPDATE playlists SET name = ?, updated_at = ? WHERE id = ?", name, now, id)
 	return err
 }
 
-func repoSetPlaylistComment(ctx context.Context, db *sql.DB, id, comment, now string) error {
+func repoSetPlaylistComment(ctx context.Context, db sqlExec, id, comment, now string) error {
 	_, err := db.ExecContext(ctx,
 		"UPDATE playlists SET comment = ?, updated_at = ? WHERE id = ?", comment, now, id)
 	return err
@@ -534,7 +545,7 @@ func repoDeletePlaylist(ctx context.Context, db *sql.DB, ownerID int64, id strin
 	return err
 }
 
-func repoPlaylistSongIDs(ctx context.Context, db *sql.DB, playlistID string) ([]string, error) {
+func repoPlaylistSongIDs(ctx context.Context, db sqlExec, playlistID string) ([]string, error) {
 	rows, err := db.QueryContext(ctx,
 		"SELECT song_id FROM playlist_songs WHERE playlist_id = ? ORDER BY position", playlistID)
 	if err != nil {
@@ -559,21 +570,18 @@ func repoPlaylistSongs(ctx context.Context, db *sql.DB, playlistID string) ([]mo
 			"WHERE ps.playlist_id = ? ORDER BY ps.position", playlistID)
 }
 
-func repoAppendPlaylistSongs(ctx context.Context, db *sql.DB, playlistID string, songIDs []string) error {
+// repoAppendPlaylistSongs and repoReplacePlaylistSongs run inside the
+// caller's transaction (#173).
+func repoAppendPlaylistSongs(ctx context.Context, tx sqlExec, playlistID string, songIDs []string) error {
 	if len(songIDs) == 0 {
 		return nil
 	}
 	var next int64
-	if err := db.QueryRowContext(ctx,
+	if err := tx.QueryRowContext(ctx,
 		"SELECT COALESCE(MAX(position), -1) + 1 FROM playlist_songs WHERE playlist_id = ?",
 		playlistID).Scan(&next); err != nil {
 		return err
 	}
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
 	for i, sid := range songIDs {
 		if _, err := tx.ExecContext(ctx,
 			"INSERT INTO playlist_songs (playlist_id, position, song_id) VALUES (?, ?, ?)",
@@ -581,15 +589,10 @@ func repoAppendPlaylistSongs(ctx context.Context, db *sql.DB, playlistID string,
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
-func repoReplacePlaylistSongs(ctx context.Context, db *sql.DB, playlistID string, songIDs []string) error {
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
+func repoReplacePlaylistSongs(ctx context.Context, tx sqlExec, playlistID string, songIDs []string) error {
 	if _, err := tx.ExecContext(ctx,
 		"DELETE FROM playlist_songs WHERE playlist_id = ?", playlistID); err != nil {
 		return err
@@ -601,7 +604,7 @@ func repoReplacePlaylistSongs(ctx context.Context, db *sql.DB, playlistID string
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 // ── Counts (tinysonicPaging) ────────────────────────────────────────────────

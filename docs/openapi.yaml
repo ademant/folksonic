@@ -203,7 +203,7 @@ components:
         `message`. Besides the refusal codes (README, "Refusal codes") and the
         specific codes below, an error has the generic code of its status:
         `bad_request` (400), `unauthorized` (401), `forbidden` (403),
-        `not_found` (404), `conflict` (409), `too_large` (413),
+        `not_found` (404), `method_not_allowed` (405), `conflict` (409), `too_large` (413),
         `unsupported_media_type` (415), `rate_limited` (429),
         `internal_error` (500), `unavailable` (503).
       required: [error, message]
@@ -217,7 +217,8 @@ components:
             `passkeys_unavailable`, `no_passkey`, `ceremony_expired`,
             `sso_not_configured`, `sso_unavailable`, `last_sign_in_method`,
             `job_running`, `no_job_running`, `import_running`,
-            `tool_unavailable`, `password_invalid`.
+            `tool_unavailable`, `password_invalid`, `username_taken`
+            (409 from registration), `method_not_allowed` (405, with `Allow`).
         message:
           type: string
           description: Text for people. Clients should not parse it.

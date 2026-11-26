@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -29,11 +28,8 @@ func (s *State) APIDeviceAuthorize(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Label string `json:"label"`
 	}
-	if r.ContentLength != 0 {
-		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-			writeAPIErrorCode(w, http.StatusBadRequest, codeInvalidJSON, "invalid JSON body")
-			return
-		}
+	if r.ContentLength != 0 && !decodeBody(w, r, &in) {
+		return
 	}
 	now := time.Now()
 	pending, err := users.PendingDeviceCodes(r.Context(), s.Pool, now)

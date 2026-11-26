@@ -26,8 +26,9 @@ type albumQuery struct {
 
 // albumListQuery builds the list for listType. frequent and recent use the
 // caller's own play counts (#137); byYear and byGenre filter albums (#144).
-// highest and starred are not implemented and keep the alphabetical order they
-// have always had, so clients that send them still get albums.
+// starred lists the albums the caller starred, newest star first; highest the
+// albums with songs the caller rated, by their average rating (setRating
+// rates songs), as Subsonic describes them (#190).
 func albumListQuery(listType string, userID int64, fromYear, toYear *int64, genre string) (albumQuery, error) {
 	switch listType {
 	case "frequent", "recent":
@@ -67,7 +68,21 @@ func albumListQuery(listType string, userID int64, fromYear, toYear *int64, genr
 			args:  []any{genre},
 			order: "ORDER BY a.title COLLATE NOCASE, a.id",
 		}, nil
-	case "alphabeticalByName", "alphabeticalByArtist", "newest", "random", "highest", "starred":
+	case "starred":
+		return albumQuery{
+			from:  "albums a JOIN starred st ON st.id = a.id AND st.user_id = ?",
+			args:  []any{userID},
+			order: "ORDER BY st.starred_at DESC, a.id",
+		}, nil
+	case "highest":
+		return albumQuery{
+			from: "albums a JOIN (SELECT s.album_id AS album_id, AVG(ur.rating) AS avg_rating " +
+				"FROM user_ratings ur JOIN songs s ON s.id = ur.song_id " +
+				"WHERE ur.user_id = ? GROUP BY s.album_id) rt ON rt.album_id = a.id",
+			args:  []any{userID},
+			order: "ORDER BY rt.avg_rating DESC, a.title COLLATE NOCASE, a.id",
+		}, nil
+	case "alphabeticalByName", "alphabeticalByArtist", "newest", "random":
 		order := "ORDER BY a.title COLLATE NOCASE, a.id"
 		switch listType {
 		case "alphabeticalByArtist":
@@ -120,7 +135,7 @@ func (s *State) albumList(w http.ResponseWriter, r *http.Request, wrap string) {
 	if listType == "" {
 		listType = "alphabeticalByName"
 	}
-	size := clamp(intParam(r, "size", 10), 1, 500)
+	size := clamp(intParam(r, "size", 10), 0, 500) // size=0 is an empty page, not 1 (#190)
 	offset := max0(intParam(r, "offset", 0))
 	q, err := albumListQuery(listType, caller.ID, intParamPtr(r, "fromYear"), intParamPtr(r, "toYear"), queryFirst(r, "genre"))
 	var bp badParam

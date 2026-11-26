@@ -8,6 +8,18 @@ Every implemented endpoint is registered at both `/rest/<name>` and
 `/rest/<name>.view`, for `GET` and `POST`. Responses use the Subsonic JSON
 envelope and carry `"openSubsonic": true`.
 
+Endpoints that change state (`startScan`, `scrobble`, `updateNowPlaying`,
+`createPlaylist`, `updatePlaylist`, `deletePlaylist`, `star`, `unstar`,
+`setRating`, `createBookmark`, `deleteBookmark`, `savePlayQueue`,
+`savePlayQueueByIndex`) take `POST`, and `GET` as the compatibility alias
+nearly every Subsonic client uses. Other endpoints also take `HEAD`. Any
+other method, and `HEAD` on an endpoint that changes state, gets HTTP 405
+with `Allow`, in the envelope (#192).
+
+A numeric parameter (`size`, `count`, `offset`, `fromYear`, `toYear`, and the
+`…Count`/`…Offset` of `search3`) that is not a whole number gets error 10.
+`size=0` or `count=0` is an empty list (#190).
+
 Optional fields without a value are omitted rather than sent as `null`.
 Songs carry the standard `replayGain` object and `bpm` field when the files
 have the values (BPM can also be calculated on the library page). They also
@@ -45,7 +57,7 @@ make no Last.fm or other external lookups.
 **Lists**
 - `getRandomSongs` (filters genre, fromYear and toYear)
 - `getStarred`, `getStarred2`
-- `getAlbumList2` and `getAlbumList` types: alphabeticalByName, alphabeticalByArtist, newest, random, frequent and recent (the caller's own plays), byYear (fromYear and toYear; reversed when fromYear is greater) and byGenre (genre, case-insensitive). highest and starred are not implemented and list alphabetically. An unknown type, or a missing fromYear, toYear or genre, gets error 10.
+- `getAlbumList2` and `getAlbumList` types: alphabeticalByName, alphabeticalByArtist, newest, random, frequent and recent (the caller's own plays), byYear (fromYear and toYear; reversed when fromYear is greater) and byGenre (genre, case-insensitive). starred (the caller's starred albums, newest star first) and highest (albums with songs the caller rated, by their average rating; setRating rates songs). An unknown type, or a missing fromYear, toYear or genre, gets error 10.
 
 **Lyrics**
 - `getLyrics` (the one song with this artist and title, ignoring case; see *Deviations*)
@@ -92,8 +104,9 @@ make no Last.fm or other external lookups.
 ## Not implemented (35)
 
 These names appear in the OpenSubsonic endpoint list checked for this file, and
-tinysonic does not register them. A request for any of them gets HTTP 404 with
-a plain-text body, not a Subsonic response.
+tinysonic does not register them. A request for any of them, or any other
+unknown `/rest` path, gets HTTP 404 with the Subsonic envelope and error 70
+(#193).
 
 - `addChatMessage`
 - `changePassword`
@@ -142,6 +155,10 @@ These follow the decisions in the issues and differ from the endpoint pages.
 - `getLyrics` answers without a value when two or more songs share the artist and title, or when the one song has no lyrics. Lyrics are not searched by any other key.
 - `getLyricsBySongId` reports every lyrics text as unsynchronised, including LRC text with timestamps, and always gives the language as `und`, since the tags are read for their text only.
 - `getAlbumList2` and `getAlbumList` answer error 10 for an unknown `type`. Earlier versions listed albums alphabetically instead.
+- `getUser` reports `adminRole: true` for a librarian. A librarian may read another account with `username`; anyone else gets error 50 for an account not their own (#190).
+- Playlists report `public: false`: they are read by their owner only, and there is no sharing (#190).
+- `search2` and `search3` need `query` (error 10 without it). An empty value, or `""`, lists the whole library, paged, which apps use to sync; a query with no letters or digits finds nothing (#195).
+- `getCoverArt` without `id` is error 10; an unknown id, or one without a cover, is HTTP 404 with error 70 in the envelope (#193).
 
 ## Source and limits
 

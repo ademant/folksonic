@@ -41,7 +41,13 @@ Impressum page is [goldmark](https://github.com/yuin/goldmark), also pure Go.
   [go-audio/wav](https://pkg.go.dev/github.com/go-audio/wav),
   inline OGG container parser for Vorbis + Opus).
 - Falls back to `cover.jpg` / `folder.jpg` / `front.jpg` next to the audio file
-  if there's no embedded picture.
+  if there's no embedded picture. A cover, embedded or in the folder, is used
+  only when it is a JPEG, PNG, GIF, BMP, TIFF or WebP image (by its content,
+  not its name) of at most 16 MiB, and a folder cover only when it is a
+  regular file. Covers are written through a temporary file and a rename.
+  Lyrics over 256 KiB are not stored (#198).
+- A file is read again when its mtime, size or millisecond mtime changed, so
+  a same-size rewrite within one second is picked up (#198).
 - Stable IDs (`ar-…` / `al-…` / `so-…`) derived from tag content with SHA-256
   (32 hex characters), so re-scans are idempotent and clients keep their
   bookmarks. Changing the scheme clears the library once; the next scan rebuilds
@@ -130,7 +136,7 @@ Configuration is checked at startup:
 | `covers_dir`         | Where extracted album art is cached.                                 |
 | `base_url`           | Public URL clients use. Embedded in pairing QR codes, signed stream links and the device flow; host is the passkey RP ID, and plain-HTTP browser requests are redirected to it. Without it those addresses take the request's `Host` header, which the client controls, and the server warns at startup (#183). |
 | `base_path`         | URL prefix to serve under, such as `/folksonic`. Empty (default) serves from the root. See [Serving under a subpath](#serving-under-a-subpath). |
-| `allow_registration` | Enables `POST /api/register` without an invitation code. Default `false`. Invitation codes work either way. |
+| `allow_registration` | Enables `POST /api/register` without an invitation code. Default `false`. Invitation codes work either way. A taken username is answered with 409 `username_taken`; registration attempts count against the per-address sign-in limits, so probing names or invitation codes is slowed and then refused with 429 (#190). |
 | `song_tags`          | File tags exposed on songs, such as `["DANCE", "USE"]`. Only these names are read. Each song then carries `tinysonicTags`, and the `tinysonicSongTags` extension is advertised. Default empty. |
 | `ffmpeg_path`        | ffmpeg binary for BPM calculation and the `ffmpeg` analysis tool. Default: `ffmpeg` on `PATH`. Without ffmpeg, BPM calculation is unavailable and everything else works. |
 | `[analysis]` table   | Assigns analysis features (`bpm`, `beats`, `key`, `loudness`, `silence`, `waveform`, `fingerprint`, `onsets`, `rhythm`, `spectral`) to tools, with `[analysis.tools.<name>]` entries (`command`, `timeout`). Without the table, only BPM is calculated, by hand from the library page. See [Track analysis](#track-analysis). |
@@ -716,7 +722,9 @@ under F); names themselves are unchanged.
 see *Play counts*), `getNowPlaying` and `updateNowPlaying` (in memory, see
 *Listening state*)
 
-**Search** — `search3`, `search2` (alias)
+**Search** — `search3`, `search2` (alias). `query` is required; an empty
+value (or `""`) lists the whole library, paged, for apps that sync, and a
+query with no letters or digits finds nothing (#195).
 
 **Playlists** — `getPlaylists`, `getPlaylist`, `createPlaylist`,
 `updatePlaylist`, `deletePlaylist`
@@ -1229,7 +1237,10 @@ trusted_proxies = ["127.0.0.1", "::1"]
 ### Request bodies
 
 A request body is limited to 1 MiB (the analysis results upload has its own
-limit), and to how long it may take to arrive (#172): 30 seconds without any
+limit); a JSON body over it is answered with 413 `too_large`. A JSON body must
+be one JSON value, sent as `application/json` (or without a Content-Type);
+other types get 415 and trailing data `invalid_json` (#195). The body is also
+limited in how long it may take to arrive (#172): 30 seconds without any
 data, 2 minutes in all, or 10 minutes for the analysis results upload. A
 client that sends its body more slowly is cut off. Only the body is timed:
 streams, long-polls and the device relay may run as long as they need.
@@ -1464,12 +1475,14 @@ to tell apart have a code of their own (`database_error`, `invalid_json`,
 `librarian_required`, `registration_disabled`, `passkeys_unavailable`,
 `no_passkey`, `ceremony_expired`, `sso_not_configured`, `sso_unavailable`,
 `last_sign_in_method`, `job_running`, `no_job_running`, `import_running`,
-`tool_unavailable`); the rest have the generic code of their status:
-`bad_request`, `unauthorized`, `forbidden`, `not_found`, `conflict`,
+`tool_unavailable`, `username_taken`); the rest have the generic code of their
+status: `bad_request`, `unauthorized`, `forbidden`, `not_found`,
+`method_not_allowed` (with `Allow`), `conflict`,
 `too_large`, `unsupported_media_type`, `rate_limited`, `internal_error` or
 `unavailable`. Before #194, these errors had only `error`, holding the text.
-The device flow's `/api/device/token` and `/api/device/refresh` keep the RFC
-8628 shape (`{"error": "authorization_pending"}` and so on).
+A 401 carries `WWW-Authenticate: Bearer realm="tinysonic"`, and an unknown
+`/api` path is a JSON 404 (#193). The device flow's `/api/device/token` and
+`/api/device/refresh` keep the RFC 8628 shape (`{"error": "authorization_pending"}` and so on).
 
 | Code | Meaning |
 |---|---|

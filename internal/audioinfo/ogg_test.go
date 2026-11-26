@@ -185,3 +185,32 @@ func TestOggUnknownCodecIsZero(t *testing.T) {
 		t.Fatalf("duration %d ms, want 0", got)
 	}
 }
+
+// The forward scan reads in chunks (#198): pages that straddle a chunk
+// boundary are still found, and the last granule wins.
+func TestOggForwardScanAcrossChunks(t *testing.T) {
+	parts := [][]byte{oggPage(0, opusHead(0)), oggPage(0, []byte("OpusTags"))}
+	var want int64
+	total := 0
+	for i := 1; total < 3*oggChunk; i++ {
+		size := 4000 + (i*7919)%60000 // odd sizes, so pages straddle chunks
+		want = int64(i) * 48000
+		p := audioPage(want, size)
+		parts = append(parts, p)
+		total += len(p)
+		if i%5 == 0 { // damaged bytes between some pages
+			parts = append(parts, []byte("garbage, no capture pattern"))
+		}
+	}
+	path := writeOgg(t, "long.opus", parts...)
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	st, _ := f.Stat()
+	got, ok := oggForwardGranule(f, st.Size())
+	if !ok || got != want {
+		t.Fatalf("granule %d (ok %v), want %d", got, ok, want)
+	}
+}
