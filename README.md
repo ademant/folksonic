@@ -1203,6 +1203,7 @@ The JSON endpoints below are described in [`docs/openapi.yaml`](docs/openapi.yam
 | POST | `/api/library/bpm` | session | Start BPM calculation with the tool assigned to `bpm`, body `{"mode": "missing"}` or `{"mode": "all"}` (all also recalculates; 503 when the tool is not available) |
 | POST | `/api/library/analysis` | session | Recalculate analysis, body `{"ids": ["so-…"]}` or `{"all": true}`, optionally `"features": ["key"]` (409 while a scan or job runs; 503 when a tool is not available) |
 | GET | `/api/library/analysis/failed` | session | Tracks whose last analysis failed, with tool and error; `?limit=` up to 1000 (default 200). Retry with the POST above |
+| GET | `/api/library/scan/failed` | session | Files the scanner could not index (no audio content, or a parser failed), with the reason; `?limit=` up to 1000 (default 200). See [Unreadable files](#unreadable-files) |
 | POST | `/api/library/jobs/cancel` | session | Stop the running job after the current track |
 | GET | `/api/analysis?id=` | user | Stored analysis of one track; see [Track analysis](#track-analysis) |
 | GET | `/api/analysis/jobs` | librarian session or granted key | Job list for an offline folksentia run; see [Analysis over the API](#analysis-over-the-api) |
@@ -1695,6 +1696,29 @@ Duration + bitrate are decoded per format:
 
 For the unsupported formats the file is still registered and streamed; only the
 UI duration display degrades.
+
+### Unreadable files
+
+The scanner reads a file's first bytes before any tag or audio parser sees it
+(#219). The content must be one of the formats above, whatever the name says:
+
+- A file with an audio name but other content (text, an image, a broken
+  download) is not indexed.
+- Audio under another format's extension, such as FLAC named `.mp3`, is
+  indexed as what it is, with that format's content type and duration probe,
+  and the scan logs a warning. Ogg Opus named `.ogg` is indexed as `opus`
+  without a warning.
+
+A parser that fails on a file (a Go panic in a tag, duration or cover reader)
+no longer stops the server: the file is skipped and the scan goes on. Tags
+larger than 36 MiB are ignored, and the file is indexed with names from its
+path.
+
+Such files are recorded with their size and modification time, and neither
+the scan nor the watcher tries them again until they change. A song indexed
+before its file became unreadable keeps its entry. `getScanStatus` reports the
+count as `scanFailures`, and librarians list the files with
+`GET /api/library/scan/failed`.
 
 ## Development
 

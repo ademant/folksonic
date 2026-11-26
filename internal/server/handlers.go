@@ -446,13 +446,19 @@ func (s *State) GetScanStatus(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAuth(w, r) {
 		return
 	}
-	writeOK(w, J{
-		"scanStatus": J{
-			"scanning":      s.Progress.Running(),
-			"count":         s.Progress.Count(),
-			"watchFailures": s.Progress.WatchFailures(),
-		},
-	})
+	// scanFailures counts files the scanner could not read (#219); a failed
+	// count query leaves it out rather than failing the status.
+	st := J{
+		"scanning":      s.Progress.Running(),
+		"count":         s.Progress.Count(),
+		"watchFailures": s.Progress.WatchFailures(),
+	}
+	if n, err := scanner.CountFailures(s.Pool); err == nil {
+		st["scanFailures"] = n
+	} else {
+		logging.Errorf("getScanStatus: %v", err)
+	}
+	writeOK(w, J{"scanStatus": st})
 }
 
 func (s *State) StartScan(w http.ResponseWriter, r *http.Request) {

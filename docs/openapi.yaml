@@ -2077,6 +2077,47 @@ paths:
           $ref: '#/components/responses/Conflict'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /api/library/scan/failed:
+    get:
+      security:
+        - bearerAuth: []
+      tags: [Library]
+      summary: Files the scanner could not index
+      description: >-
+        Newest first. A file is listed when its content is no audio format
+        the scanner knows, or when a parser failed on it (#219). It is tried
+        again once its size or modification time changes, and leaves the
+        list when it is read or removed. Paths below a music folder are shown
+        as `<music>/…`. `getScanStatus` reports the count as `scanFailures`.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1, maximum: 1000, default: 200}
+      responses:
+        '200':
+          description: Files that could not be indexed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: {type: integer, description: Files recorded as failed.}
+                  files:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        path: {type: string}
+                        size: {type: integer, description: Bytes, of the version that failed.}
+                        reason: {type: string}
+                        failedAt: {type: string, format: date-time}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /api/library/analysis/failed:
     get:
       security:

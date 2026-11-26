@@ -79,6 +79,9 @@ type Stats struct {
 	Updated  int
 	Skipped  int
 	Pruned   int
+	// Failed counts files that are no audio or that a parser failed on,
+	// including those recorded by an earlier run (#219).
+	Failed int
 }
 
 type processResult int
@@ -87,6 +90,8 @@ const (
 	resultInserted processResult = iota
 	resultUpdated
 	resultSkipped
+	// resultFailed is a file recorded in scan_failures (#219).
+	resultFailed
 )
 
 // Scan indexes every audio file under each root directory. A file reached
@@ -116,6 +121,11 @@ func Scan(pool *sql.DB, roots []string, coversDir string, songTags []string, pro
 			stats.Scanned++
 			progress.count.Store(int64(stats.Scanned))
 			switch res, perr := processFile(pool, roots, path, coversDir, songTags); {
+			case res == resultFailed:
+				if perr != nil {
+					logging.Warnf("scan %s: %v", path, perr)
+				}
+				stats.Failed++
 			case perr != nil:
 				logging.Warnf("scan %s: %v", path, perr)
 				stats.Skipped++
@@ -142,13 +152,16 @@ func Scan(pool *sql.DB, roots []string, coversDir string, songTags []string, pro
 		return stats, fmt.Errorf("pruning missing songs: %w", err)
 	}
 	stats.Pruned = pruned
+	if err := pruneFailures(pool, completeRoots, seen); err != nil {
+		logging.Errorf("scan: pruning recorded failures: %v", err)
+	}
 	if _, err := pool.Exec(
 		"INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
 		LastScanKey, time.Now().UTC().Format("2006-01-02T15:04:05Z")); err != nil {
 		logging.Errorf("scan: recording scan time: %v", err)
 	}
-	logging.Infof("scan complete: %d scanned, %d inserted, %d updated, %d skipped, %d removed",
-		stats.Scanned, stats.Inserted, stats.Updated, stats.Skipped, stats.Pruned)
+	logging.Infof("scan complete: %d scanned, %d inserted, %d updated, %d skipped, %d removed, %d not readable",
+		stats.Scanned, stats.Inserted, stats.Updated, stats.Skipped, stats.Pruned, stats.Failed)
 	return stats, nil
 }
 
@@ -291,7 +304,34 @@ func processFile(pool *sql.DB, roots []string, path, coversDir string, songTags 
 	mtimeMs := meta.ModTime().UnixMilli()
 	audioChanged := !(oldSize.Valid && oldMtimeMs.Valid && oldSize.Int64 == filesize && oldMtimeMs.Int64 == mtimeMs)
 
-	ex, err := extractMetadata(roots, path, filesize, coversDir, songTags)
+	// A file that failed before is retried only once it changed (#219).
+	if known, err := knownFailure(pool, path, filesize, mtimeMs); err != nil {
+		return 0, err
+	} else if known {
+		return resultFailed, nil
+	}
+	// Its content must be audio, whatever its name says, before a parser
+	// sees it; audio under another format's extension is indexed as what it
+	// is (#219).
+	kind, err := sniffFile(path)
+	if err != nil {
+		return 0, err
+	}
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
+	suffix, isAudio, mismatch := resolveSuffix(ext, kind)
+	if !isAudio {
+		recordFailure(pool, path, filesize, mtimeMs, ErrNotAudio)
+		return resultFailed, fmt.Errorf("%w: its content is no audio format", ErrNotAudio)
+	}
+	if mismatch {
+		logging.Warnf("scan %s: named .%s but holds %s; indexed as %s", path, ext, kind, suffix)
+	}
+
+	ex, err := safeExtract(roots, path, filesize, coversDir, songTags, suffix)
+	if errors.Is(err, errParserPanic) {
+		recordFailure(pool, path, filesize, mtimeMs, err)
+		return resultFailed, err
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -426,6 +466,10 @@ func processFile(pool *sql.DB, roots []string, path, coversDir string, songTags 
 	if err := markModified(tx); err != nil {
 		return 0, err
 	}
+	// Readable now, so a failure recorded for an earlier version is done.
+	if _, err := tx.Exec("DELETE FROM scan_failures WHERE path = ?", path); err != nil {
+		return 0, err
+	}
 
 	if err := tx.Commit(); err != nil {
 		return 0, err
@@ -436,8 +480,10 @@ func processFile(pool *sql.DB, roots []string, path, coversDir string, songTags 
 	return resultInserted, nil
 }
 
-func extractMetadata(roots []string, path string, filesize int64, coversDir string, songTags []string) (extracted, error) {
-	suffix := strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
+// extractMetadata reads tags, duration and cover of the file at path, which
+// holds audio of the given suffix (from sniffFormat, not only the name).
+// Call it through safeExtract.
+func extractMetadata(roots []string, path string, filesize int64, coversDir string, songTags []string, suffix string) (extracted, error) {
 	ex := extracted{
 		Title:       fileStem(path),
 		Artist:      "Unknown Artist",
@@ -452,7 +498,10 @@ func extractMetadata(roots []string, path string, filesize int64, coversDir stri
 	}
 	defer f.Close()
 
-	m, terr := tag.ReadFrom(f)
+	m, terr := readTags(&limitedReadSeeker{rs: f, left: maxTagBytes})
+	if errors.Is(terr, errTagTooLarge) {
+		logging.Warnf("scan %s: tags over %d bytes are ignored", path, maxTagBytes)
+	}
 	if terr == nil {
 		if v := m.Title(); v != "" {
 			ex.Title = v

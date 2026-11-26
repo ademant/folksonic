@@ -6,7 +6,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -90,6 +89,7 @@ func handleEvent(w *fsnotify.Watcher, pool *sql.DB, roots []string, coversDir st
 		// We don't know whether the path was a file or a directory anymore.
 		// Try the single-song path first, then a prefix sweep in case a whole
 		// directory disappeared without per-file events.
+		clearFailure(pool, ev.Name)
 		if id, err := DeletePath(pool, ev.Name); err != nil {
 			logging.Errorf("watch delete %s: %v", ev.Name, err)
 		} else {
@@ -102,6 +102,9 @@ func handleEvent(w *fsnotify.Watcher, pool *sql.DB, roots []string, coversDir st
 			if err := deletePrefix(pool, ev.Name, progress); err != nil {
 				logging.Errorf("watch delete prefix %s: %v", ev.Name, err)
 			}
+			if _, err := pool.Exec(`DELETE FROM scan_failures WHERE path LIKE ? ESCAPE '\'`, likePrefix(ev.Name)); err != nil {
+				logging.Errorf("watch delete failures under %s: %v", ev.Name, err)
+			}
 		}
 	}
 }
@@ -111,6 +114,8 @@ func runProcess(pool *sql.DB, roots []string, coversDir string, songTags []strin
 	if _, err := os.Stat(path); err != nil {
 		return
 	}
+	// processFile contains parser panics (#219); a file it could not read
+	// is recorded and not retried until it changes.
 	res, err := processFile(pool, roots, path, coversDir, songTags)
 	if err != nil {
 		logging.Warnf("watch process %s: %v", path, err)
@@ -300,12 +305,7 @@ func (d *debouncer) stopAll() {
 
 // songPathsUnder returns the stored path of every song below root.
 func songPathsUnder(pool *sql.DB, root string) ([]string, error) {
-	like := strings.ReplaceAll(root, "\\", "\\\\")
-	like = strings.ReplaceAll(like, "%", "\\%")
-	like = strings.ReplaceAll(like, "_", "\\_")
-	like += string(filepath.Separator) + "%"
-
-	rows, err := pool.Query(`SELECT path FROM songs WHERE path LIKE ? ESCAPE '\'`, like)
+	rows, err := pool.Query(`SELECT path FROM songs WHERE path LIKE ? ESCAPE '\'`, likePrefix(root))
 	if err != nil {
 		return nil, err
 	}

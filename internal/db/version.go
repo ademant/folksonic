@@ -37,6 +37,21 @@ var migrations = []migration{
 	{"re-read Ogg durations", migrateOggDurations},
 	{"session activity and labels", migrateSessionActivity},
 	{"covering index for album figures", migrateAlbumStatsIndex},
+	{"files the scanner could not read", migrateScanFailures},
+}
+
+// migrateScanFailures adds the files the scanner could not index: no audio
+// content, or a parser that failed on them (#219). The size and mtime say
+// which version of the file failed, so a changed file is tried again.
+func migrateScanFailures(tx *sql.Tx) error {
+	_, err := tx.Exec(`CREATE TABLE IF NOT EXISTS scan_failures (
+		path           TEXT PRIMARY KEY,
+		file_size      INTEGER NOT NULL,
+		file_mtime_ms  INTEGER NOT NULL,
+		reason         TEXT NOT NULL,
+		failed_at      TEXT NOT NULL
+	)`)
+	return err
 }
 
 // migrateBookmarks (version 4, #139) adds one bookmark per user and song. The

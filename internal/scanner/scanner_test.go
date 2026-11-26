@@ -40,7 +40,7 @@ func TestScanPrunesFilesDeletedWhileOffline(t *testing.T) {
 	music := t.TempDir()
 	covers := t.TempDir()
 	for _, name := range []string{"a.mp3", "b.mp3"} {
-		if err := os.WriteFile(filepath.Join(music, name), []byte("not really audio"), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(music, name), fakeAudio("not really audio"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -91,7 +91,7 @@ func TestScanKeepsSongsInUnreadableDirectory(t *testing.T) {
 	if err := os.Mkdir(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(sub, "keep.mp3"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(sub, "keep.mp3"), fakeAudio("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	pool, err := db.Init(dbPath)
@@ -125,7 +125,7 @@ func writeAudio(t *testing.T, path string) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(path, fakeAudio("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
