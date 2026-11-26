@@ -122,7 +122,7 @@ Configuration is checked at startup:
 
 | Key                  | Purpose                                                              |
 | -------------------- | -------------------------------------------------------------------- |
-| `music_dirs`         | Library roots, each walked recursively. `music_dir = "…"` is accepted as a one-entry list. |
+| `music_dirs`         | Library roots, each walked recursively. `music_dir = "…"` is accepted as a one-entry list. Symlinks are followed only while they lead to somewhere inside the same root: a link out of it (to a file or a directory) is skipped with a warning, and songs are streamed only from inside the roots (#177). To include a folder elsewhere, add it as a root of its own. A root may itself be a symlink. |
 | `username`/`password`| Optional bootstrap librarian, imported once when the database has no users. |
 | `port`               | TCP port to bind.                                                    |
 | `host`               | Interface to bind (use `127.0.0.1` to keep it local).                |
@@ -983,9 +983,13 @@ on the long-lived key. For a server reachable from the internet:
    set headers have to use the parameter.
 4. **Keep query strings out of proxy logs.** The Apache template logs only the
    path (`%U`). nginx's default access log records `$request`, which includes the
-   query string; use a `log_format` without it, or turn off the access log for
-   the Subsonic paths. The Caddy template sets no access log, so add one with the
-   query string removed if you enable it.
+   query string; the nginx templates log the path only (`log_format …_nokey`,
+   #179): `deploy/nginx.conf` defines the format itself, and
+   `deploy/nginx-subpath.conf` needs `deploy/nginx-log-format.conf` in
+   `/etc/nginx/conf.d/`. The proxies' error logs still write the full request
+   line of a failed request, so keep them readable by root only. The Caddy
+   template sets no access log; its comment shows one that drops `p`, `t`, `s`,
+   `apiKey`, `sig` and the `X-Api-Key` header.
 5. **Use short key lifetimes.** `api_key_ttl_days` (default 365) and
    `api_key_idle_days` (default 180) bound a leaked key. Shorter values suit a
    public server, at the cost of pairing devices again more often. A key can be
@@ -1479,12 +1483,22 @@ make deploy HOST=me@cloud.ademant.de   # every release
   enables the unit, and installs `deploy/folksonic.toml` as
   `/etc/tinysonic/tinysonic.toml` unless a config already exists. Edit
   `music_dirs` and `base_url` there, then add `deploy/nginx-subpath.conf` to
-  the site's nginx config. Re-running it updates the unit and keeps the config.
+  the site's nginx config (and `deploy/nginx-log-format.conf` to
+  `/etc/nginx/conf.d/`). Re-running it updates the unit and keeps the config.
+  The installed config sets `trusted_proxies` for a proxy on the same host.
 - `deploy` runs `make check` (build, vet, gofmt, tests), builds
   `dist/tinysonic`, installs it as `/usr/local/bin/tinysonic` (keeping the old
   one as `tinysonic.prev`), restarts the service and waits for
-  `<base_path>/rest/ping` to answer on the configured host and port. If it
-  does not, the previous binary is restored.
+  `<base_path>/rest/ping` to answer on the configured host and port. Behind a
+  proxy (`host` on loopback) it also sends the ping as the proxy passes it on,
+  with `X-Forwarded-For` and `X-Forwarded-Proto: https`, which only works
+  when `trusted_proxies` lists the proxy. If either fails, the previous binary
+  is restored. Finally it pings the public `base_url` and warns if that fails,
+  since the proxy is outside its reach (#174).
+- `deploy` refuses, before installing anything, a config that serves behind
+  a proxy (`host` on loopback, or `base_path` set) without `trusted_proxies`:
+  `require_https` would refuse every proxied request, and every client would
+  share the proxy's address in the sign-in limits and in fail2ban (#174).
 - `rollback` restores `tinysonic.prev`; `status` and `logs` show the unit's
   state and journal.
 

@@ -51,12 +51,12 @@ func Watch(ctx context.Context, pool *sql.DB, roots []string, coversDir string, 
 			if !ok {
 				return nil
 			}
-			handleEvent(w, pool, coversDir, songTags, ev, d, progress)
+			handleEvent(w, pool, roots, coversDir, songTags, ev, d, progress)
 		}
 	}
 }
 
-func handleEvent(w *fsnotify.Watcher, pool *sql.DB, coversDir string, songTags []string, ev fsnotify.Event, d *debouncer, progress *Progress) {
+func handleEvent(w *fsnotify.Watcher, pool *sql.DB, roots []string, coversDir string, songTags []string, ev fsnotify.Event, d *debouncer, progress *Progress) {
 	switch {
 	case ev.Op&fsnotify.Create != 0:
 		info, err := os.Stat(ev.Name)
@@ -64,19 +64,25 @@ func handleEvent(w *fsnotify.Watcher, pool *sql.DB, coversDir string, songTags [
 			return
 		}
 		if info.IsDir() {
+			// A new directory, or a link to one: watched and walked only
+			// while it stays inside the music folders (#177).
+			if !Contained(roots, ev.Name) {
+				logging.Warnf("watch: skipping %s: it leads outside the music folders", ev.Name)
+				return
+			}
 			progress.watchFailures.Add(int64(addRecursive(w, ev.Name)))
-			walkAudio(ev.Name, make(map[string]bool), func(p string) {
-				d.schedule(p, func() { runProcess(pool, coversDir, songTags, p, progress) })
+			walkAudio(roots, ev.Name, make(map[string]bool), func(p string) {
+				d.schedule(p, func() { runProcess(pool, roots, coversDir, songTags, p, progress) })
 			})
 			return
 		}
 		if hasAudioExt(ev.Name) {
-			d.schedule(ev.Name, func() { runProcess(pool, coversDir, songTags, ev.Name, progress) })
+			d.schedule(ev.Name, func() { runProcess(pool, roots, coversDir, songTags, ev.Name, progress) })
 		}
 
 	case ev.Op&fsnotify.Write != 0:
 		if hasAudioExt(ev.Name) {
-			d.schedule(ev.Name, func() { runProcess(pool, coversDir, songTags, ev.Name, progress) })
+			d.schedule(ev.Name, func() { runProcess(pool, roots, coversDir, songTags, ev.Name, progress) })
 		}
 
 	case ev.Op&(fsnotify.Remove|fsnotify.Rename) != 0:
@@ -98,12 +104,12 @@ func handleEvent(w *fsnotify.Watcher, pool *sql.DB, coversDir string, songTags [
 	}
 }
 
-func runProcess(pool *sql.DB, coversDir string, songTags []string, path string, progress *Progress) {
+func runProcess(pool *sql.DB, roots []string, coversDir string, songTags []string, path string, progress *Progress) {
 	// File may have vanished between event and debounce fire.
 	if _, err := os.Stat(path); err != nil {
 		return
 	}
-	res, err := processFile(pool, path, coversDir, songTags)
+	res, err := processFile(pool, roots, path, coversDir, songTags)
 	if err != nil {
 		logging.Warnf("watch process %s: %v", path, err)
 		return

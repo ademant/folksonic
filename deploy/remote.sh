@@ -22,8 +22,45 @@ config_value() {
 	sudo sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*\"\{0,1\}\([^\"#[:space:]]*\).*/\1/p" "$CONFIG" | head -n 1
 }
 
-# healthy waits for a Subsonic response from <base_path>/rest/ping. Without
-# credentials it is an error envelope, which still proves the server answers.
+# config_has KEY succeeds when the installed config sets KEY.
+config_has() {
+	sudo grep -Eq "^[[:space:]]*$1[[:space:]]*=" "$CONFIG"
+}
+
+# behind_proxy succeeds when tinysonic listens on loopback only, so a reverse
+# proxy on this host is the way in (deploy/folksonic.toml).
+behind_proxy() {
+	case "$(config_value host)" in 127.0.0.1 | ::1 | localhost) return 0 ;; esac
+	return 1
+}
+
+# check_proxy_config refuses a config for a reverse proxy without
+# trusted_proxies (#174): require_https would refuse every proxied request,
+# and every client would count as the proxy's address in the sign-in limits
+# and in fail2ban.
+check_proxy_config() {
+	if { behind_proxy || [ -n "$(config_value base_path)" ]; } && ! config_has trusted_proxies; then
+		echo "$CONFIG serves behind a reverse proxy (host on loopback or base_path set) but has no trusted_proxies." >&2
+		echo "Add the proxy's address, for a proxy on this host: trusted_proxies = [\"127.0.0.1\", \"::1\"]" >&2
+		return 1
+	fi
+}
+
+# probe URL [curl options…] succeeds when URL answers HTTP 200 with a Subsonic
+# envelope. Without credentials it is an error envelope, which still proves the
+# server answers; a refusal of plain HTTP is a 301 or 426, not a 200.
+probe() {
+	url=$1
+	shift
+	out=$(curl -sS --max-time 2 -w '\n%{http_code}' "$@" "$url" 2>/dev/null) || return 1
+	[ "$(printf '%s\n' "$out" | tail -n 1)" = 200 ] && printf '%s' "$out" | grep -q subsonic-response
+}
+
+# healthy waits for a Subsonic response from <base_path>/rest/ping, directly
+# and, behind a proxy, as the proxy passes requests on (with X-Forwarded-For
+# and X-Forwarded-Proto: https), which only succeeds when trusted_proxies
+# lists the proxy (#174). It then tries the public base_url and warns when
+# that fails: the proxy itself is not this script's to fix.
 healthy() {
 	host=$(config_value host)
 	case "$host" in "" | 0.0.0.0 | ::) host=127.0.0.1 ;; esac
@@ -31,16 +68,31 @@ healthy() {
 	base=$(config_value base_path)
 	url="http://$host:${port:-4533}${base%/}/rest/ping"
 	i=0
-	while [ "$i" -lt 15 ]; do
-		if curl -sS --max-time 2 "$url" 2>/dev/null | grep -q subsonic-response; then
-			echo "$NAME answers at $url"
-			return 0
-		fi
+	while ! probe "$url"; do
 		i=$((i + 1))
+		if [ "$i" -ge 15 ]; then
+			echo "no Subsonic response from $url" >&2
+			return 1
+		fi
 		sleep 1
 	done
-	echo "no Subsonic response from $url" >&2
-	return 1
+	echo "$NAME answers at $url"
+	if behind_proxy; then
+		if ! probe "$url" -H "X-Forwarded-For: 203.0.113.1" -H "X-Forwarded-Proto: https"; then
+			echo "$NAME refuses requests passed on by the proxy at $url; check trusted_proxies in $CONFIG" >&2
+			return 1
+		fi
+		echo "$NAME accepts requests passed on by the proxy"
+	fi
+	public=$(config_value base_url)
+	if [ -n "$public" ]; then
+		if probe "${public%/}/rest/ping"; then
+			echo "$NAME answers at ${public%/}/rest/ping"
+		else
+			echo "WARNING: no Subsonic response from ${public%/}/rest/ping; check the reverse proxy" >&2
+		fi
+	fi
+	return 0
 }
 
 setup() {
@@ -54,6 +106,7 @@ setup() {
 		sudo install -m 0640 -o root -g "$NAME" folksonic.toml "$CONFIG"
 		echo "installed $CONFIG; set music_dirs and base_url before the first deploy"
 	fi
+	check_proxy_config || echo "fix $CONFIG before the first deploy" >&2
 	sudo install -m 0644 "$NAME.service" "$UNIT"
 	sudo systemctl daemon-reload
 	sudo systemctl enable "$NAME"
@@ -64,6 +117,8 @@ deploy() {
 		echo "$CONFIG is missing; run make setup first" >&2
 		exit 1
 	fi
+	# Checked before anything is installed, so a refused deploy changes nothing.
+	check_proxy_config || exit 1
 	if [ -e "$BIN" ]; then
 		sudo cp -p "$BIN" "$BIN.prev"
 	fi

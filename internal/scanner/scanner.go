@@ -91,11 +91,11 @@ func Scan(pool *sql.DB, roots []string, coversDir string, songTags []string, pro
 	visited := make(map[string]bool)
 	var completeRoots []string
 	for _, root := range roots {
-		failures := walkAudio(root, visited, func(path string) {
+		failures := walkAudio(roots, root, visited, func(path string) {
 			seen[path] = true
 			stats.Scanned++
 			progress.count.Store(int64(stats.Scanned))
-			switch res, perr := processFile(pool, path, coversDir, songTags); {
+			switch res, perr := processFile(pool, roots, path, coversDir, songTags); {
 			case perr != nil:
 				logging.Warnf("scan %s: %v", path, perr)
 				stats.Skipped++
@@ -154,15 +154,21 @@ func pruneMissing(pool *sql.DB, roots []string, seen map[string]bool) (int, erro
 }
 
 // walkAudio recursively walks dir, following symlinks for both files and
-// directories. Cycles are broken by tracking the canonical (symlink-resolved)
-// path of every directory we descend into. It returns how many directories
-// could not be read; a non-zero count means the walk is incomplete.
-func walkAudio(dir string, visited map[string]bool, fn func(path string)) int {
+// directories as long as they stay inside the music folder (Contained,
+// #177); a link that leads outside is skipped with a warning. Cycles are
+// broken by tracking the canonical (symlink-resolved) path of every
+// directory we descend into. It returns how many directories could not be
+// read; a non-zero count means the walk is incomplete.
+func walkAudio(roots []string, dir string, visited map[string]bool, fn func(path string)) int {
 	real, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		return 1
 	}
 	if visited[real] {
+		return 0
+	}
+	if !Contained(roots, dir) {
+		logging.Warnf("scan: skipping %s: it leads outside the music folders", dir)
 		return 0
 	}
 	visited[real] = true
@@ -182,8 +188,13 @@ func walkAudio(dir string, visited map[string]bool, fn func(path string)) int {
 		}
 		switch {
 		case info.IsDir():
-			failures += walkAudio(full, visited, fn)
+			failures += walkAudio(roots, full, visited, fn)
 		case info.Mode().IsRegular() && hasAudioExt(full):
+			// The directory is inside; only a file link can lead out.
+			if entry.Type()&os.ModeSymlink != 0 && !Contained(roots, full) {
+				logging.Warnf("scan: skipping %s: it links outside the music folders", full)
+				continue
+			}
 			fn(full)
 		}
 	}
@@ -217,7 +228,11 @@ type extracted struct {
 	Audio         audioTags
 }
 
-func processFile(pool *sql.DB, path, coversDir string, songTags []string) (processResult, error) {
+func processFile(pool *sql.DB, roots []string, path, coversDir string, songTags []string) (processResult, error) {
+	// The watcher hands in paths the walk never saw (#177).
+	if !Contained(roots, path) {
+		return 0, fmt.Errorf("%s: %w", path, ErrOutsideMusic)
+	}
 	meta, err := os.Stat(path)
 	if err != nil {
 		return 0, err
@@ -247,7 +262,7 @@ func processFile(pool *sql.DB, path, coversDir string, songTags []string) (proce
 	mtimeMs := meta.ModTime().UnixMilli()
 	audioChanged := !(oldSize.Valid && oldMtimeMs.Valid && oldSize.Int64 == filesize && oldMtimeMs.Int64 == mtimeMs)
 
-	ex, err := extractMetadata(path, filesize, coversDir, songTags)
+	ex, err := extractMetadata(roots, path, filesize, coversDir, songTags)
 	if err != nil {
 		return 0, err
 	}
@@ -392,7 +407,7 @@ func processFile(pool *sql.DB, path, coversDir string, songTags []string) (proce
 	return resultInserted, nil
 }
 
-func extractMetadata(path string, filesize int64, coversDir string, songTags []string) (extracted, error) {
+func extractMetadata(roots []string, path string, filesize int64, coversDir string, songTags []string) (extracted, error) {
 	suffix := strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
 	ex := extracted{
 		Title:       fileStem(path),
@@ -468,7 +483,7 @@ func extractMetadata(path string, filesize int64, coversDir string, songTags []s
 		}
 	}
 	if !ex.CoverFilename.Valid {
-		if name, ok := findDirCover(path, coversDir, albumKey); ok {
+		if name, ok := findDirCover(roots, path, coversDir, albumKey); ok {
 			ex.CoverFilename = sql.NullString{String: name, Valid: true}
 		}
 	}
@@ -520,7 +535,10 @@ var coverCandidates = []string{
 	"album.jpg", "album.png",
 }
 
-func findDirCover(audioPath, coversDir, albumKey string) (string, bool) {
+// findDirCover copies a cover image from the song's folder. It is opened
+// through the music folder's os.Root, so a cover.jpg linking outside it is
+// ignored (#177).
+func findDirCover(roots []string, audioPath, coversDir, albumKey string) (string, bool) {
 	dir := filepath.Dir(audioPath)
 	for _, cand := range coverCandidates {
 		p := filepath.Join(dir, cand)
@@ -531,7 +549,7 @@ func findDirCover(audioPath, coversDir, albumKey string) (string, bool) {
 		ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(cand), "."))
 		filename := albumKey + "." + ext
 		dest := filepath.Join(coversDir, filename)
-		if err := copyFile(p, dest); err != nil {
+		if err := copyFile(roots, p, dest); err != nil {
 			continue
 		}
 		return filename, true
@@ -539,8 +557,8 @@ func findDirCover(audioPath, coversDir, albumKey string) (string, bool) {
 	return "", false
 }
 
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
+func copyFile(roots []string, src, dst string) error {
+	in, err := OpenContained(roots, src)
 	if err != nil {
 		return err
 	}

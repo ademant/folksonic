@@ -19,6 +19,13 @@ base_path = "/folksonic"
 host = "127.0.0.1"
 port = 4534
 
+# The reverse proxy on this host (#174). Its X-Forwarded-For and
+# X-Forwarded-Proto are believed only from these addresses: without them,
+# require_https refuses every proxied request, and every client counts as the
+# proxy in the sign-in limits and in fail2ban. `make deploy` refuses a config
+# behind a proxy without this key.
+trusted_proxies = ["127.0.0.1", "::1"]
+
 # Relative paths would resolve from /etc/tinysonic, which the service cannot
 # write. Keep state in the unit's StateDirectory.
 database_path = "/var/lib/tinysonic/tinysonic.db"

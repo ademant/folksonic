@@ -997,7 +997,10 @@ func (s *State) Stream(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 70, "Song not found")
 		return
 	}
-	f, err := os.Open(path)
+	// Opened through the music folder's os.Root: a symlink that leads
+	// outside the music folders, even one changed after the scan, is not
+	// served (#177).
+	f, err := scanner.OpenContained(s.MusicDirs, path)
 	if err != nil {
 		s.evictSong(id)
 		logging.Errorf("stream open %s: %v", path, err)
