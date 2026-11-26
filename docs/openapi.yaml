@@ -365,6 +365,9 @@ paths:
         session. Without `invite`, the account is pending and needs
         `allow_registration` on the server; an administrator approves it with
         `tinysonic user approve`. The password must be 8 to 1024 bytes.
+        Registration attempts spend the same per-address budget as password
+        sign-in, so probing names or invitation codes is slowed and then
+        refused with 429 (#190).
       security: []
       requestBody:
         required: true
@@ -416,6 +419,15 @@ paths:
                 $ref: '#/components/schemas/Error'
         '409':
           $ref: '#/components/responses/Conflict'
+        '429':
+          description: |
+            Too many failed attempts from this address (`Retry-After` says when
+            to try again). The attempt is not counted once the limit is reached;
+            no account was created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/login:
     post:
       tags: [Accounts]
