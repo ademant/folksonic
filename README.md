@@ -1011,6 +1011,38 @@ invitations) must be 8 to 1024 bytes. The password in the config file is
 exempt, so an existing short one keeps working. `user set-password` ends that
 account's sessions at once; its API keys stay valid.
 
+### Authentication security posture
+
+The design follows several current best practices, but this is not a security
+certification or a claim that every protocol flow fully conforms to its
+standard:
+
+- **Phishing-resistant sign-in:** WebAuthn passkeys require user verification.
+  Optional OIDC sign-in uses the authorization-code flow with PKCE (S256) and a
+  nonce, consistent with the direction of
+  [OAuth 2.0 Security Best Current Practice (RFC 9700)](https://www.rfc-editor.org/rfc/rfc9700.html).
+- **Password storage:** user passwords use salted Argon2id with 19 MiB memory,
+  two iterations and one lane, matching the current
+  [OWASP Password Storage Cheat Sheet minimum](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html).
+  Login attempts are rate-limited and password hashing concurrency is bounded.
+- **Reduced credential exposure:** Subsonic password authentication is off by
+  default, HTTPS is required by default, and API keys are stored as hashes,
+  expire and can be revoked. Prefer the `X-Api-Key` header; some Subsonic
+  clients require a key in the URL, which can leak through client or proxy logs.
+- **Device credentials:** device grants have short-lived access tokens bound to
+  a device key and rotating refresh tokens. Proofs bind the request method and
+  URL and are checked for freshness and replay. The access-token proof
+  validation does not currently check the RFC 9449 `ath` claim, so this flow
+  should not be described as fully RFC 9449 conformant.
+
+There are also deployment and policy limits to keep in mind. The default
+user-chosen password minimum is 8 bytes; the current
+[NIST SP 800-63B guidance](https://pages.nist.gov/800-63-4/sp800-63b.html)
+specifies 15 characters for a single-factor password (8 when it is used only
+as part of multi-factor authentication). Password-failure throttles and the
+DPoP replay cache are process-local: they reset on restart and do not
+coordinate across multiple server instances.
+
 ### Hardening the Subsonic API
 
 Subsonic clients send their credentials with every request, including each
