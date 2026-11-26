@@ -171,7 +171,10 @@ changing roles, setting passwords, revoking a user's API keys, issuing invites
 and pairing. Pending registrations are approved
 with `tinysonic user approve` and rejected with `tinysonic user remove`. The
 API has no endpoint for either. Subsonic `getUser` reports `adminRole` as
-false for everyone.
+true for librarians and false for everyone else (#190), as clients use it to
+show administration. A librarian may also read another account with
+`username`; anyone else asking about another account gets error 50, an
+unknown user error 70.
 
 ## CLI
 
@@ -293,7 +296,10 @@ names are read, and they are read-only: the server never writes tags.
 endpoint accepts `size` (1–500) and `offset`: `getArtists`, `getIndexes`,
 `getGenres`, `getStarred(2)`, `getPlaylists`, and the nested lists of
 `getArtist` (albums), `getAlbum` (songs), `getPlaylist` (entries) and
-`getMusicDirectory` (children). On `getSongsByGenre`, `size` is an alias for
+`getMusicDirectory` (children). On the endpoints with a count parameter of
+their own — the album lists, `getSongsByGenre` (`count`), `getRandomSongs`
+and `search2/3` — 0 is also allowed and is an empty list, so a client can
+skip a list (#190). On `getSongsByGenre`, `size` is an alias for
 `count`; on `search2/3` and `getStarred(2)`, `size`/`offset` apply to each list
 that has no parameter of its own (`songCount`, `songOffset`, … win). Without
 `size` and `offset` responses are unchanged. Totals are sent as headers on every
@@ -473,7 +479,8 @@ The differences from the Subsonic descriptions are listed in
 
 The scanner reads each file's lyrics tag: `USLT` in MP3, `LYRICS` in FLAC and
 Vorbis (Ogg, Opus), and `©lyr` in M4A. The text is stored as it is in the tag,
-so LRC text keeps its timestamps, and nothing is written back to the file.
+so LRC text keeps its timestamps, and nothing is written back to the file. A
+text over 256 KiB is not treated as lyrics and is ignored (#198).
 After an upgrade every file is read once more at the next scan, so the lyrics
 fill in without a manual rescan; the audio is not reanalysed.
 
@@ -713,8 +720,11 @@ under F); names themselves are unchanged.
 **Genres** — `getGenres`, `getSongsByGenre`
 
 **Lists** — `getRandomSongs`, `getStarred2`, `getStarred` (alias). The
-`getAlbumList2` types `frequent` and `recent` use the caller's own plays, and
-`byYear` and `byGenre` filter albums; see *Listening state*.
+`getAlbumList2` types `frequent` and `recent` use the caller's own plays,
+`byYear` and `byGenre` filter albums, `starred` lists the caller's starred
+albums (newest star first) and `highest` the albums with songs the caller
+rated, by their average rating (`setRating` rates songs); see *Listening
+state*.
 
 **Change feed** — `getLibraryChanges` (see *Change feed* above)
 
@@ -1196,7 +1206,10 @@ or put in a URL.
 
 ## Sign-in limits
 
-Failed password attempts are limited per client address. The first five
+Failed password attempts are limited per client address, and registration
+attempts (`POST /api/register`) spend the same budget: a taken username is
+answered with 409 `username_taken`, and probing names or invitation codes is
+slowed and then refused like password guessing (#190). The first five
 attempts from an address are answered at once. After that, one more is allowed
 each second, and the rest get HTTP 429 with `Retry-After` before any password
 is checked. Each failure also waits 10 ms, doubling for each consecutive
