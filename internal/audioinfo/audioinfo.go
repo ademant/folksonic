@@ -198,29 +198,63 @@ func oggLastGranule(f *os.File, size int64) (int64, bool) {
 	return 0, false
 }
 
+// Bounds of the forward Ogg scan (#198): it reads in chunks, so memory stays
+// at about one chunk plus a page, and it stops after oggForwardMax bytes.
+const (
+	oggChunk      = 1 << 20
+	oggMaxPage    = 27 + 255 + 255*255 // header, segment table, payload
+	oggForwardMax = 1 << 30
+)
+
 // oggForwardGranule is the fallback when the tail has no usable page: it walks
-// the whole file and resyncs on the next "OggS" after any damaged bytes, so one
-// bad page does not end the scan. It reads the file in full, which is only
-// needed for files whose tail is unusable.
+// the file and resyncs on the next "OggS" after any damaged bytes, so one bad
+// page does not end the scan. It reads in chunks of oggChunk, keeping the
+// bytes of a page that runs past a chunk for the next one, and stops after
+// oggForwardMax bytes; a longer damaged file gets the duration up to there.
 func oggForwardGranule(f *os.File, size int64) (int64, bool) {
-	buf := make([]byte, size)
-	if _, err := f.ReadAt(buf, 0); err != nil && !errors.Is(err, io.EOF) {
-		return 0, false
+	if size > oggForwardMax {
+		size = oggForwardMax
 	}
 	last := int64(-1)
-	for p := 0; p < len(buf); {
-		i := bytes.Index(buf[p:], []byte("OggS"))
-		if i < 0 {
+	var buf []byte
+	var read int64 // bytes of the file read so far
+	for {
+		eof := read >= size
+		if !eof {
+			n := min(int64(oggChunk), size-read)
+			chunk := make([]byte, n)
+			got, err := f.ReadAt(chunk, read)
+			if got <= 0 && err != nil && !errors.Is(err, io.EOF) {
+				break
+			}
+			buf = append(buf, chunk[:got]...)
+			read += int64(got)
+			eof = read >= size || got == 0
+		}
+		p := 0
+		for p < len(buf) {
+			i := bytes.Index(buf[p:], []byte("OggS"))
+			if i < 0 {
+				// Keep a possible "Ogg" prefix of a capture pattern at the end.
+				p = max(p, len(buf)-3)
+				break
+			}
+			p += i
+			if !eof && len(buf)-p < oggMaxPage {
+				break // the page may continue in the next chunk
+			}
+			length, granule, ok := oggPageAt(buf[p:])
+			if ok && granule != -1 && p+length <= len(buf) {
+				last = granule
+				p += length
+				continue
+			}
+			p++
+		}
+		if eof {
 			break
 		}
-		p += i
-		length, granule, ok := oggPageAt(buf[p:])
-		if ok && granule != -1 && p+length <= len(buf) {
-			last = granule
-			p += length
-			continue
-		}
-		p++
+		buf = append(buf[:0], buf[min(p, len(buf)):]...)
 	}
 	return last, last > 0
 }

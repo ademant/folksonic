@@ -1,6 +1,8 @@
 package scanner
 
 import (
+	"bufio"
+	"bytes"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -245,7 +247,12 @@ func processFile(pool *sql.DB, roots []string, path, coversDir string, songTags 
 		Scan(&existingMtime, &oldSize, &oldMtimeMs)
 	switch {
 	case err == nil:
-		if existingMtime.Valid && existingMtime.Int64 == mtime {
+		// Unchanged only if the second-level mtime, and the size and
+		// millisecond mtime where they are recorded, all match: a same-size
+		// rewrite within the same second is still read again (#198).
+		if existingMtime.Valid && existingMtime.Int64 == mtime &&
+			(!oldSize.Valid || oldSize.Int64 == filesize) &&
+			(!oldMtimeMs.Valid || oldMtimeMs.Int64 == meta.ModTime().UnixMilli()) {
 			return resultSkipped, nil
 		}
 	case errors.Is(err, sql.ErrNoRows):
@@ -490,42 +497,72 @@ func extractMetadata(roots []string, path string, filesize int64, coversDir stri
 	return ex, nil
 }
 
+// maxCoverBytes bounds a cover image, embedded or in the folder (#198).
+const maxCoverBytes = 16 << 20
+
+// errNotImage is a cover that is too large or not an image format we serve.
+var errNotImage = errors.New("not a cover image")
+
+// imageExt is the file extension for an image, from its first bytes; the
+// tag's claimed type is not trusted (#198).
+func imageExt(head []byte) (string, bool) {
+	switch {
+	case bytes.HasPrefix(head, []byte{0xFF, 0xD8, 0xFF}):
+		return "jpg", true
+	case bytes.HasPrefix(head, []byte("\x89PNG\r\n\x1a\n")):
+		return "png", true
+	case bytes.HasPrefix(head, []byte("GIF87a")), bytes.HasPrefix(head, []byte("GIF89a")):
+		return "gif", true
+	case bytes.HasPrefix(head, []byte("BM")):
+		return "bmp", true
+	case bytes.HasPrefix(head, []byte("II*\x00")), bytes.HasPrefix(head, []byte("MM\x00*")):
+		return "tiff", true
+	case len(head) >= 12 && bytes.Equal(head[:4], []byte("RIFF")) && bytes.Equal(head[8:12], []byte("WEBP")):
+		return "webp", true
+	}
+	return "", false
+}
+
+// savePicture stores an embedded picture as the album's cover. It is
+// rewritten each time, since this runs only for files that changed, so the
+// cover follows the newest embedded artwork.
 func savePicture(coversDir, albumKey string, pic *tag.Picture) (string, error) {
-	ext := "jpg"
-	switch strings.ToLower(pic.Ext) {
-	case "jpg", "jpeg":
-		ext = "jpg"
-	case "png":
-		ext = "png"
-	case "gif":
-		ext = "gif"
-	case "bmp":
-		ext = "bmp"
-	case "tiff":
-		ext = "tiff"
-	default:
-		// dhowden/tag also exposes pic.MIMEType — handle that path.
-		switch strings.ToLower(pic.MIMEType) {
-		case "image/jpeg", "image/jpg":
-			ext = "jpg"
-		case "image/png":
-			ext = "png"
-		case "image/gif":
-			ext = "gif"
-		case "image/bmp":
-			ext = "bmp"
-		case "image/tiff":
-			ext = "tiff"
-		}
+	if len(pic.Data) > maxCoverBytes {
+		return "", fmt.Errorf("%w: %d bytes", errNotImage, len(pic.Data))
+	}
+	ext, ok := imageExt(pic.Data)
+	if !ok {
+		return "", errNotImage
 	}
 	filename := albumKey + "." + ext
-	full := filepath.Join(coversDir, filename)
-	// Always rewrite: this runs only for files whose mtime changed, so the
-	// cover follows the newest embedded artwork instead of a stale cache entry.
-	if err := os.WriteFile(full, pic.Data, 0o644); err != nil {
+	if err := writeCover(filepath.Join(coversDir, filename), bytes.NewReader(pic.Data)); err != nil {
 		return "", err
 	}
 	return filename, nil
+}
+
+// writeCover writes at most maxCoverBytes from r to dst through a temporary
+// file and a rename, so a reader never sees half a cover (#198).
+func writeCover(dst string, r io.Reader) error {
+	tmp, err := os.CreateTemp(filepath.Dir(dst), ".cover-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name()) // a no-op after the rename
+	n, err := io.Copy(tmp, io.LimitReader(r, maxCoverBytes+1))
+	if err == nil && n > maxCoverBytes {
+		err = fmt.Errorf("%w: over %d bytes", errNotImage, maxCoverBytes)
+	}
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Chmod(tmp.Name(), 0o644)
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), dst)
 }
 
 var coverCandidates = []string{
@@ -542,34 +579,41 @@ func findDirCover(roots []string, audioPath, coversDir, albumKey string) (string
 	dir := filepath.Dir(audioPath)
 	for _, cand := range coverCandidates {
 		p := filepath.Join(dir, cand)
+		// Regular files only: a FIFO named cover.jpg would block the scan
+		// on open (#198). An in-folder symlink to a regular file is fine.
 		st, err := os.Stat(p)
-		if err != nil || st.IsDir() {
+		if err != nil || !st.Mode().IsRegular() || st.Size() > maxCoverBytes {
 			continue
 		}
-		ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(cand), "."))
-		filename := albumKey + "." + ext
-		dest := filepath.Join(coversDir, filename)
-		if err := copyFile(roots, p, dest); err != nil {
-			continue
+		if filename, err := copyCover(roots, p, coversDir, albumKey); err == nil {
+			return filename, true
 		}
-		return filename, true
 	}
 	return "", false
 }
 
-func copyFile(roots []string, src, dst string) error {
+// copyCover copies a folder cover into coversDir, named for its real image
+// format, through OpenContained (#177) and writeCover (#198).
+func copyCover(roots []string, src, coversDir, albumKey string) (string, error) {
 	in, err := OpenContained(roots, src)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer in.Close()
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
+	if st, err := in.Stat(); err != nil || !st.Mode().IsRegular() {
+		return "", errNotImage
 	}
-	defer out.Close()
-	_, err = io.Copy(out, in)
-	return err
+	br := bufio.NewReader(in)
+	head, _ := br.Peek(12)
+	ext, ok := imageExt(head)
+	if !ok {
+		return "", errNotImage
+	}
+	filename := albumKey + "." + ext
+	if err := writeCover(filepath.Join(coversDir, filename), br); err != nil {
+		return "", err
+	}
+	return filename, nil
 }
 
 func fileStem(path string) string {

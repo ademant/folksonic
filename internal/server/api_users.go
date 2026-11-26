@@ -3,6 +3,8 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -25,6 +27,7 @@ func writeAPIError(w http.ResponseWriter, status int, msg string) {
 
 // writeAPIErrorCode answers a JSON API error with a specific code.
 func writeAPIErrorCode(w http.ResponseWriter, status int, code, msg string) {
+	challenge(w, status)
 	writeJSON(w, status, J{"error": code, "message": msg})
 }
 
@@ -57,12 +60,51 @@ func (s *State) requireSession(w http.ResponseWriter, r *http.Request) (users.Us
 	return u, true
 }
 
+// decodeBody reads a JSON request body into v (#195). A body over the size
+// limit is 413 too_large, not 400; anything after the JSON value is
+// invalid_json; a Content-Type other than JSON is 415. A missing Content-Type
+// is accepted, since simple clients and curl often leave it out.
 func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+	if !jsonContentType(r) {
+		writeAPIError(w, http.StatusUnsupportedMediaType, "send the body as application/json")
+		return false
+	}
+	if err := decodeOneJSON(r.Body, v); err != nil {
+		if mbe, ok := errors.AsType[*http.MaxBytesError](err); ok {
+			writeAPIErrorCode(w, http.StatusRequestEntityTooLarge, codeTooLarge,
+				"request body over "+strconv.FormatInt(mbe.Limit, 10)+" bytes")
+			return false
+		}
 		writeAPIErrorCode(w, http.StatusBadRequest, codeInvalidJSON, "invalid JSON body")
 		return false
 	}
 	return true
+}
+
+// decodeOneJSON decodes exactly one JSON value from body.
+func decodeOneJSON(body io.Reader, v any) error {
+	dec := json.NewDecoder(body)
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		if err == nil {
+			err = errors.New("data after the JSON value")
+		}
+		return err
+	}
+	return nil
+}
+
+// jsonContentType accepts application/json (with parameters such as
+// charset), any +json type, and a missing Content-Type.
+func jsonContentType(r *http.Request) bool {
+	ct := r.Header.Get("Content-Type")
+	if ct == "" {
+		return true
+	}
+	mt, _, err := mime.ParseMediaType(ct)
+	return err == nil && (mt == "application/json" || strings.HasSuffix(mt, "+json"))
 }
 
 func pathID(w http.ResponseWriter, r *http.Request) (int64, bool) {
@@ -130,6 +172,16 @@ func (s *State) APIRegister(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &in) {
 		return
 	}
+	// Registration attempts count against the sign-in limiter of the
+	// address (#190): a taken username still says so, but probing many names
+	// (or guessing invitation codes) is slowed and then refused with 429.
+	ip := s.clientIP(r)
+	if ok, retry := s.auth.allow(ip); !ok {
+		logAuthFailure(ip, "rate-limit", r.URL.Path)
+		w.Header().Set("Retry-After", strconv.Itoa(retrySeconds(retry)))
+		writeAPIErrorCode(w, http.StatusTooManyRequests, codeRateLimited, "too many failed attempts; wait before trying again")
+		return
+	}
 	if in.Invite != "" {
 		s.registerWithInvite(w, r, in.Username, in.Password, in.Invite)
 		return
@@ -144,7 +196,8 @@ func (s *State) APIRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case errors.Is(err, users.ErrExists):
-		writeAPIError(w, http.StatusConflict, err.Error())
+		time.Sleep(s.auth.fail(ip))
+		writeAPIErrorCode(w, http.StatusConflict, codeUsernameTaken, err.Error())
 	case errors.Is(err, users.ErrInvalid):
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 	case err != nil:
@@ -158,17 +211,19 @@ func (s *State) APIRegister(w http.ResponseWriter, r *http.Request) {
 // permission. The new account gets a session, like a password sign-in.
 func (s *State) registerWithInvite(w http.ResponseWriter, r *http.Request, username, password, code string) {
 	u, err := users.RegisterWithInvite(r.Context(), s.Pool, code, username, password)
+	ip := s.clientIP(r)
 	switch {
 	case errors.Is(err, users.ErrInviteExpired):
-		time.Sleep(200 * time.Millisecond) // slow down online guessing
+		time.Sleep(200*time.Millisecond + s.auth.fail(ip)) // slow down online guessing
 		writeCoded(w, http.StatusForbidden, users.CodeInviteExpired)
 		return
 	case errors.Is(err, users.ErrInviteInvalid):
-		time.Sleep(200 * time.Millisecond) // slow down online guessing
+		time.Sleep(200*time.Millisecond + s.auth.fail(ip)) // slow down online guessing
 		writeCoded(w, http.StatusForbidden, users.CodeInviteInvalid)
 		return
 	case errors.Is(err, users.ErrExists):
-		writeAPIError(w, http.StatusConflict, err.Error())
+		time.Sleep(s.auth.fail(ip))
+		writeAPIErrorCode(w, http.StatusConflict, codeUsernameTaken, err.Error())
 		return
 	case errors.Is(err, users.ErrInvalid):
 		writeAPIError(w, http.StatusBadRequest, err.Error())

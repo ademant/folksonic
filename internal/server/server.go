@@ -445,19 +445,25 @@ func params(r *http.Request) url.Values {
 
 // routes registers every endpoint at its root-relative path. Start mounts the
 // result under base_path when one is set.
-func (s *State) routes() *http.ServeMux {
+func (s *State) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
 
 	// register adds a JSON endpoint; registerRaw one that returns binary data
 	// (audio, images), which minimal mode and Vary: Prefer do not apply to.
+	// Each takes GET and POST, HEAD too unless it changes state (#192).
 	registerRaw := func(name string, h http.HandlerFunc) {
+		h = restMethods(name, h)
 		mux.HandleFunc("/rest/"+name, h)
 		mux.HandleFunc("/rest/"+name+".view", h)
 	}
 	register := func(name string, h http.HandlerFunc) {
 		registerRaw(name, subsonicJSON(h))
 	}
+	// An unknown Subsonic endpoint answers in the envelope, not plain text (#193).
+	mux.HandleFunc("/rest/", subsonicJSON(func(w http.ResponseWriter, r *http.Request) {
+		writeErrorStatus(w, http.StatusNotFound, 70, "Unknown endpoint: "+strings.TrimPrefix(r.URL.Path, "/rest/"))
+	}))
 
 	// System
 	register("ping", s.Ping)
@@ -598,7 +604,7 @@ func (s *State) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/analysis/results", s.APIAnalysisResults) // resultsPath
 	mux.HandleFunc("GET /api/duplicates", s.APIDuplicates)
 	mux.HandleFunc("POST /api/library/jobs/cancel", s.APILibraryCancel)
-	return mux
+	return apiFallback(mux)
 }
 
 // mountAt serves h under prefix, so /rest/ping becomes prefix+"/rest/ping". The

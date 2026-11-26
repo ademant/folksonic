@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -373,18 +374,37 @@ func (s *State) Ping(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, J{})
 }
 
+// GetUser answers for the caller, or for another account when a librarian
+// asks; anyone else asking about another account gets error 50 (#190). A
+// librarian has adminRole, as clients use it to show administration.
 func (s *State) GetUser(w http.ResponseWriter, r *http.Request) {
 	u, ok := s.authenticate(r)
 	if !ok {
 		s.writeAuthFailure(w, r)
 		return
 	}
+	if name := queryFirst(r, "username"); name != "" && name != u.Username {
+		if u.Role != users.RoleLibrarian {
+			writeError(w, 50, "Not allowed to read another user")
+			return
+		}
+		other, err := users.ByName(r.Context(), s.Pool, name)
+		if errors.Is(err, users.ErrNotFound) {
+			writeError(w, 70, "User not found")
+			return
+		}
+		if err != nil {
+			s.dbFailed(w, "getUser", err)
+			return
+		}
+		u = other
+	}
 	writeOK(w, J{
 		"user": J{
 			"username":          u.Username,
 			"email":             "",
 			"scrobblingEnabled": false,
-			"adminRole":         false, // no API user administers the server
+			"adminRole":         u.Role == users.RoleLibrarian,
 			"settingsRole":      false,
 			"downloadRole":      true,
 			"uploadRole":        false,
@@ -800,7 +820,7 @@ func (s *State) GetSongsByGenre(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 10, "Required parameter is missing: genre")
 		return
 	}
-	count := clamp(countParam(r, "count", 10), 1, 500)
+	count := clamp(countParam(r, "count", 10), 0, 500) // count=0 stays 0 (#190)
 	offset := max0(intParam(r, "offset", 0))
 	if total, err := repoCount(r.Context(), s.Pool, "SELECT COUNT(*) FROM songs WHERE genre = ? COLLATE NOCASE", genre); err == nil {
 		setTotal(w, total)
@@ -832,7 +852,7 @@ func (s *State) GetRandomSongs(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	size := clamp(intParam(r, "size", 10), 1, 500)
+	size := clamp(intParam(r, "size", 10), 0, 500) // size=0 stays 0 (#190)
 	from := intParamPtr(r, "fromYear")
 	to := intParamPtr(r, "toYear")
 	genre := queryFirst(r, "genre")
@@ -1029,9 +1049,11 @@ func (s *State) GetCoverArt(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAuth(w, r) {
 		return
 	}
+	// Every failure stays in the Subsonic envelope (#193); a miss keeps
+	// HTTP 404 so a client does not take the body for an image.
 	id := queryFirst(r, "id")
 	if id == "" {
-		http.NotFound(w, r)
+		writeError(w, 10, "Required parameter is missing: id")
 		return
 	}
 	ctx := r.Context()
@@ -1071,16 +1093,16 @@ func (s *State) GetCoverArt(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		logging.Errorf("GetCoverArt %s: %v", id, err)
-		http.Error(w, "database error", http.StatusInternalServerError)
+		writeErrorStatus(w, http.StatusInternalServerError, 0, "database error")
 		return
 	}
 	if filename == "" {
-		http.NotFound(w, r)
+		writeErrorStatus(w, http.StatusNotFound, 70, "Cover art not found")
 		return
 	}
 	full := filepath.Join(s.CoversDir, filename)
 	if _, err := os.Stat(full); err != nil {
-		http.NotFound(w, r)
+		writeErrorStatus(w, http.StatusNotFound, 70, "Cover art not found")
 		return
 	}
 	http.ServeFile(w, r, full)
@@ -1160,7 +1182,26 @@ func (s *State) searchN(w http.ResponseWriter, r *http.Request, wrap string) {
 		return
 	}
 	ctx := r.Context()
+	// query is required (#195). An empty value, or "" as some clients send
+	// it, is the documented browse mode: the whole library, paged, which
+	// apps use to sync. A query with nothing searchable in it ("?!") finds
+	// nothing, rather than the whole library.
+	if _, present := params(r)["query"]; !present {
+		writeError(w, 10, "Required parameter is missing: query")
+		return
+	}
 	term := queryFirst(r, "query")
+	if term == `""` {
+		term = ""
+	}
+	if term != "" && fts5Match(term) == "" {
+		setTotals(w, 0, 0, 0)
+		if headDone(w, r) {
+			return
+		}
+		writeOK(w, J{wrap: J{"artist": []J{}, "album": []J{}, "song": []J{}}})
+		return
+	}
 	// The standard parameters win; size/offset (tinysonicPaging) apply to
 	// every list that has no parameter of its own.
 	artistLimit := countParam(r, "artistCount", 20)
@@ -1249,7 +1290,7 @@ func (s *State) playlistJSON(r *http.Request, pl *models.Playlist) (J, error) {
 		"comment":   nsToAny(pl.Comment),
 		"songCount": len(songs),
 		"duration":  durMs / 1000,
-		"public":    pl.Public != 0,
+		"public":    false, // playlists are private to their owner (#190)
 		"created":   pl.CreatedAt,
 		"changed":   pl.UpdatedAt,
 		"coverArt":  nil,
@@ -1333,7 +1374,7 @@ func (s *State) GetPlaylist(w http.ResponseWriter, r *http.Request) {
 			"comment":   nsToAny(pl.Comment),
 			"songCount": len(songs),
 			"duration":  durMs / 1000,
-			"public":    pl.Public != 0,
+			"public":    false, // playlists are private to their owner (#190)
 			"created":   pl.CreatedAt,
 			"changed":   pl.UpdatedAt,
 			"coverArt":  nil,
@@ -1356,41 +1397,40 @@ func (s *State) CreatePlaylist(w http.ResponseWriter, r *http.Request) {
 	songIDs := queryAll(r, "songId")
 	now := nowISO8601()
 
-	var id string
-	if existingID != "" {
-		id = existingID
-		pl, err := repoFindPlaylist(ctx, s.Pool, caller.ID, id)
+	// Every step runs in one transaction and every failure is reported, so
+	// a client never gets a success for an edit that was not stored, or a
+	// half-applied one (#173).
+	id := existingID
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		if existingID == "" {
+			id = newPlaylistID()
+			if err := repoCreatePlaylist(ctx, tx, caller.ID, id, name, now); err != nil {
+				return err
+			}
+			return repoAppendPlaylistSongs(ctx, tx, id, songIDs)
+		}
+		pl, err := repoFindPlaylist(ctx, tx, caller.ID, id)
 		if err != nil {
-			s.dbFailed(w, "CreatePlaylist", err)
-			return
+			return err
 		}
 		if pl == nil {
-			if err := repoCreatePlaylist(ctx, s.Pool, caller.ID, id, name, now); err != nil {
-				logging.Errorf("createPlaylist: %v", err)
-				writeError(w, 0, "database error")
-				return
-			}
+			err = repoCreatePlaylist(ctx, tx, caller.ID, id, name, now)
 		} else {
-			_ = repoRenamePlaylist(ctx, s.Pool, id, name, now)
+			err = repoRenamePlaylist(ctx, tx, id, name, now)
 		}
-		if len(songIDs) > 0 {
-			_ = repoReplacePlaylistSongs(ctx, s.Pool, id, songIDs)
+		if err != nil || len(songIDs) == 0 {
+			return err
 		}
-	} else {
-		id = newPlaylistID()
-		if err := repoCreatePlaylist(ctx, s.Pool, caller.ID, id, name, now); err != nil {
-			logging.Errorf("createPlaylist: %v", err)
-			writeError(w, 0, "database error")
-			return
-		}
-		if len(songIDs) > 0 {
-			_ = repoAppendPlaylistSongs(ctx, s.Pool, id, songIDs)
-		}
+		return repoReplacePlaylistSongs(ctx, tx, id, songIDs)
+	})
+	if err != nil {
+		s.dbFailed(w, "createPlaylist", err)
+		return
 	}
 
 	pl, err := repoFindPlaylist(ctx, s.Pool, caller.ID, id)
 	if err != nil || pl == nil {
-		writeError(w, 0, "playlist persistence error")
+		s.dbFailed(w, "createPlaylist", fmt.Errorf("playlist %s missing after commit: %v", id, err))
 		return
 	}
 	songs, err := repoPlaylistSongs(ctx, s.Pool, id)
@@ -1416,7 +1456,7 @@ func (s *State) CreatePlaylist(w http.ResponseWriter, r *http.Request) {
 			"comment":   nsToAny(pl.Comment),
 			"songCount": len(entry),
 			"duration":  durMs / 1000,
-			"public":    pl.Public != 0,
+			"public":    false, // playlists are private to their owner (#190)
 			"created":   pl.CreatedAt,
 			"changed":   pl.UpdatedAt,
 			"coverArt":  nil,
@@ -1445,37 +1485,64 @@ func (s *State) UpdatePlaylist(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 70, "Playlist not found")
 		return
 	}
+	idx := make([]int, 0)
+	for _, raw := range queryAll(r, "songIndexToRemove") {
+		n, err := strconv.Atoi(raw)
+		if err != nil {
+			writeError(w, 10, "songIndexToRemove must be a number")
+			return
+		}
+		idx = append(idx, n)
+	}
 	now := nowISO8601()
-	if v, ok := singleParam(r, "name"); ok {
-		_ = repoRenamePlaylist(ctx, s.Pool, id, v, now)
-	}
-	if v, ok := singleParam(r, "comment"); ok {
-		_ = repoSetPlaylistComment(ctx, s.Pool, id, v, now)
-	}
-	if toAdd := queryAll(r, "songIdToAdd"); len(toAdd) > 0 {
-		_ = repoAppendPlaylistSongs(ctx, s.Pool, id, toAdd)
-	}
-	if rawRemoves := queryAll(r, "songIndexToRemove"); len(rawRemoves) > 0 {
-		idx := make([]int, 0, len(rawRemoves))
-		for _, raw := range rawRemoves {
-			if n, err := strconv.Atoi(raw); err == nil {
-				idx = append(idx, n)
+	// One transaction, every error reported (#173). Removals use the indexes
+	// of the playlist before this call, so they run before the additions.
+	err = s.inTx(ctx, func(tx *sql.Tx) error {
+		if v, ok := singleParam(r, "name"); ok {
+			if err := repoRenamePlaylist(ctx, tx, id, v, now); err != nil {
+				return err
+			}
+		}
+		if v, ok := singleParam(r, "comment"); ok {
+			if err := repoSetPlaylistComment(ctx, tx, id, v, now); err != nil {
+				return err
 			}
 		}
 		if len(idx) > 0 {
-			current, err := repoPlaylistSongIDs(ctx, s.Pool, id)
-			if err == nil {
-				sort.Sort(sort.Reverse(sort.IntSlice(idx)))
-				for _, i := range idx {
-					if i >= 0 && i < len(current) {
-						current = append(current[:i], current[i+1:]...)
-					}
+			current, err := repoPlaylistSongIDs(ctx, tx, id)
+			if err != nil {
+				return err
+			}
+			sort.Sort(sort.Reverse(sort.IntSlice(idx)))
+			for _, i := range idx {
+				if i >= 0 && i < len(current) {
+					current = append(current[:i], current[i+1:]...)
 				}
-				_ = repoReplacePlaylistSongs(ctx, s.Pool, id, current)
+			}
+			if err := repoReplacePlaylistSongs(ctx, tx, id, current); err != nil {
+				return err
 			}
 		}
+		return repoAppendPlaylistSongs(ctx, tx, id, queryAll(r, "songIdToAdd"))
+	})
+	if err != nil {
+		s.dbFailed(w, "updatePlaylist", err)
+		return
 	}
 	writeOK(w, J{})
+}
+
+// inTx runs fn in a transaction, committed when fn returns nil.
+func (s *State) inTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	tx, err := s.Pool.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func singleParam(r *http.Request, key string) (string, bool) {
