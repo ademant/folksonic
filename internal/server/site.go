@@ -22,14 +22,25 @@ import (
 // sitePageCSP allows the stylesheet of the public pages and nothing else.
 const sitePageCSP = "default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 
-var infoTemplate = template.Must(template.New("info").Parse(`<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
+// pageHead is the shared head of the public pages: a canonical link and
+// OpenGraph tags when base_url gives an absolute address, and the icon (#201).
+const pageHead = `<meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="{{.Description}}">
-<title>{{.Name}}</title>
-<link rel="stylesheet" href="{{.Style}}">
+{{if .Description}}<meta name="description" content="{{.Description}}">
+{{end}}<title>{{.Title}}</title>
+{{if .Canonical}}<link rel="canonical" href="{{.Canonical}}">
+<meta property="og:type" content="website">
+<meta property="og:title" content="{{.Title}}">
+<meta property="og:url" content="{{.Canonical}}">
+<meta property="og:site_name" content="{{.Name}}">
+{{if .Description}}<meta property="og:description" content="{{.Description}}">
+{{end}}{{end}}<link rel="icon" href="{{.Icon}}" type="image/svg+xml">
+<link rel="stylesheet" href="{{.Style}}">`
+
+var infoTemplate = template.Must(template.New("info").Parse(`<!doctype html>
+<html lang="{{.Lang}}">
+<head>
+` + pageHead + `
 </head>
 <body>
 <main>
@@ -53,12 +64,9 @@ var infoTemplate = template.Must(template.New("info").Parse(`<!doctype html>
 `))
 
 var impressumTemplate = template.Must(template.New("impressum").Parse(`<!doctype html>
-<html lang="en">
+<html lang="{{.Lang}}">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Impressum</title>
-<link rel="stylesheet" href="{{.Style}}">
+` + pageHead + `
 </head>
 <body>
 <main>
@@ -72,6 +80,33 @@ var impressumTemplate = template.Must(template.New("impressum").Parse(`<!doctype
 // siteURL joins the mount point and a path, such as "/impressum".
 func (s *State) siteURL(p string) string {
 	return s.BasePath + p
+}
+
+// canonicalURL is the absolute address of a public page, from base_url;
+// empty without it, since a guessed host would be wrong. p is relative to
+// the root, such as "" or "impressum".
+func (s *State) canonicalURL(p string) string {
+	if s.BaseURL == "" {
+		return ""
+	}
+	return siteRoot(s.BaseURL) + p
+}
+
+// siteName is the configured name, or tinysonic.
+func (s *State) siteName() string {
+	if s.Site.Name == "" {
+		return "tinysonic"
+	}
+	return s.Site.Name
+}
+
+// siteLang returns the page language, with the default for a State that was
+// not loaded from a config (tests).
+func siteLang(tag string) string {
+	if tag == "" {
+		return "en"
+	}
+	return tag
 }
 
 // renderImpressum converts the configured Markdown to HTML once at startup.
@@ -97,10 +132,7 @@ func renderImpressum(path string) (template.HTML, bool) {
 // browsers; other clients keep the plain-text banner.
 func (s *State) serveInfoPage(w http.ResponseWriter, r *http.Request) {
 	site := s.Site
-	name := site.Name
-	if name == "" {
-		name = "tinysonic"
-	}
+	name := s.siteName()
 	repo := strings.TrimSuffix(site.Repository, "/")
 	contactHref := ""
 	switch {
@@ -116,6 +148,10 @@ func (s *State) serveInfoPage(w http.ResponseWriter, r *http.Request) {
 	var buf bytes.Buffer
 	err := infoTemplate.Execute(&buf, map[string]any{
 		"Name":        name,
+		"Title":       name,
+		"Lang":        siteLang(site.Lang),
+		"Canonical":   s.canonicalURL(""),
+		"Icon":        s.siteURL("/static/favicon.svg"),
 		"Description": site.Description,
 		"Contact":     site.Contact,
 		"ContactHref": contactHref,
@@ -150,9 +186,14 @@ func (s *State) ServeImpressum(w http.ResponseWriter, r *http.Request) {
 	}
 	var buf bytes.Buffer
 	err := impressumTemplate.Execute(&buf, map[string]any{
-		"Body":  s.impressumHTML,
-		"Home":  s.siteURL("/"),
-		"Style": s.siteURL("/static/site.css"),
+		"Body":      s.impressumHTML,
+		"Home":      s.siteURL("/"),
+		"Style":     s.siteURL("/static/site.css"),
+		"Name":      s.siteName(),
+		"Title":     "Impressum – " + s.siteName(),
+		"Lang":      siteLang(s.Site.ImpressumLang),
+		"Canonical": s.canonicalURL("impressum"),
+		"Icon":      s.siteURL("/static/favicon.svg"),
 	})
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)

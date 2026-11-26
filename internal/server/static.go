@@ -1,19 +1,39 @@
 package server
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"net/http"
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // The web pages load their stylesheets and scripts from these files rather
 // than inline, so the Content-Security-Policy can refuse inline code. Only
-// .css and .js files in this directory are served.
+// .css, .js and .svg files in this directory are served.
 //
-//go:embed static/*.css static/*.js
+//go:embed static/*.css static/*.js static/*.svg
 var staticFiles embed.FS
+
+// staticETags holds a content hash per embedded file, so a browser
+// revalidating with no-cache gets 304 instead of the file again (#201).
+var staticETags = func() map[string]string {
+	out := map[string]string{}
+	entries, _ := staticFiles.ReadDir("static")
+	for _, e := range entries {
+		data, err := staticFiles.ReadFile("static/" + e.Name())
+		if err != nil {
+			continue
+		}
+		sum := sha256.Sum256(data)
+		out[e.Name()] = `"` + hex.EncodeToString(sum[:8]) + `"`
+	}
+	return out
+}()
 
 // ServeStatic serves a stylesheet or script from the embedded static files.
 func (s *State) ServeStatic(w http.ResponseWriter, r *http.Request) {
@@ -24,6 +44,8 @@ func (s *State) ServeStatic(w http.ResponseWriter, r *http.Request) {
 		ctype = "text/css; charset=utf-8"
 	case ".js":
 		ctype = "text/javascript; charset=utf-8"
+	case ".svg":
+		ctype = "image/svg+xml"
 	default:
 		http.NotFound(w, r)
 		return
@@ -35,7 +57,9 @@ func (s *State) ServeStatic(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", ctype)
 	w.Header().Set("Cache-Control", "no-cache")
-	_, _ = w.Write(data)
+	w.Header().Set("ETag", staticETags[name])
+	// ServeContent answers If-None-Match with 304 from the ETag.
+	http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(data))
 }
 
 // securityHeaders stops other sites from framing tinysonic and stops browsers

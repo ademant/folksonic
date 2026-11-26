@@ -90,6 +90,8 @@ covers_dir = "covers"
 # contact        = ""                              # email or URL
 # repository     = "https://github.com/ademant/folksonic"
 # impressum_file = ""
+# lang           = "en"                            # language of the info page
+# impressum_lang = ""                              # of the Impressum; empty means lang
 
 # Concurrent audio streams: across all accounts, and per account. 0 disables a cap.
 # max_streams          = 64

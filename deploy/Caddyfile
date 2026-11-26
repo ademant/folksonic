@@ -33,6 +33,15 @@ music.example.com {
     #         header_up X-Forwarded-Proto {scheme}
     #     }
     # }
+    #
+    # Crawlers read robots.txt at the host root only (#201). If the site has
+    # none of its own, serve tinysonic's (it disallows the API and private
+    # pages under /folksonic and names the sitemap):
+    #
+    # handle /robots.txt {
+    #     rewrite * /folksonic/robots.txt
+    #     reverse_proxy 127.0.0.1:4534
+    # }
 
     # Caddy writes no access log unless a log directive asks for one. Its
     # access log records the full URI and the request headers, so a log

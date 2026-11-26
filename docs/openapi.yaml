@@ -473,8 +473,12 @@ paths:
             No password was checked for `server_busy`.
   /api/logout:
     post:
+      security: []
       tags: [Accounts]
       summary: End the session behind the Bearer token
+      description: >-
+        Needs no credentials: a Bearer session token, when sent, is ended, and
+        the answer is the same without one.
       responses:
         '200':
           description: Session ended (or no token was sent).

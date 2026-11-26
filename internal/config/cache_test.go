@@ -50,3 +50,29 @@ func TestPortAndHostValidated(t *testing.T) {
 		}
 	}
 }
+
+// site.lang and site.impressum_lang default to en and lang, and must be
+// language tags (#201).
+func TestSiteLanguages(t *testing.T) {
+	dir := t.TempDir()
+	load := func(extra string) (*Config, error) {
+		p := filepath.Join(dir, "smolsonic.toml")
+		if err := os.WriteFile(p, []byte("music_dirs = [\"/music\"]\n"+extra), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return Load(p)
+	}
+	c, err := load("")
+	if err != nil || c.Site.Lang != "en" || c.Site.ImpressumLang != "en" {
+		t.Fatalf("defaults: %+v %v", c.Site, err)
+	}
+	c, err = load("[site]\nlang = \"de-AT\"\n")
+	if err != nil || c.Site.ImpressumLang != "de-AT" {
+		t.Fatalf("impressum follows lang: %+v %v", c.Site, err)
+	}
+	for _, bad := range []string{"[site]\nlang = \"en us\"\n", "[site]\nimpressum_lang = \"<x>\"\n", "[site]\nlang = \"e\"\n"} {
+		if _, err := load(bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}

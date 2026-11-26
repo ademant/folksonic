@@ -6,7 +6,13 @@ implemented, treat this list as the authority; the README links here.
 
 Every implemented endpoint is registered at both `/rest/<name>` and
 `/rest/<name>.view`, for `GET` and `POST`. Responses use the Subsonic JSON
-envelope and carry `"openSubsonic": true`.
+envelope and carry `"openSubsonic": true`. Every response is JSON, whatever
+`f` says; XML and JSONP are not implemented. `v` is accepted and not checked
+(responses say 1.16.1), and `c` is logged (#202).
+
+Counts are capped at 500 per request, the standard `songCount`,
+`albumCount`, `artistCount` and `count` included; larger lists are read in
+pages with the matching offset parameter.
 
 Endpoints that change state (`startScan`, `scrobble`, `updateNowPlaying`,
 `createPlaylist`, `updatePlaylist`, `deletePlaylist`, `star`, `unstar`,

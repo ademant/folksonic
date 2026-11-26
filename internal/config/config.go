@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -144,6 +145,11 @@ type Site struct {
 	// /impressum. Relative paths resolve from the config file's directory.
 	// Empty means there is no Impressum page.
 	ImpressumFile string `toml:"impressum_file"`
+	// Lang is the language of the information page, a BCP 47 tag such as
+	// "en" or "de". Load sets "en" when it is empty (#201).
+	Lang string `toml:"lang"`
+	// ImpressumLang is the language of the Impressum. Empty means Lang.
+	ImpressumLang string `toml:"impressum_lang"`
 }
 
 // Load reads the config file. Unknown keys are an error, so a typo cannot
@@ -248,6 +254,17 @@ func Load(path string) (*Config, error) {
 	}
 	if c.Site.Repository == "" {
 		c.Site.Repository = DefaultRepository
+	}
+	if c.Site.Lang == "" {
+		c.Site.Lang = "en"
+	}
+	if c.Site.ImpressumLang == "" {
+		c.Site.ImpressumLang = c.Site.Lang
+	}
+	for key, tag := range map[string]string{"site.lang": c.Site.Lang, "site.impressum_lang": c.Site.ImpressumLang} {
+		if !langTag.MatchString(tag) {
+			return nil, fmt.Errorf("config: %s %q is not a language tag such as en or de-AT", key, tag)
+		}
 	}
 	if u, err := url.Parse(c.Site.Repository); err != nil || (u.Scheme != "http" && u.Scheme != "https") {
 		return nil, fmt.Errorf("config: site.repository %q must be an http or https URL", c.Site.Repository)
@@ -440,3 +457,7 @@ func checkHost(host string) error {
 	}
 	return nil
 }
+
+// langTag accepts the BCP 47 shapes a page needs: a language and optional
+// subtags of letters and digits ("en", "de-AT", "sr-Latn").
+var langTag = regexp.MustCompile(`^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$`)
