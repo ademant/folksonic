@@ -107,7 +107,7 @@ func (s *State) APIStreamURL(w http.ResponseWriter, r *http.Request) {
 	}
 	_, _, found, err := s.lookupSong(r.Context(), id)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	if !found {
@@ -116,7 +116,7 @@ func (s *State) APIStreamURL(w http.ResponseWriter, r *http.Request) {
 	}
 	secret, err := s.streamSecret(r.Context())
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	exp := time.Now().Add(users.StreamURLTTL).Unix()

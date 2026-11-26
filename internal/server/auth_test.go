@@ -70,9 +70,10 @@ func TestAuthCheck(t *testing.T) {
 	}
 }
 
-// Subsonic token auth (t with s) is gone. A request that uses only t and s gets
-// error 42, so the client can say so, rather than error 40 (wrong password).
-func TestTokenAuthAnsweredWithError42(t *testing.T) {
+// Subsonic token auth (t with s) is not supported. A request that uses only t
+// and s gets error 41, as OpenSubsonic specifies (#170), so the client can say
+// so, rather than error 40 (wrong password).
+func TestTokenAuthAnsweredWithError41(t *testing.T) {
 	s := newTestState(t)
 	sum := md5.Sum([]byte("s3cret" + "abc123"))
 	token := hex.EncodeToString(sum[:])
@@ -80,8 +81,8 @@ func TestTokenAuthAnsweredWithError42(t *testing.T) {
 	tokenOnly := httptest.NewRecorder()
 	s.routes().ServeHTTP(tokenOnly, httptest.NewRequest(http.MethodGet,
 		"/rest/ping?u=admin&t="+token+"&s=abc123&v=1.16.1&c=test&f=json", nil))
-	if !strings.Contains(tokenOnly.Body.String(), `"code":42`) {
-		t.Fatalf("token-only request: want error 42, got %s", tokenOnly.Body.String())
+	if !strings.Contains(tokenOnly.Body.String(), `"code":41`) {
+		t.Fatalf("token-only request: want error 41, got %s", tokenOnly.Body.String())
 	}
 
 	wrongPassword := httptest.NewRecorder()
@@ -157,5 +158,31 @@ func TestRevokedAPIKeyRejected(t *testing.T) {
 	rec := postForm(t, s, "/rest/ping", url.Values{"apiKey": {key}})
 	if strings.Contains(rec.Body.String(), `"status":"ok"`) {
 		t.Fatal("revoked API key still works")
+	}
+}
+
+// An API key together with u, p, t or s is a conflict: OpenSubsonic error 43,
+// in the query and in the header, even with a valid key (#170).
+func TestAPIKeyWithOtherCredentialsIsError43(t *testing.T) {
+	s, _, key := keyFixture(t)
+	for _, extra := range []string{"u=bob", "p=pw", "t=abc&s=xyz", "u=bob&p=pw"} {
+		for _, inHeader := range []bool{true, false} {
+			code, body := keyCall(t, s, key, inHeader, "GET", "/rest/ping?f=json&"+extra, "")
+			sr, _ := body["subsonic-response"].(map[string]any)
+			e, _ := sr["error"].(map[string]any)
+			if code != http.StatusOK || e["code"] != 43.0 {
+				t.Errorf("key (header %v) with %s: %d %v", inHeader, extra, code, body)
+			}
+		}
+	}
+	// The key alone still works.
+	code, body := keyCall(t, s, key, true, "GET", "/rest/ping?f=json", "")
+	if sr, _ := body["subsonic-response"].(map[string]any); code != http.StatusOK || sr["status"] != "ok" {
+		t.Fatalf("key alone: %d %v", code, body)
+	}
+	// On the JSON API the conflict is a coded refusal.
+	code, body = keyCall(t, s, key, true, "GET", "/api/analysis?id=so-1&u=bob", "")
+	if code != http.StatusUnauthorized || body["error"] != "credentials_conflict" {
+		t.Fatalf("JSON API conflict: %d %v", code, body)
 	}
 }

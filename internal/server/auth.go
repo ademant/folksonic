@@ -35,6 +35,12 @@ func (s *State) resolveCaller(r *http.Request) (users.User, bool) {
 	q := params(r)
 
 	if key := apiKeyOf(r); key != "" {
+		// OpenSubsonic apiKeyAuthentication: a key together with u, p, t or s
+		// is a conflict (error 43), not a key request (#170).
+		if credentialsConflict(r) {
+			setRefusal(r, users.CodeCredentialsConflict)
+			return users.User{}, false
+		}
 		u, info, err := users.LookupAPIKeyInfo(ctx, s.Pool, key)
 		if err != nil {
 			reason, keyID, label := users.APIKeyProblem(ctx, s.Pool, key)
@@ -160,6 +166,16 @@ func (s *State) clientIP(r *http.Request) string {
 	return clientIP(r, s.trusted)
 }
 
+// credentialsConflict reports whether a request sends an API key (header or
+// query) together with u, p, t or s: OpenSubsonic error 43 (#170).
+func credentialsConflict(r *http.Request) bool {
+	if apiKeyOf(r) == "" {
+		return false
+	}
+	q := params(r)
+	return q.Get("u") != "" || q.Get("p") != "" || q.Get("t") != "" || q.Get("s") != ""
+}
+
 // usesTokenAuth reports whether a request tried Subsonic token auth (t and s)
 // without a password. Such clients are told the mechanism is unsupported,
 // rather than given a wrong-password error they cannot fix.
@@ -169,9 +185,19 @@ func usesTokenAuth(r *http.Request) bool {
 }
 
 // writeAuthFailure answers a request that did not authenticate. The Subsonic
-// error code tells the client what went wrong: 42 for a removed mechanism,
-// 40 for wrong credentials.
+// error code tells the client what went wrong, as OpenSubsonic specifies
+// (#170): 43 for an API key combined with u, p, t or s, 41 for token auth
+// (t and s), which this server does not support, 42 for password sign-in
+// when it is turned off, 40 for wrong credentials.
 func (s *State) writeAuthFailure(w http.ResponseWriter, r *http.Request) {
+	if credentialsConflict(r) {
+		writeError(w, 43, refusalMessage(users.CodeCredentialsConflict))
+		return
+	}
+	if usesTokenAuth(r) {
+		writeError(w, 41, "Token authentication is not supported. Use an API key")
+		return
+	}
 	if s.legacyPasswordOff && params(r).Get("u") != "" {
 		writeError(w, 42, "Password authentication is disabled on this server. Use an API key")
 		return
@@ -184,10 +210,6 @@ func (s *State) writeAuthFailure(w http.ResponseWriter, r *http.Request) {
 	if l := reqLogFrom(r.Context()); l != nil && l.throttled {
 		w.Header().Set("Retry-After", strconv.Itoa(retrySeconds(l.retryAfter)))
 		writeErrorStatus(w, http.StatusTooManyRequests, 0, "Too many failed sign-in attempts; wait before trying again")
-		return
-	}
-	if usesTokenAuth(r) {
-		writeError(w, 42, "Authentication mechanism not supported. Use API keys or username and password")
 		return
 	}
 	if l := reqLogFrom(r.Context()); l != nil && (l.refusal == users.CodeStreamURLExpired || l.refusal == users.CodeStreamURLInvalid) {

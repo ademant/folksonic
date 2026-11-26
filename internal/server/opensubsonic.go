@@ -7,6 +7,7 @@ import "net/http"
 var baseOpenSubsonicExtensions = []J{
 	{"name": "apiKeyAuthentication", "versions": []int{1}},       // apiKey parameter, see auth.go
 	{"name": "formPost", "versions": []int{1}},                   // every endpoint accepts POST forms
+	{"name": "indexBasedQueue", "versions": []int{1}},            // getPlayQueueByIndex, savePlayQueueByIndex (#171)
 	{"name": "tinysonicPaging", "versions": []int{1}},            // size/offset and X-Total-Count*, see paging.go
 	{"name": "tinysonicLibraryInfo", "versions": []int{1}},       // tinysonicLibraryInfo endpoint
 	{"name": "tinysonicMinimal", "versions": []int{1}},           // Prefer: tinysonic-minimal, see minimal.go

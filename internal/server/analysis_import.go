@@ -54,7 +54,7 @@ func (s *State) requireAnalysisImporter(w http.ResponseWriter, r *http.Request) 
 	case header != "":
 		allowed, err := users.KeyAllowsAnalysisImport(r.Context(), s.Pool, header)
 		if err != nil {
-			writeAPIError(w, http.StatusInternalServerError, "database error")
+			writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 			return users.User{}, false
 		}
 		if !allowed {
@@ -68,7 +68,7 @@ func (s *State) requireAnalysisImporter(w http.ResponseWriter, r *http.Request) 
 		return users.User{}, false
 	}
 	if u.Role != users.RoleLibrarian {
-		writeAPIError(w, http.StatusForbidden, "librarians only")
+		writeAPIErrorCode(w, http.StatusForbidden, codeLibrarianRequired, "librarians only")
 		return users.User{}, false
 	}
 	return u, true
@@ -112,7 +112,7 @@ func (s *State) APIAnalysisJobs(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusConflict, err.Error())
 		return
 	case err != nil:
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	logging.Infof("analysis jobs: %d exported to %s (left out: %d unreadable, %d outside the music folders)",
@@ -143,7 +143,7 @@ func (s *State) APIAnalysisResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.imports.mu.TryLock() {
-		writeAPIError(w, http.StatusConflict, "another analysis import is running")
+		writeAPIErrorCode(w, http.StatusConflict, codeImportRunning, "another analysis import is running")
 		return
 	}
 	defer s.imports.mu.Unlock()
@@ -314,7 +314,7 @@ func (s *State) setAnalysisImport(w http.ResponseWriter, r *http.Request, grant 
 		writeAPIError(w, http.StatusNotFound, "key not found")
 		return
 	case err != nil:
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	verb := "removed from"

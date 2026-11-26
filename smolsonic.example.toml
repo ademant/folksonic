@@ -102,6 +102,7 @@ covers_dir = "covers"
 # sign-in attempts. IPs or CIDR ranges. Leave empty when clients connect directly.
 # trusted_proxies = ["127.0.0.1", "::1"]
 
-# Subsonic clients may sign in with u and p on every request (default true).
-# Set false to accept API keys only; u/p requests then get error 42.
-# legacy_password_auth = true
+# Subsonic clients that sign in with u and p (the password on every request,
+# in the URL) are refused with error 42 by default: API keys only (#175).
+# Set true for a client that cannot use an API key.
+# legacy_password_auth = false

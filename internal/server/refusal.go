@@ -15,6 +15,51 @@ const (
 	codeBusy          = "server_busy"
 )
 
+// Codes of JSON API errors that clients may need to tell apart from the
+// generic code of their status (#194). The message says the rest.
+const (
+	codeDatabaseError        = "database_error"
+	codeInvalidJSON          = "invalid_json"
+	codeLibrarianRequired    = "librarian_required"
+	codeRegistrationDisabled = "registration_disabled"
+	codePasskeysUnavailable  = "passkeys_unavailable"
+	codeNoPasskey            = "no_passkey"
+	codeCeremonyExpired      = "ceremony_expired"
+	codeSSONotConfigured     = "sso_not_configured"
+	codeSSOUnavailable       = "sso_unavailable"
+	codeLastSignInMethod     = "last_sign_in_method"
+	codeJobRunning           = "job_running"
+	codeNoJobRunning         = "no_job_running"
+	codeImportRunning        = "import_running"
+	codeTooLarge             = "too_large"
+	codeToolUnavailable      = "tool_unavailable"
+)
+
+// statusCodes are the generic codes of JSON API errors, by HTTP status.
+var statusCodes = map[int]string{
+	http.StatusBadRequest:            "bad_request",
+	http.StatusUnauthorized:          "unauthorized",
+	http.StatusForbidden:             "forbidden",
+	http.StatusNotFound:              "not_found",
+	http.StatusConflict:              "conflict",
+	http.StatusRequestEntityTooLarge: codeTooLarge,
+	http.StatusUnsupportedMediaType:  "unsupported_media_type",
+	http.StatusTooManyRequests:       codeRateLimited,
+	http.StatusInternalServerError:   "internal_error",
+	http.StatusServiceUnavailable:    "unavailable",
+}
+
+// statusCode is the generic code for an HTTP status.
+func statusCode(status int) string {
+	if c, ok := statusCodes[status]; ok {
+		return c
+	}
+	if status >= 500 {
+		return "internal_error"
+	}
+	return "bad_request"
+}
+
 // refusalMessages says, for people, what each code means. Clients decode the
 // code and show their own text when they want to.
 var refusalMessages = map[string]string{
@@ -44,6 +89,7 @@ var refusalMessages = map[string]string{
 	users.CodePairingTokenUsed:       "This QR code can no longer be used. Create a new code on the account page.",
 	users.CodePairingBusy:            "Too many devices are waiting on this QR code. Create a new code on the account page.",
 	users.CodeAnalysisImportRequired: "Analysis jobs and results need a librarian's session, or the API key a librarian allowed to import analysis results on the account page, sent in the X-Api-Key header.",
+	users.CodeCredentialsConflict:    "Send either an API key or a username with a password, not both.",
 	codePasswordBad:                  "Wrong username or password.",
 	codeRateLimited:                  "Too many failed sign-in attempts. Wait before trying again.",
 	codeBusy:                         "The server is busy checking passwords. Try again in a moment.",
@@ -70,6 +116,9 @@ func (s *State) writeRefusal(w http.ResponseWriter, r *http.Request) {
 	code := ""
 	if l := reqLogFrom(r.Context()); l != nil {
 		code = l.refusal
+	}
+	if credentialsConflict(r) {
+		code = users.CodeCredentialsConflict
 	}
 	if code == "" {
 		code = users.CodeCredentialsRequired

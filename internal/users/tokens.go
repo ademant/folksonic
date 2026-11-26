@@ -424,6 +424,9 @@ const (
 	// take a librarian's session, or the one API key a librarian allowed to
 	// import analysis results, in the X-Api-Key header (#163).
 	CodeAnalysisImportRequired = "analysis_import_required"
+	// CodeCredentialsConflict: an API key sent together with u, p, t or s
+	// (OpenSubsonic error 43, #170).
+	CodeCredentialsConflict = "credentials_conflict"
 	// RevokedIdle is the revoked_reason of a key the idle sweep revoked.
 	RevokedIdle = "idle"
 )

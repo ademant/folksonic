@@ -83,3 +83,58 @@ func TestSongTagsExposedOnlyWhenConfigured(t *testing.T) {
 		t.Fatalf("vendor extension advertised without song_tags: %s", rec.Body.String())
 	}
 }
+
+// An advertised extension's endpoints are registered, and an extension whose
+// endpoints are registered is advertised (#171).
+func TestExtensionsMatchTheirEndpoints(t *testing.T) {
+	s := newTestState(t)
+	rec := httptest.NewRecorder()
+	s.routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/rest/getOpenSubsonicExtensions", nil))
+	body := rec.Body.String()
+	for ext, endpoints := range map[string][]string{
+		"indexBasedQueue":         {"getPlayQueueByIndex", "savePlayQueueByIndex"},
+		"tinysonicLibraryChanges": {"getLibraryChanges"},
+		"tinysonicLibraryInfo":    {"tinysonicLibraryInfo"},
+	} {
+		if !strings.Contains(body, `"name":"`+ext+`"`) {
+			t.Errorf("%s not advertised: %s", ext, body)
+		}
+		for _, ep := range endpoints {
+			for _, path := range []string{"/rest/" + ep, "/rest/" + ep + ".view"} {
+				rec := httptest.NewRecorder()
+				s.routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+				if rec.Code == http.StatusNotFound {
+					t.Errorf("%s (%s) is not registered", path, ext)
+				}
+			}
+		}
+	}
+}
+
+// The legacy aliases answer under their own key (#196): getStarred under
+// "starred", getAlbumInfo2 under "albumInfo2".
+func TestLegacyAliasEnvelopeKeys(t *testing.T) {
+	s := newTestState(t)
+	for endpoint, want := range map[string]string{
+		"getStarred":    "starred",
+		"getStarred2":   "starred2",
+		"getAlbumInfo":  "albumInfo",
+		"getAlbumInfo2": "albumInfo2",
+	} {
+		rec := httptest.NewRecorder()
+		s.routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/rest/"+endpoint+".view?u=admin&p=s3cret&f=json&id=al-1", nil))
+		var env map[string]map[string]json.RawMessage
+		if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+			t.Fatalf("%s: %v %s", endpoint, err, rec.Body)
+		}
+		sr := env["subsonic-response"]
+		if _, ok := sr[want]; !ok {
+			t.Errorf("%s: no %q key: %s", endpoint, want, rec.Body)
+		}
+		for _, other := range []string{"starred", "starred2", "albumInfo", "albumInfo2"} {
+			if _, ok := sr[other]; ok && other != want {
+				t.Errorf("%s: also has %q", endpoint, other)
+			}
+		}
+	}
+}

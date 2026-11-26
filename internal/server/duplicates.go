@@ -128,7 +128,7 @@ func (s *State) APIDuplicates(w http.ResponseWriter, r *http.Request) {
 		js, _ := json.Marshal(ids)
 		rows, err := s.Pool.QueryContext(r.Context(), "SELECT id FROM songs WHERE id IN (SELECT value FROM json_each(?))", string(js))
 		if err != nil {
-			writeAPIError(w, http.StatusInternalServerError, "database error")
+			writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 			return
 		}
 		defer rows.Close()

@@ -210,7 +210,7 @@ func TestLibraryJobsRefuseOfflineOnlyFeatures(t *testing.T) {
 		"/api/library/bpm":      `{"mode":"all"}`,
 	} {
 		code, out := apiCall(t, s, "admin", "POST", path, body)
-		if code != http.StatusServiceUnavailable || !strings.Contains(out["error"].(string), "offline only") {
+		if code != http.StatusServiceUnavailable || out["error"] != "tool_unavailable" || !strings.Contains(out["message"].(string), "offline only") {
 			t.Errorf("%s: %d %v", path, code, out)
 		}
 	}

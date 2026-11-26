@@ -13,7 +13,7 @@ Endpoints are easy to register and easy to leave half-done: the code compiles, b
 |---|---|---|---|
 | Subsonic `/rest/x` | `register("x", handler)` in `internal/server/server.go` (adds `/rest/x` and `/rest/x.view`, GET and POST) | `s.requireCaller` or `s.requireAuth` in the handler | Subsonic envelope: `writeOK(w, J{...})`, `writeError(w, code, msg)` |
 | Raw Subsonic (audio, images) | `registerRaw` | as above | binary, not wrapped |
-| `/api/...` JSON route | `mux.HandleFunc("GET /api/...", s.Handler)` in `server.go` | `s.requireUser` (any user) or `s.requireSession` (no API keys, no device proofs) | JSON: `writeJSON`, errors via `writeAPIError` |
+| `/api/...` JSON route | `mux.HandleFunc("GET /api/...", s.Handler)` in `server.go` | `s.requireUser` (any user) or `s.requireSession` (no API keys, no device proofs) | JSON: `writeJSON`, errors via `writeAPIError` (generic code of the status) or `writeAPIErrorCode` (a code clients branch on, declared in `refusal.go`); both write `{"error": code, "message": text}` (#194) |
 
 A route without one of those auth calls is a bug unless it is deliberately public. Say so in the handler comment if it is public.
 

@@ -136,7 +136,7 @@ func (o *oidcService) endpoints(ctx context.Context) (*oauth2.Config, *oidc.IDTo
 
 func (s *State) requireOIDC(w http.ResponseWriter) bool {
 	if s.sso == nil {
-		writeAPIError(w, http.StatusServiceUnavailable, "single sign-on is not configured")
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, codeSSONotConfigured, "single sign-on is not configured")
 		return false
 	}
 	return true
@@ -196,7 +196,7 @@ func (s *State) APIOIDCBegin(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		case err != nil:
-			writeAPIError(w, http.StatusInternalServerError, "database error")
+			writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 			return
 		}
 		flow.invite, flow.username = in.Invite, in.Username
@@ -207,7 +207,7 @@ func (s *State) APIOIDCBegin(w http.ResponseWriter, r *http.Request) {
 
 	oauthCfg, _, err := s.sso.endpoints(r.Context())
 	if err != nil {
-		writeAPIError(w, http.StatusServiceUnavailable, "identity provider is unavailable; try again")
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, codeSSOUnavailable, "identity provider is unavailable; try again")
 		return
 	}
 	state := newCeremonyID()
@@ -342,7 +342,7 @@ func (s *State) APIOIDCExchange(w http.ResponseWriter, r *http.Request) {
 	}
 	h, ok := s.sso.handoffs.take(in.Code)
 	if !ok {
-		writeAPIError(w, http.StatusUnauthorized, "sign-in expired; start again")
+		writeAPIErrorCode(w, http.StatusUnauthorized, codeCeremonyExpired, "sign-in expired; start again")
 		return
 	}
 	u, err := users.ByID(r.Context(), s.Pool, h.userID)
@@ -360,7 +360,7 @@ func (s *State) APIOIDCExchange(w http.ResponseWriter, r *http.Request) {
 		}
 		key, err := users.CreateAPIKey(r.Context(), s.Pool, u.ID, label, 0)
 		if err != nil {
-			writeAPIError(w, http.StatusInternalServerError, "database error")
+			writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 			return
 		}
 		writeJSON(w, http.StatusOK, J{"apiKey": key, "username": u.Username, "server": s.serverURL(r)})
@@ -368,7 +368,7 @@ func (s *State) APIOIDCExchange(w http.ResponseWriter, r *http.Request) {
 	}
 	token, err := users.CreateSession(r.Context(), s.Pool, u.ID)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	writeJSON(w, http.StatusOK, J{"token": token, "username": u.Username, "role": u.Role})
@@ -382,7 +382,7 @@ func (s *State) APIListIdentities(w http.ResponseWriter, r *http.Request) {
 	}
 	ids, err := users.ListOIDCIdentities(r.Context(), s.Pool, u.ID)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	out := make([]J, 0, len(ids))
@@ -405,7 +405,7 @@ func (s *State) APIUnlinkIdentity(w http.ResponseWriter, r *http.Request) {
 	}
 	ids, err := users.ListOIDCIdentities(r.Context(), s.Pool, u.ID)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	if !slices.ContainsFunc(ids, func(i users.OIDCIdentity) bool { return i.ID == id }) {
@@ -416,7 +416,7 @@ func (s *State) APIUnlinkIdentity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := users.RemoveOIDCIdentity(r.Context(), s.Pool, u.ID, id); err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	writeJSON(w, http.StatusOK, J{"status": "unlinked"})
@@ -427,11 +427,11 @@ func (s *State) APIUnlinkIdentity(w http.ResponseWriter, r *http.Request) {
 func (s *State) keepsSignIn(w http.ResponseWriter, r *http.Request, userID int64) bool {
 	n, err := users.SignInMethods(r.Context(), s.Pool, userID)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return false
 	}
 	if n <= 1 {
-		writeAPIError(w, http.StatusConflict, "that is your last sign-in method; add a passkey, set a password or link an identity first")
+		writeAPIErrorCode(w, http.StatusConflict, codeLastSignInMethod, "that is your last sign-in method; add a passkey, set a password or link an identity first")
 		return false
 	}
 	return true

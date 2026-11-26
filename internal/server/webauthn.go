@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-webauthn/webauthn/webauthn"
 
+	"github.com/tsirysndr/tinysonic/internal/logging"
 	"github.com/tsirysndr/tinysonic/internal/users"
 )
 
@@ -127,7 +128,7 @@ func newWebAuthn(baseURL string) (*webauthn.WebAuthn, error) {
 
 func (s *State) requireWebAuthn(w http.ResponseWriter) bool {
 	if s.webAuthn == nil {
-		writeAPIError(w, http.StatusServiceUnavailable, "passkeys are unavailable: set base_url to a domain name (see server log)")
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, codePasskeysUnavailable, "passkeys are unavailable: set base_url to a domain name (see server log)")
 		return false
 	}
 	return true
@@ -144,12 +145,13 @@ func (s *State) APIPasskeyRegisterBegin(w http.ResponseWriter, r *http.Request) 
 	}
 	wu, err := s.loadWAUser(r.Context(), caller)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	options, session, err := s.webAuthn.BeginRegistration(wu)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		logging.Errorf("%s: %v", "passkey registration", err)
+		writeAPIError(w, http.StatusInternalServerError, "passkey registration could not start")
 		return
 	}
 	id := newCeremonyID()
@@ -169,12 +171,12 @@ func (s *State) APIPasskeyRegisterFinish(w http.ResponseWriter, r *http.Request)
 	}
 	cer, ok := s.ceremonies.take(r.URL.Query().Get("ceremony"))
 	if !ok || cer.userID != caller.ID {
-		writeAPIError(w, http.StatusBadRequest, "registration expired or not yours; start again")
+		writeAPIErrorCode(w, http.StatusBadRequest, codeCeremonyExpired, "registration expired or not yours; start again")
 		return
 	}
 	wu, err := s.loadWAUser(r.Context(), caller)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	cred, err := s.webAuthn.FinishRegistration(wu, cer.session, r)
@@ -192,7 +194,7 @@ func (s *State) APIPasskeyRegisterFinish(w http.ResponseWriter, r *http.Request)
 		label = label[:maxPasskeyLabel]
 	}
 	if err := users.AddPasskey(r.Context(), s.Pool, caller.ID, string(raw), label); err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	writeJSON(w, http.StatusCreated, J{"status": "passkey added"})
@@ -211,17 +213,18 @@ func (s *State) APIPasskeyLoginBegin(w http.ResponseWriter, r *http.Request) {
 	}
 	target, err := users.ByName(r.Context(), s.Pool, in.Username)
 	if err != nil || target.Status != users.StatusActive {
-		writeAPIError(w, http.StatusUnauthorized, "no passkey for this account")
+		writeAPIErrorCode(w, http.StatusUnauthorized, codeNoPasskey, "no passkey for this account")
 		return
 	}
 	wu, err := s.loadWAUser(r.Context(), target)
 	if err != nil || len(wu.creds) == 0 {
-		writeAPIError(w, http.StatusUnauthorized, "no passkey for this account")
+		writeAPIErrorCode(w, http.StatusUnauthorized, codeNoPasskey, "no passkey for this account")
 		return
 	}
 	options, session, err := s.webAuthn.BeginLogin(wu)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		logging.Errorf("%s: %v", "passkey sign-in", err)
+		writeAPIError(w, http.StatusInternalServerError, "passkey sign-in could not start")
 		return
 	}
 	id := newCeremonyID()
@@ -237,7 +240,7 @@ func (s *State) APIPasskeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 	}
 	cer, ok := s.ceremonies.take(r.URL.Query().Get("ceremony"))
 	if !ok {
-		writeAPIError(w, http.StatusUnauthorized, "sign-in expired; start again")
+		writeAPIErrorCode(w, http.StatusUnauthorized, codeCeremonyExpired, "sign-in expired; start again")
 		return
 	}
 	target, err := users.ByID(r.Context(), s.Pool, cer.userID)
@@ -247,7 +250,7 @@ func (s *State) APIPasskeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 	}
 	wu, err := s.loadWAUser(r.Context(), target)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	cred, err := s.webAuthn.FinishLogin(wu, cer.session, r)
@@ -259,7 +262,7 @@ func (s *State) APIPasskeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 
 	token, err := users.CreateSession(r.Context(), s.Pool, target.ID)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	writeJSON(w, http.StatusOK, J{"token": token, "username": target.Username, "role": target.Role})

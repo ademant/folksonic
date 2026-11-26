@@ -39,7 +39,7 @@ func (s *State) APIListPasskeys(w http.ResponseWriter, r *http.Request) {
 	}
 	recs, err := users.ListPasskeys(r.Context(), s.Pool, u.ID)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	out := make([]J, 0, len(recs))
@@ -62,7 +62,7 @@ func (s *State) APIRemovePasskey(w http.ResponseWriter, r *http.Request) {
 	}
 	recs, err := users.ListPasskeys(r.Context(), s.Pool, u.ID)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	if !slices.ContainsFunc(recs, func(p users.PasskeyRecord) bool { return p.ID == id }) {
@@ -73,7 +73,7 @@ func (s *State) APIRemovePasskey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := users.RemovePasskey(r.Context(), s.Pool, u.ID, id); err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	writeJSON(w, http.StatusOK, J{"status": "removed"})
@@ -90,7 +90,7 @@ func (s *State) APIPairQR(w http.ResponseWriter, r *http.Request) {
 	}
 	token, err := users.CreatePairingToken(r.Context(), s.Pool, u.ID)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	code, err := qrcode.New(PairURI(s.serverURL(r), token, s.tlsPin), qrcode.Medium)

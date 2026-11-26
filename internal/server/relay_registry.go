@@ -49,7 +49,7 @@ func (s *State) APIRelayDevices(w http.ResponseWriter, r *http.Request) {
 		"SELECT device_id, kind, name, public_key, updated_ms FROM relay_devices WHERE user_id = ? ORDER BY device_id", u.ID)
 	if err != nil {
 		logging.Errorf("relay devices: %v", err)
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	defer rows.Close()
@@ -58,13 +58,13 @@ func (s *State) APIRelayDevices(w http.ResponseWriter, r *http.Request) {
 		var id, kind, name, key string
 		var updated int64
 		if err := rows.Scan(&id, &kind, &name, &key, &updated); err != nil {
-			writeAPIError(w, http.StatusInternalServerError, "database error")
+			writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 			return
 		}
 		out = append(out, J{"id": id, "kind": kind, "name": name, "publicKey": key, "updatedAt": isoTime(updated)})
 	}
 	if err := rows.Err(); err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	writeJSON(w, http.StatusOK, J{"devices": out})
@@ -108,7 +108,7 @@ func (s *State) APIRelayPutDevice(w http.ResponseWriter, r *http.Request) {
 		u.ID, id, in.Kind, string(name), in.PublicKey, time.Now().UnixMilli())
 	if err != nil {
 		logging.Errorf("relay put %s: %v", id, err)
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	writeJSON(w, http.StatusOK, J{"ok": true})
@@ -130,7 +130,7 @@ func (s *State) APIRelayDeleteDevice(w http.ResponseWriter, r *http.Request) {
 		"DELETE FROM relay_devices WHERE user_id = ? AND device_id = ?", u.ID, id)
 	if err != nil {
 		logging.Errorf("relay delete %s: %v", id, err)
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	if n, _ := res.RowsAffected(); n == 0 {

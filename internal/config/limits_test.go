@@ -57,16 +57,16 @@ func TestLegacyPasswordAuthDefaultAndOff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !c.LegacyPasswordAuth {
-		t.Fatal("legacy_password_auth should default to true")
+	if c.LegacyPasswordAuth {
+		t.Fatal("legacy_password_auth should default to false (#175)")
 	}
 	c, err = Load(writeSiteConfig(t, `music_dirs = ["music"]
-legacy_password_auth = false
+legacy_password_auth = true
 `))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.LegacyPasswordAuth {
-		t.Fatal("explicit false was overridden by the default")
+	if !c.LegacyPasswordAuth {
+		t.Fatal("explicit true was overridden by the default")
 	}
 }

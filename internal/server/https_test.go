@@ -192,3 +192,113 @@ func expirePairing(t *testing.T, s *State) {
 		t.Fatal(err)
 	}
 }
+
+// Under base_path the refusal is classified below the prefix (#191): /rest
+// gets the Subsonic envelope with 426, /api the coded 426, and a page a
+// redirect to base_url without credentials in the query. Every refusal
+// carries the security headers.
+func TestHTTPSRefusalUnderBasePath(t *testing.T) {
+	s := &State{httpsRequired: true, BaseURL: "https://example.com/folksonic", BasePath: "/folksonic"}
+	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	h := securityHeaders(s.httpsGate(mountAt("/folksonic", ok)))
+	call := func(method, target string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, target, nil)
+		req.RemoteAddr = "198.51.100.7:5555"
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Header().Get("X-Content-Type-Options") != "nosniff" || rec.Header().Get("Referrer-Policy") != "no-referrer" {
+			t.Errorf("%s %s: refusal without security headers: %v", method, target, rec.Header())
+		}
+		return rec
+	}
+	rec := call(http.MethodGet, "/folksonic/rest/ping.view?apiKey=secret&f=json")
+	if rec.Code != http.StatusUpgradeRequired || !strings.Contains(rec.Body.String(), `"status":"failed"`) {
+		t.Errorf("/rest: %d %s", rec.Code, rec.Body)
+	}
+	rec = call(http.MethodPost, "/folksonic/api/login")
+	if rec.Code != http.StatusUpgradeRequired || !strings.Contains(rec.Body.String(), `"error":"https_required"`) {
+		t.Errorf("/api: %d %s", rec.Code, rec.Body)
+	}
+	rec = call(http.MethodGet, "/folksonic/login?next=/library&invite=abc&apiKey=k&p=pw&sig=x")
+	if rec.Code != http.StatusMovedPermanently {
+		t.Fatalf("page: %d", rec.Code)
+	}
+	if got := rec.Header().Get("Location"); got != "https://example.com/folksonic/login?next=%2Flibrary" {
+		t.Errorf("page: Location %q", got)
+	}
+	// A path that only starts like the prefix is not below it.
+	rec = call(http.MethodGet, "/folksonicx/rest/ping.view")
+	if rec.Code != http.StatusMovedPermanently {
+		t.Errorf("/folksonicx: %d", rec.Code)
+	}
+}
+
+// Without an https base_url there is no address to redirect to: the client's
+// Host header is never used (#191).
+func TestHTTPSRefusalWithoutBaseURLDoesNotRedirect(t *testing.T) {
+	for _, base := range []string{"", "http://music.example.com"} {
+		s := &State{httpsRequired: true, BaseURL: base}
+		req := httptest.NewRequest(http.MethodGet, "/login", nil)
+		req.Host = "evil.example"
+		req.RemoteAddr = "198.51.100.7:5555"
+		rec := httptest.NewRecorder()
+		s.httpsGate(http.NotFoundHandler()).ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden || rec.Header().Get("Location") != "" {
+			t.Errorf("base_url %q: %d Location %q", base, rec.Code, rec.Header().Get("Location"))
+		}
+	}
+}
+
+// HSTS is sent on HTTPS responses only, when require_https is on (#180).
+func TestStrictTransportSecurity(t *testing.T) {
+	s := &State{httpsRequired: true, BaseURL: "https://music.example.com",
+		trusted: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}}
+	fwd := map[string]string{"X-Forwarded-For": "198.51.100.7", "X-Forwarded-Proto": "https"}
+	for name, rec := range map[string]*httptest.ResponseRecorder{
+		"tls":           gateCall(s, http.MethodGet, "/api/keys", "198.51.100.7:5555", nil, true),
+		"trusted proxy": gateCall(s, http.MethodGet, "/api/keys", "10.0.0.5:4000", fwd, false),
+	} {
+		if got := rec.Header().Get("Strict-Transport-Security"); got != hstsValue {
+			t.Errorf("%s: HSTS %q", name, got)
+		}
+	}
+	for name, rec := range map[string]*httptest.ResponseRecorder{
+		"plain":           gateCall(s, http.MethodGet, "/api/keys", "198.51.100.7:5555", nil, false),
+		"untrusted proxy": gateCall(s, http.MethodGet, "/api/keys", "198.51.100.7:5555", fwd, false),
+		"local tool":      gateCall(s, http.MethodGet, "/rest/ping.view", "127.0.0.1:5000", nil, false),
+	} {
+		if got := rec.Header().Get("Strict-Transport-Security"); got != "" {
+			t.Errorf("%s: HSTS sent over HTTP: %q", name, got)
+		}
+	}
+	off := &State{httpsRequired: false}
+	if got := gateCall(off, http.MethodGet, "/api/keys", "198.51.100.7:5555", nil, true).Header().Get("Strict-Transport-Security"); got != "" {
+		t.Errorf("require_https off: HSTS %q", got)
+	}
+}
+
+// Without base_url the address handed to clients takes its scheme from the
+// connection, not a hardcoded http (#183), and keeps base_path.
+func TestServerURLWithoutBaseURL(t *testing.T) {
+	s := &State{BasePath: "/folksonic", trusted: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}}
+	req := httptest.NewRequest(http.MethodGet, "/api/stream-url", nil)
+	req.Host = "music.lan"
+	req.RemoteAddr = "192.168.1.5:5000"
+	if got := s.serverURL(req); got != "http://music.lan/folksonic" {
+		t.Errorf("plain: %q", got)
+	}
+	req.TLS = &tlsStateForTest
+	if got := s.serverURL(req); got != "https://music.lan/folksonic" {
+		t.Errorf("tls: %q", got)
+	}
+	req.TLS = nil
+	req.RemoteAddr = "10.0.0.5:4000"
+	req.Header.Set("X-Forwarded-Proto", "https")
+	if got := s.serverURL(req); got != "https://music.lan/folksonic" {
+		t.Errorf("trusted proxy: %q", got)
+	}
+	s.BaseURL = "https://example.com/folksonic/"
+	if got := s.serverURL(req); got != "https://example.com/folksonic" {
+		t.Errorf("base_url: %q", got)
+	}
+}

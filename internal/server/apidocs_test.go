@@ -1,7 +1,11 @@
 package server
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -152,4 +156,94 @@ func diff(a []string, b map[string]bool) []string {
 		}
 	}
 	return out
+}
+
+// rfcErrorResponses keep their own error shape: RFC 8628 for the device flow,
+// plain text for the OIDC callback.
+var rfcErrorResponses = map[string]bool{
+	"POST /api/device/token 400":   true,
+	"POST /api/device/refresh 400": true,
+	"GET /api/oidc/callback 400":   true,
+}
+
+// TestOpenAPIErrorsUseTheErrorSchema checks the one error contract (#194):
+// the Error schema requires both error and message, and every 4xx/5xx
+// response that declares a body uses it.
+func TestOpenAPIErrorsUseTheErrorSchema(t *testing.T) {
+	doc := readDoc(t, "openapi.yaml")
+	if !regexp.MustCompile(`(?m)^    Error:\n(?:      .*\n)*?      required: \[error, message\]$`).MatchString(doc) {
+		t.Error("the Error schema does not require error and message")
+	}
+	lines := strings.Split(doc, "\n")
+	pathRE := regexp.MustCompile(`^  (/api/\S+):$`)
+	methodRE := regexp.MustCompile(`^    (get|post|put|delete):$`)
+	statusRE := regexp.MustCompile(`^        '([45]\d\d)':$`)
+	var path, method string
+	checked := 0
+	for i, line := range lines {
+		if m := pathRE.FindStringSubmatch(line); m != nil {
+			path = m[1]
+		}
+		if m := methodRE.FindStringSubmatch(line); m != nil {
+			method = strings.ToUpper(m[1])
+		}
+		m := statusRE.FindStringSubmatch(line)
+		if m == nil || path == "" {
+			continue
+		}
+		var block []string
+		for _, l := range lines[i+1:] {
+			if !strings.HasPrefix(l, "          ") {
+				break
+			}
+			block = append(block, l)
+		}
+		b := strings.Join(block, "\n")
+		key := method + " " + path + " " + m[1]
+		if !strings.Contains(b, "content:") || rfcErrorResponses[key] {
+			continue
+		}
+		checked++
+		if !strings.Contains(b, "#/components/schemas/Error'") {
+			t.Errorf("%s: error response body is not the Error schema", key)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("found no error responses with a body; the pattern is out of date")
+	}
+}
+
+// TestJSONErrorsHaveOneShape keeps every JSON error going through
+// writeAPIErrorCode or writeCoded, which write {"error", "message"} (#194).
+// Only the RFC 8628 device flow (grant.go) writes its own shape.
+func TestJSONErrorsHaveOneShape(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed := map[string]int{"api_users.go": 1, "refusal.go": 1, "grant.go": 1}
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n := strings.Count(string(b), `J{"error":`); n > allowed[f] {
+			t.Errorf("%s writes %d JSON error bodies of its own; use writeAPIError or writeCoded", f, n)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	writeAPIError(rec, http.StatusNotFound, "song not found")
+	var out map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || out["error"] != "not_found" || out["message"] != "song not found" {
+		t.Fatalf("writeAPIError: %v %s", err, rec.Body)
+	}
+	for status := range statusCodes {
+		if !regexp.MustCompile(`^[a-z][a-z0-9_]*$`).MatchString(statusCode(status)) {
+			t.Errorf("status %d: code %q", status, statusCode(status))
+		}
+	}
 }

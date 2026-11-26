@@ -859,12 +859,18 @@ func (s *State) GetRandomSongs(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, J{"randomSongs": J{"song": children}})
 }
 
+// GetStarred answers the legacy getStarred: the same payload as getStarred2
+// under the key "starred", which legacy clients expect (#196).
 func (s *State) GetStarred(w http.ResponseWriter, r *http.Request) {
-	// Same payload as starred2 — matches the original behaviour.
-	s.GetStarred2(w, r)
+	s.writeStarred(w, r, "starred")
 }
 
 func (s *State) GetStarred2(w http.ResponseWriter, r *http.Request) {
+	s.writeStarred(w, r, "starred2")
+}
+
+// writeStarred builds the starred lists and writes them under key.
+func (s *State) writeStarred(w http.ResponseWriter, r *http.Request, key string) {
 	caller, ok := s.requireCaller(w, r)
 	if !ok {
 		return
@@ -920,7 +926,7 @@ func (s *State) GetStarred2(w http.ResponseWriter, r *http.Request) {
 		artistJSONs = append(artistJSONs, v)
 	}
 	writeOK(w, J{
-		"starred2": J{
+		key: J{
 			"artist": artistJSONs,
 			"album":  albumJSONs,
 			"song":   songJSONs,
@@ -1526,12 +1532,22 @@ func (s *State) GetArtistInfo2(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, J{"artistInfo2": emptyArtistInfo()})
 }
 
+// GetAlbumInfo answers getAlbumInfo; GetAlbumInfo2 the same under the key
+// "albumInfo2" (#196).
 func (s *State) GetAlbumInfo(w http.ResponseWriter, r *http.Request) {
+	s.writeAlbumInfo(w, r, "albumInfo")
+}
+
+func (s *State) GetAlbumInfo2(w http.ResponseWriter, r *http.Request) {
+	s.writeAlbumInfo(w, r, "albumInfo2")
+}
+
+func (s *State) writeAlbumInfo(w http.ResponseWriter, r *http.Request, key string) {
 	if !s.requireAuth(w, r) {
 		return
 	}
 	writeOK(w, J{
-		"albumInfo": J{
+		key: J{
 			"notes":          "",
 			"musicBrainzId":  "",
 			"lastFmUrl":      "",

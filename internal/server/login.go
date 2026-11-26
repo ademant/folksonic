@@ -35,7 +35,7 @@ func (s *State) APILogin(w http.ResponseWriter, r *http.Request) {
 	if ok, retry := s.auth.allow(ip); !ok {
 		logAuthFailure(ip, "rate-limit", r.URL.Path)
 		w.Header().Set("Retry-After", strconv.Itoa(retrySeconds(retry)))
-		writeAPIError(w, http.StatusTooManyRequests, "too many failed sign-in attempts; wait before trying again")
+		writeAPIErrorCode(w, http.StatusTooManyRequests, codeRateLimited, "too many failed sign-in attempts; wait before trying again")
 		return
 	}
 	if !passwords.TryAcquire() {
@@ -62,13 +62,13 @@ func (s *State) APILogin(w http.ResponseWriter, r *http.Request) {
 			reason = "not-active"
 		}
 		s.authFailed(r, ip, reason, r.URL.Path)
-		writeAPIError(w, http.StatusUnauthorized, "wrong username or password")
+		writeAPIErrorCode(w, http.StatusUnauthorized, codePasswordBad, "wrong username or password")
 		return
 	}
 	s.auth.succeed(ip)
 	token, err := users.CreateSession(r.Context(), s.Pool, u.ID)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	writeJSON(w, http.StatusOK, J{"token": token, "username": u.Username, "role": u.Role})

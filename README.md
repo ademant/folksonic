@@ -128,7 +128,7 @@ Configuration is checked at startup:
 | `host`               | Interface to bind (use `127.0.0.1` to keep it local).                |
 | `database_path`      | Path to the SQLite file. Created if missing. Holds users and keys.   |
 | `covers_dir`         | Where extracted album art is cached.                                 |
-| `base_url`           | Public URL clients use. Embedded in pairing QR codes; host is the passkey RP ID. |
+| `base_url`           | Public URL clients use. Embedded in pairing QR codes, signed stream links and the device flow; host is the passkey RP ID, and plain-HTTP browser requests are redirected to it. Without it those addresses take the request's `Host` header, which the client controls, and the server warns at startup (#183). |
 | `base_path`         | URL prefix to serve under, such as `/folksonic`. Empty (default) serves from the root. See [Serving under a subpath](#serving-under-a-subpath). |
 | `allow_registration` | Enables `POST /api/register` without an invitation code. Default `false`. Invitation codes work either way. |
 | `song_tags`          | File tags exposed on songs, such as `["DANCE", "USE"]`. Only these names are read. Each song then carries `tinysonicTags`, and the `tinysonicSongTags` extension is advertised. Default empty. |
@@ -139,7 +139,7 @@ Configuration is checked at startup:
 | `max_streams`        | Audio streams (`stream`, `download`) served at once, across all accounts. Default 64; `0` disables the cap. A stream over the cap gets HTTP 503 with `Retry-After`. |
 | `max_streams_per_user` | Streams one account may hold at once. Default 8; `0` disables the cap. |
 | `db_cache_mb`        | SQLite page cache per database connection, in MiB. Default 4; at least 1. Hot pages are also held by the memory map and the OS cache, so a small value costs little speed. Raise it for a large library on a host with spare memory. |
-| `legacy_password_auth` | Allow Subsonic clients to sign in with `u`/`p` on every request. Default `true`. Set `false` to require API keys (or a session) for all Subsonic calls. |
+| `legacy_password_auth` | Allow Subsonic clients to sign in with `u`/`p` on every request. Default `false` (since #175): Subsonic calls need an API key (or a session), and `u`/`p` gets error 42. Set `true` for clients that cannot use an API key; the startup log warns that the password then travels in every request URL. |
 | `trusted_proxies`    | Addresses (IPs or CIDR ranges) of reverse proxies whose `X-Forwarded-For` is believed. Empty by default: the connecting address is the client. See [Sign-in limits](#sign-in-limits). |
 | `api_key_ttl_days`   | Lifetime of an API key, in days (1–3650). Default 365. Every key expires; a key in use within its last 30 days is renewed to a full lifetime. A request can ask for its own `expires_days`. |
 | `api_key_idle_days`  | A key unused for this many days is revoked (1–3650). Default 180. Revoked keys are logged as `api key revoked: idle`. |
@@ -273,7 +273,7 @@ without a manual rescan.
 
 **OpenSubsonic** — responses carry `"openSubsonic": true`.
 `getOpenSubsonicExtensions` lists the extensions the server implements:
-`apiKeyAuthentication`, `formPost`, the vendor extensions `tinysonicPaging`,
+`apiKeyAuthentication`, `formPost`, `indexBasedQueue`, the vendor extensions `tinysonicPaging`,
 `tinysonicLibraryInfo`, `tinysonicLibraryChanges`, `tinysonicMinimal`, `tinysonicMeter`, `tinysonicTempo` and `tinysonicStreamUrl` (below), plus `tinysonicSongTags`
 when `song_tags` is set. It needs no sign-in.
 
@@ -329,7 +329,7 @@ entry has no `item` when the object was deleted after the snapshot; the next
 sync reports the deletion. With `include=items` the answer is paged at 500
 entries even without `size`, so a full sync is a few requests instead of one
 per album. Authentication is as for every
-endpoint; token auth (`t` with `s`) gets error 42.
+endpoint; token auth (`t` with `s`) gets error 41.
 
 **Minimal responses (vendor extension `tinysonicMinimal`)** — with the request
 header `Prefer: tinysonic-minimal` (RFC 7240), objects omit optional fields that
@@ -931,10 +931,20 @@ signed with a key that never leaves its Keystore.
    link gets HTTP 403 with `stream_url_invalid` or `stream_url_expired`. API keys
    cannot mint links. Subsonic clients keep method 1 and do not use this.
 5. **Subsonic username and password**: `u` with `p`, plain or `p=enc:<hex>`.
-   Clients that offer a password option use this. Token auth (`t` with `s`) is
-   refused with Subsonic error 42. Set `legacy_password_auth = false` to turn
-   this method off: such requests then get error 42, and API keys are the only
-   way in. Password sign-in on `/login` and `/api/login` is not affected.
+   **Off by default** (#175): such requests get error 42, and API keys are the
+   only way in. Set `legacy_password_auth = true` for clients that offer only a
+   password option. Token auth (`t` with `s`) is refused with Subsonic error 41
+   either way. Password sign-in on `/login` and `/api/login` is not affected.
+
+   **Upgrading:** before #175 password sign-in was on unless the config said
+   otherwise. A config without `legacy_password_auth` now refuses Subsonic
+   clients that sign in with a password. Give them an API key (account page,
+   or `tinysonic pair`), or set `legacy_password_auth = true`.
+
+Send one method per request. An API key (header or query) together with `u`,
+`p`, `t` or `s` is refused with Subsonic error 43, as OpenSubsonic's
+`apiKeyAuthentication` specifies, and with `credentials_conflict` on the JSON
+API, even when the key is valid (#170).
 
 Credentials may be sent in the query string or as a form-encoded POST body.
 Only active accounts authenticate; pending and disabled accounts are refused.
@@ -973,9 +983,9 @@ on the long-lived key. For a server reachable from the internet:
    on `/rest` and `/api`. A LAN install gets HTTPS too, with `tls_cert` and
    `tls_key` (see [Running over HTTPS](#running-over-https)), so no key or
    password crosses the network in the clear.
-2. **Turn off password sign-in for Subsonic clients:** `legacy_password_auth = false`.
-   A request with `u` and `p` then gets Subsonic error 42, and only API keys (or a
-   session) work. A password would otherwise be sent on every call.
+2. **Keep password sign-in off for Subsonic clients:** `legacy_password_auth = false`,
+   the default. A request with `u` and `p` gets Subsonic error 42, and only API
+   keys (or a session) work. A password would otherwise be sent on every call.
 3. **Send the key in the `X-Api-Key` header when the client allows it.** A key in
    the query string (`apiKey=`) is written to every proxy access log that records
    the full URL, to the browser history for a link opened in a browser, and to any
@@ -995,7 +1005,7 @@ on the long-lived key. For a server reachable from the internet:
    public server, at the cost of pairing devices again more often. A key can be
    revoked on the account page, and every key shows when it was last used.
 6. **Expect the limits to be enforced in code, not left to the client.** Token
-   auth (`t` with `s`) is refused with error 42. Repeated wrong passwords are
+   auth (`t` with `s`) is refused with error 41. Repeated wrong passwords are
    slowed and then refused (see [Sign-in limits](#sign-in-limits)). Each refusal
    is logged with a reason code, and the key itself never appears in the log.
 
@@ -1216,10 +1226,19 @@ a reverse proxy that is the proxy's host, not the tinysonic host.
 trusted_proxies = ["127.0.0.1", "::1"]
 ```
 
+### Request bodies
+
+A request body is limited to 1 MiB (the analysis results upload has its own
+limit), and to how long it may take to arrive (#172): 30 seconds without any
+data, 2 minutes in all, or 10 minutes for the analysis results upload. A
+client that sends its body more slowly is cut off. Only the body is timed:
+streams, long-polls and the device relay may run as long as they need.
+
 ## Security headers and pages
 
 Every response carries `X-Frame-Options: DENY` and `X-Content-Type-Options:
 nosniff`, so no other site can frame tinysonic, including the sign-in page.
+That includes the HTTPS refusals below (#191).
 The web pages have no inline script or style. Their scripts and stylesheets
 are served from `/static/` and the policy is `'self'` only. A reverse proxy
 should not add `'unsafe-inline'` to that policy.
@@ -1327,7 +1346,20 @@ proxy says `X-Forwarded-Proto: https`. Refused requests get:
 
 - `/api/*`: HTTP 426 with `{"error": "https_required", …}`;
 - `/rest/*`: HTTP 426 with the Subsonic envelope, error 0;
-- browser pages (GET): HTTP 301 to the same path on the `base_url` address.
+- browser pages (GET): HTTP 301 to the same path on the `base_url` address,
+  without the query parameters that carry secrets (`u`, `p`, `t`, `s`,
+  `apiKey`, `sig`, `uid`, `exp`, `invite`, `token`, `code`). When `base_url`
+  is not an `https://` address there is nowhere safe to send the browser, and
+  the answer is HTTP 403: the request's own `Host` header is never used.
+
+The paths are matched below `base_path`, so `/folksonic/rest/…` is answered
+as `/rest/…` (#191).
+
+With `require_https` on, every HTTPS response carries
+`Strict-Transport-Security: max-age=31536000` (#180), whether the server
+terminates TLS itself or a trusted proxy says `X-Forwarded-Proto: https`. It
+has no `includeSubDomains`. Under a subpath the header still applies to the
+whole host name, as HSTS always does.
 
 A request from the server itself (loopback, with no `X-Forwarded-For` header,
 as the deploy health check sends) is allowed. A request a proxy passed on
@@ -1337,8 +1369,10 @@ carries `X-Forwarded-For`, so it is never treated as local.
 proxy must send `X-Forwarded-Proto` (the Apache snippet does, with
 `RequestHeader set`) and `trusted_proxies` must list it. Otherwise every
 request through the proxy is refused, and the server logs a warning at start.
-Every proxy template sends `Strict-Transport-Security`, so browsers keep to
-HTTPS once they have used it.
+Every proxy template sends `Strict-Transport-Security` as well, so browsers
+keep to HTTPS once they have used it. Apache and Caddy replace tinysonic's
+header; the nginx templates hide it (`proxy_hide_header`), so it is not sent
+twice.
 
 Request logs record the path only; credentials in the query string or form
 body are never written to the log.
@@ -1421,12 +1455,26 @@ For a revoked, idle or expired key the line also names the key's id and label
 
 A refused request says why, with a code clients can branch on. On the JSON
 API the body is `{"error": "<code>", "message": "<text>"}`. On Subsonic
-endpoints the answer keeps the envelope with error 40 and the message. The
+endpoints the answer keeps the envelope with error 40 and the message
+(43 for `credentials_conflict`). The
 message text is for people; apps should not parse it.
+
+Every other JSON API error has the same shape (#194). Errors clients may need
+to tell apart have a code of their own (`database_error`, `invalid_json`,
+`librarian_required`, `registration_disabled`, `passkeys_unavailable`,
+`no_passkey`, `ceremony_expired`, `sso_not_configured`, `sso_unavailable`,
+`last_sign_in_method`, `job_running`, `no_job_running`, `import_running`,
+`tool_unavailable`); the rest have the generic code of their status:
+`bad_request`, `unauthorized`, `forbidden`, `not_found`, `conflict`,
+`too_large`, `unsupported_media_type`, `rate_limited`, `internal_error` or
+`unavailable`. Before #194, these errors had only `error`, holding the text.
+The device flow's `/api/device/token` and `/api/device/refresh` keep the RFC
+8628 shape (`{"error": "authorization_pending"}` and so on).
 
 | Code | Meaning |
 |---|---|
 | `credentials_required` | No credentials were sent |
+| `credentials_conflict` | An API key was sent together with `u`, `p`, `t` or `s` (Subsonic error 43) |
 | `key_unknown` | The API key does not match any key |
 | `key_revoked` | The key was revoked |
 | `key_idle` | The key was revoked for going unused (`api_key_idle_days`) |

@@ -79,7 +79,7 @@ func (s *State) APIRemotePlayers(w http.ResponseWriter, r *http.Request) {
 			"FROM remote_players WHERE user_id = ? ORDER BY name, player_id", u.ID)
 	if err != nil {
 		logging.Errorf("remote players: %v", err)
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	defer rows.Close()
@@ -89,7 +89,7 @@ func (s *State) APIRemotePlayers(w http.ResponseWriter, r *http.Request) {
 		var id, name, status, song, controller string
 		var position, reported, applied int64
 		if err := rows.Scan(&id, &name, &status, &song, &position, &reported, &applied, &controller); err != nil {
-			writeAPIError(w, http.StatusInternalServerError, "database error")
+			writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 			return
 		}
 		out = append(out, J{
@@ -105,7 +105,7 @@ func (s *State) APIRemotePlayers(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	if err := rows.Err(); err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	writeJSON(w, http.StatusOK, J{"players": out})
@@ -153,7 +153,7 @@ func (s *State) APIRemoteReport(w http.ResponseWriter, r *http.Request) {
 		u.ID, pid, name, in.Status, in.SongID, in.PositionMs, time.Now().UnixMilli(), in.AppliedSeq, in.Controller)
 	if err != nil {
 		logging.Errorf("remote report %s: %v", pid, err)
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	writeJSON(w, http.StatusOK, J{"ok": true})
@@ -189,7 +189,7 @@ func (s *State) APIRemoteCommands(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	applied, err := remoteAppliedSeq(ctx, s.Pool, u.ID, pid)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	if applied > after {
@@ -200,7 +200,7 @@ func (s *State) APIRemoteCommands(w http.ResponseWriter, r *http.Request) {
 		cmds, err := loadRemoteCommands(ctx, s.Pool, u.ID, pid, after, time.Now().Add(-remoteCommandTTL).UnixMilli())
 		if err != nil {
 			logging.Errorf("remote commands %s: %v", pid, err)
-			writeAPIError(w, http.StatusInternalServerError, "database error")
+			writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 			return
 		}
 		if len(cmds) > 0 || !time.Now().Before(deadline) {
@@ -266,7 +266,7 @@ func (s *State) APIRemoteSend(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		logging.Errorf("remote send %s: %v", pid, err)
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	writeJSON(w, http.StatusOK, J{"seq": seq})

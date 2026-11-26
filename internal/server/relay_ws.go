@@ -292,7 +292,7 @@ func (s *State) APIRelayConnect(w http.ResponseWriter, r *http.Request) {
 	known, err := relayDeviceExists(r, s.Pool, u.ID, dev)
 	if err != nil {
 		logging.Errorf("relay connect %s: %v", dev, err)
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	if !known {

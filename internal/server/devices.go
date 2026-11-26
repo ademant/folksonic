@@ -155,7 +155,7 @@ func (s *State) APIPendingPairings(w http.ResponseWriter, r *http.Request) {
 	}
 	list, err := users.PendingPairings(r.Context(), s.Pool, u.ID, time.Now())
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	out := make([]J, 0, len(list))
@@ -235,7 +235,7 @@ func (s *State) APIPairConfirm(w http.ResponseWriter, r *http.Request) {
 	st, serr := users.DevicePairingState(r.Context(), s.Pool, jkt, time.Now())
 	if serr != nil {
 		logging.Errorf("pairing confirm state: %v", serr)
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	if st.State == users.PairingPending && !s.proofFresh(r, jkt, jti) {
@@ -276,7 +276,7 @@ func (s *State) writePairingError(w http.ResponseWriter, err error) bool {
 		writeAPIError(w, http.StatusNotFound, "pairing not found")
 	default:
 		logging.Errorf("pairing confirmation: %v", err)
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 	}
 	return false
 }
@@ -293,7 +293,7 @@ func (s *State) APIListDevices(w http.ResponseWriter, r *http.Request) {
 	}
 	list, err := users.Devices(r.Context(), s.Pool, u.ID)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	out := make([]J, 0, len(list))
@@ -319,7 +319,7 @@ func (s *State) APIRemoveDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	writeJSON(w, http.StatusOK, J{"status": "removed"})
@@ -365,7 +365,7 @@ func (s *State) completeDevicePairing(w http.ResponseWriter, r *http.Request, in
 		writeAPIError(w, http.StatusConflict, "this key is already paired")
 		return
 	case err != nil:
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	logging.Infof("pairing pending id=%d ip=%s waiting_for=both", p.ID, p.ClientIP)
