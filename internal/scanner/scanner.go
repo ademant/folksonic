@@ -33,6 +33,24 @@ type Progress struct {
 	// afterChange is called after a scan finishes and after the watcher
 	// added or updated a song, so background analysis can pick up the work.
 	afterChange atomic.Pointer[func()]
+	// songChange is called, synchronously, with the id of each song a scan
+	// or the watcher inserted, updated or removed, so the server can drop
+	// what it cached about it (#197).
+	songChange atomic.Pointer[func(id string)]
+}
+
+// SetSongChanged registers fn to run with the id of every song that was
+// inserted, updated or removed. It runs in the scanning goroutine, after the
+// change is committed, so it must be quick.
+func (p *Progress) SetSongChanged(fn func(id string)) { p.songChange.Store(&fn) }
+
+func (p *Progress) songChanged(id string) {
+	if p == nil || id == "" {
+		return
+	}
+	if fn := p.songChange.Load(); fn != nil {
+		(*fn)(id)
+	}
 }
 
 // SetAfterChange registers fn to run (in its own goroutine) after a scan
@@ -103,8 +121,10 @@ func Scan(pool *sql.DB, roots []string, coversDir string, songTags []string, pro
 				stats.Skipped++
 			case res == resultInserted:
 				stats.Inserted++
+				progress.songChanged(SongID(path))
 			case res == resultUpdated:
 				stats.Updated++
+				progress.songChanged(SongID(path))
 			case res == resultSkipped:
 				stats.Skipped++
 			}
@@ -117,7 +137,7 @@ func Scan(pool *sql.DB, roots []string, coversDir string, songTags []string, pro
 	}
 	// Songs whose files vanished while the server was down are removed only
 	// under roots that were read completely.
-	pruned, err := pruneMissing(pool, completeRoots, seen)
+	pruned, err := pruneMissing(pool, completeRoots, seen, progress)
 	if err != nil {
 		return stats, fmt.Errorf("pruning missing songs: %w", err)
 	}
@@ -134,7 +154,7 @@ func Scan(pool *sql.DB, roots []string, coversDir string, songTags []string, pro
 
 // pruneMissing removes songs under root whose paths were not seen during the
 // walk, along with any album or artist left empty by the removal.
-func pruneMissing(pool *sql.DB, roots []string, seen map[string]bool) (int, error) {
+func pruneMissing(pool *sql.DB, roots []string, seen map[string]bool, progress *Progress) (int, error) {
 	n := 0
 	for _, root := range roots {
 		paths, err := songPathsUnder(pool, root)
@@ -145,10 +165,12 @@ func pruneMissing(pool *sql.DB, roots []string, seen map[string]bool) (int, erro
 			if seen[p] {
 				continue
 			}
-			if err := DeletePath(pool, p); err != nil {
+			id, err := DeletePath(pool, p)
+			if err != nil {
 				logging.Errorf("prune %s: %v", p, err)
 				continue
 			}
+			progress.songChanged(id)
 			n++
 		}
 	}

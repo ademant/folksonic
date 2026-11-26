@@ -3,8 +3,10 @@ package server
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"strings"
 	"unicode"
 
@@ -43,13 +45,24 @@ func repoFindArtist(ctx context.Context, db *sql.DB, id string) (*models.Artist,
 	return &a, nil
 }
 
-func repoAlbumCountsByArtist(ctx context.Context, db *sql.DB) (map[string]int64, error) {
-	rows, err := db.QueryContext(ctx, "SELECT artist_id, COUNT(*) FROM albums GROUP BY artist_id")
+// repoAlbumCountsByArtist counts the albums of the given artists only, so a
+// page of the artist index does not count the whole library (#200).
+func repoAlbumCountsByArtist(ctx context.Context, db *sql.DB, ids []string) (map[string]int64, error) {
+	out := make(map[string]int64, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	b, err := json.Marshal(ids)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.QueryContext(ctx,
+		"SELECT artist_id, COUNT(*) FROM albums WHERE artist_id IN (SELECT value FROM json_each(?)) GROUP BY artist_id",
+		string(b))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := make(map[string]int64)
 	for rows.Next() {
 		var id string
 		var n int64
@@ -66,6 +79,8 @@ func repoAlbumCountsByArtist(ctx context.Context, db *sql.DB) (map[string]int64,
 // albumCols selects an album (aliased a) with the figures derived from its
 // songs, so every endpoint reports the same song count, duration and created
 // date. Duration is summed in milliseconds and divided once by the caller.
+// The covering index idx_songs_album_stats answers all three subqueries from
+// the index (#200).
 const albumCols = "a.id, a.title, a.artist, a.artist_id, a.year, a.cover_art, a.mbid, " +
 	"(SELECT COUNT(*) FROM songs WHERE album_id = a.id), " +
 	"(SELECT COALESCE(SUM(duration_ms), 0) FROM songs WHERE album_id = a.id), " +
@@ -168,23 +183,31 @@ func repoFindSong(ctx context.Context, db *sql.DB, id string) (*models.Song, err
 }
 
 func repoRandomSongs(ctx context.Context, db *sql.DB, size int64, fromYear, toYear *int64, genre string) ([]models.Song, error) {
-	q := "SELECT " + songCols + " FROM songs s WHERE 1=1"
+	// Only rowids are shuffled (#200): the full song columns, with their
+	// subquery, are read for the size rows picked, not for every song.
+	inner := "SELECT rowid FROM songs WHERE 1=1"
 	var args []any
 	if fromYear != nil {
-		q += " AND year >= ?"
+		inner += " AND year >= ?"
 		args = append(args, *fromYear)
 	}
 	if toYear != nil {
-		q += " AND year <= ?"
+		inner += " AND year <= ?"
 		args = append(args, *toYear)
 	}
 	if genre != "" {
-		q += " AND genre = ? COLLATE NOCASE"
+		inner += " AND genre = ? COLLATE NOCASE"
 		args = append(args, genre)
 	}
-	q += " ORDER BY RANDOM() LIMIT ?"
+	inner += " ORDER BY RANDOM() LIMIT ?"
 	args = append(args, size)
-	return queryManySongs(ctx, db, q, args...)
+	songs, err := queryManySongs(ctx, db, "SELECT "+songCols+" FROM songs s WHERE s.rowid IN ("+inner+")", args...)
+	if err != nil {
+		return nil, err
+	}
+	// IN returns rowid order; shuffle again so the answer is random too.
+	rand.Shuffle(len(songs), func(i, j int) { songs[i], songs[j] = songs[j], songs[i] })
+	return songs, nil
 }
 
 func repoDistinctGenres(ctx context.Context, db *sql.DB) ([]genreRow, error) {
@@ -372,98 +395,81 @@ type starredArtist struct {
 	When   string
 }
 
+// The starred lists are one joined query each, not one lookup per row (#200).
+// Ties in starred_at are broken by id, so the order is stable.
+
 func repoStarredSongs(ctx context.Context, db *sql.DB, userID int64) ([]starredSong, error) {
 	rows, err := db.QueryContext(ctx,
-		"SELECT st.id, st.starred_at FROM starred st INNER JOIN songs s ON s.id = st.id "+
-			"WHERE st.user_id = ? ORDER BY st.starred_at DESC", userID)
+		"SELECT "+songCols+", st.starred_at FROM starred st INNER JOIN songs s ON s.id = st.id "+
+			"WHERE st.user_id = ? ORDER BY st.starred_at DESC, st.id", userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	type pair struct{ id, when string }
-	var pairs []pair
+	var out []starredSong
 	for rows.Next() {
-		var p pair
-		if err := rows.Scan(&p.id, &p.when); err != nil {
+		var v starredSong
+		song, err := scanSong(withExtra(rows, &v.When))
+		if err != nil {
 			return nil, err
 		}
-		pairs = append(pairs, p)
+		v.Song = song
+		out = append(out, v)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	var out []starredSong
-	for _, p := range pairs {
-		s, err := repoFindSong(ctx, db, p.id)
-		if err != nil || s == nil {
-			continue
-		}
-		out = append(out, starredSong{Song: *s, When: p.when})
-	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func repoStarredAlbums(ctx context.Context, db *sql.DB, userID int64) ([]starredAlbum, error) {
 	rows, err := db.QueryContext(ctx,
-		"SELECT st.id, st.starred_at FROM starred st INNER JOIN albums a ON a.id = st.id "+
-			"WHERE st.user_id = ? ORDER BY st.starred_at DESC", userID)
+		"SELECT "+albumCols+", st.starred_at FROM starred st INNER JOIN albums a ON a.id = st.id "+
+			"WHERE st.user_id = ? ORDER BY st.starred_at DESC, st.id", userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	type pair struct{ id, when string }
-	var pairs []pair
+	var out []starredAlbum
 	for rows.Next() {
-		var p pair
-		if err := rows.Scan(&p.id, &p.when); err != nil {
+		var v starredAlbum
+		a, err := scanAlbum(withExtra(rows, &v.When))
+		if err != nil {
 			return nil, err
 		}
-		pairs = append(pairs, p)
+		v.Album = a
+		out = append(out, v)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	var out []starredAlbum
-	for _, p := range pairs {
-		a, err := repoFindAlbum(ctx, db, p.id)
-		if err != nil || a == nil {
-			continue
-		}
-		out = append(out, starredAlbum{Album: *a, When: p.when})
-	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func repoStarredArtists(ctx context.Context, db *sql.DB, userID int64) ([]starredArtist, error) {
 	rows, err := db.QueryContext(ctx,
-		"SELECT st.id, st.starred_at FROM starred st INNER JOIN artists ar ON ar.id = st.id "+
-			"WHERE st.user_id = ? ORDER BY st.starred_at DESC", userID)
+		"SELECT ar.id, ar.name, ar.mbid, st.starred_at FROM starred st INNER JOIN artists ar ON ar.id = st.id "+
+			"WHERE st.user_id = ? ORDER BY st.starred_at DESC, st.id", userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	type pair struct{ id, when string }
-	var pairs []pair
+	var out []starredArtist
 	for rows.Next() {
-		var p pair
-		if err := rows.Scan(&p.id, &p.when); err != nil {
+		var v starredArtist
+		if err := rows.Scan(&v.Artist.ID, &v.Artist.Name, &v.Artist.MBID, &v.When); err != nil {
 			return nil, err
 		}
-		pairs = append(pairs, p)
+		out = append(out, v)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	var out []starredArtist
-	for _, p := range pairs {
-		a, err := repoFindArtist(ctx, db, p.id)
-		if err != nil || a == nil {
-			continue
-		}
-		out = append(out, starredArtist{Artist: *a, When: p.when})
-	}
-	return out, nil
+	return out, rows.Err()
 }
+
+// extraScanner appends destinations for columns after a row type's own.
+type extraScanner struct {
+	rowScanner
+	extra []any
+}
+
+func (e extraScanner) Scan(dest ...any) error { return e.rowScanner.Scan(append(dest, e.extra...)...) }
+
+// withExtra lets scanSong or scanAlbum read a row that has more columns
+// after theirs, into extra.
+func withExtra(r rowScanner, extra ...any) rowScanner { return extraScanner{r, extra} }
 
 // ── Playlists ───────────────────────────────────────────────────────────────
 
@@ -522,28 +528,39 @@ func repoCreatePlaylist(ctx context.Context, db sqlExec, ownerID int64, id, name
 	return err
 }
 
-func repoRenamePlaylist(ctx context.Context, db sqlExec, id, name, now string) error {
+// repoRenamePlaylist and repoSetPlaylistComment change a playlist of
+// ownerID only, like every other playlist write here (#184).
+func repoRenamePlaylist(ctx context.Context, db sqlExec, ownerID int64, id, name, now string) error {
 	_, err := db.ExecContext(ctx,
-		"UPDATE playlists SET name = ?, updated_at = ? WHERE id = ?", name, now, id)
+		"UPDATE playlists SET name = ?, updated_at = ? WHERE id = ? AND owner_id = ?", name, now, id, ownerID)
 	return err
 }
 
-func repoSetPlaylistComment(ctx context.Context, db sqlExec, id, comment, now string) error {
+func repoSetPlaylistComment(ctx context.Context, db sqlExec, ownerID int64, id, comment, now string) error {
 	_, err := db.ExecContext(ctx,
-		"UPDATE playlists SET comment = ?, updated_at = ? WHERE id = ?", comment, now, id)
+		"UPDATE playlists SET comment = ?, updated_at = ? WHERE id = ? AND owner_id = ?", comment, now, id, ownerID)
 	return err
 }
 
+// repoDeletePlaylist removes a playlist of ownerID and its songs in one
+// transaction, so a failure between the two cannot orphan song rows (#184).
 func repoDeletePlaylist(ctx context.Context, db *sql.DB, ownerID int64, id string) error {
-	res, err := db.ExecContext(ctx, "DELETE FROM playlists WHERE id = ? AND owner_id = ?", id, ownerID)
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.ExecContext(ctx, "DELETE FROM playlists WHERE id = ? AND owner_id = ?", id, ownerID)
 	if err != nil {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return nil
 	}
-	_, err = db.ExecContext(ctx, "DELETE FROM playlist_songs WHERE playlist_id = ?", id)
-	return err
+	if _, err := tx.ExecContext(ctx, "DELETE FROM playlist_songs WHERE playlist_id = ?", id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func repoPlaylistSongIDs(ctx context.Context, db sqlExec, playlistID string) ([]string, error) {
@@ -651,4 +668,55 @@ func repoCountSearch(ctx context.Context, db *sql.DB, table, term string) (int, 
 	}
 	fts := table + "_fts"
 	return repoCount(ctx, db, "SELECT COUNT(*) FROM "+fts+" WHERE "+fts+" MATCH ?", q)
+}
+
+// repoLibraryItemExists reports whether id names a song, album or artist,
+// by its prefix.
+func repoLibraryItemExists(ctx context.Context, db *sql.DB, id string) (bool, error) {
+	var table string
+	switch {
+	case strings.HasPrefix(id, "so-"):
+		table = "songs"
+	case strings.HasPrefix(id, "al-"):
+		table = "albums"
+	case strings.HasPrefix(id, "ar-"):
+		table = "artists"
+	default:
+		return false, nil
+	}
+	var one int
+	err := db.QueryRowContext(ctx, "SELECT 1 FROM "+table+" WHERE id = ?", id).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// playlistTotals is the song count and duration of a playlist.
+type playlistTotals struct {
+	songs, durationMs int64
+}
+
+// repoPlaylistTotals sums the songs of every playlist of ownerID in one
+// query, for getPlaylists (#200). Songs no longer in the library are not
+// counted, as in getPlaylist.
+func repoPlaylistTotals(ctx context.Context, db *sql.DB, ownerID int64) (map[string]playlistTotals, error) {
+	rows, err := db.QueryContext(ctx,
+		"SELECT ps.playlist_id, COUNT(*), COALESCE(SUM(s.duration_ms), 0) "+
+			"FROM playlists p INNER JOIN playlist_songs ps ON ps.playlist_id = p.id INNER JOIN songs s ON s.id = ps.song_id "+
+			"WHERE p.owner_id = ? GROUP BY ps.playlist_id", ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]playlistTotals{}
+	for rows.Next() {
+		var id string
+		var t playlistTotals
+		if err := rows.Scan(&id, &t.songs, &t.durationMs); err != nil {
+			return nil, err
+		}
+		out[id] = t
+	}
+	return out, rows.Err()
 }

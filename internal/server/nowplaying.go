@@ -13,6 +13,14 @@ import (
 // player that closes stops showing as playing after this (#147).
 const nowPlayingTTL = 30 * time.Minute
 
+// Bounds on the store (#185): a player id is at most maxPlayerIDLen bytes, and
+// a user has at most maxNowPlayingPerUser players; a new one past that
+// replaces the player that reported longest ago.
+const (
+	maxPlayerIDLen       = 64
+	maxNowPlayingPerUser = 16
+)
+
 // nowEntry is what one player of one user last reported.
 type nowEntry struct {
 	songID   string
@@ -38,6 +46,15 @@ func (n *nowPlayingStore) set(userID int64, playerID, songID string, now time.Ti
 	if m == nil {
 		m = map[string]nowEntry{}
 		n.byUser[userID] = m
+	}
+	if _, known := m[playerID]; !known && len(m) >= maxNowPlayingPerUser {
+		oldest := ""
+		for p, e := range m {
+			if oldest == "" || e.at.Before(m[oldest].at) {
+				oldest = p
+			}
+		}
+		delete(m, oldest)
 	}
 	m[playerID] = nowEntry{songID: songID, playerID: playerID, at: now}
 }
@@ -101,7 +118,12 @@ func (s *State) UpdateNowPlaying(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 70, "Song not found")
 		return
 	}
-	s.nowPlaying.set(caller.ID, queryFirst(r, "playerId"), id, time.Now())
+	player := queryFirst(r, "playerId")
+	if len(player) > maxPlayerIDLen {
+		writeError(w, 10, "playerId is longer than 64 characters")
+		return
+	}
+	s.nowPlaying.set(caller.ID, player, id, time.Now())
 	writeOK(w, J{})
 }
 

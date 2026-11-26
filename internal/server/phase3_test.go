@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -84,8 +85,10 @@ func TestAlbumListFrequentCountsPlays(t *testing.T) {
 
 func TestAlbumListRecentOrdersByLastPlay(t *testing.T) {
 	s, _, key := keyFixture(t)
-	scrobble(t, s, key, "id=so-4&time=1700000100000") // al-3, later
-	scrobble(t, s, key, "id=so-1&time=1700000000000") // al-1, earlier
+	// Within the last year: older play times are clamped (#185).
+	now := time.Now().UnixMilli()
+	scrobble(t, s, key, fmt.Sprintf("id=so-4&time=%d", now-1000)) // al-3, later
+	scrobble(t, s, key, fmt.Sprintf("id=so-1&time=%d", now-2000)) // al-1, earlier
 	body := getWith(t, s.routes(), "/rest/getAlbumList2.view?type=recent", key, true).Body.String()
 	albums := subsonicBody(t, body)["albumList2"].(map[string]any)["album"]
 	assertIDs(t, "recent", idsIn(t, albums), []string{"al-3", "al-1"})

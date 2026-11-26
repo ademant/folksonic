@@ -396,6 +396,11 @@ sends a command with `POST /api/remote/players/{id}/commands`
 (`play`, `pause`, `seek`, `next`, `previous`). `GET /api/remote/players` lists
 the account's players and their last reported state. (#157)
 
+An account has at most 16 players on record. A new player past that replaces
+the one that reported longest ago, if it has been silent for a minute;
+otherwise the report is refused with 409 `too_many_players`. `song_id` and
+`controller` are at most 64 bytes. (#169)
+
 - Commands are obeyed in the order sent, so the last one wins. The player
   reports the controller it obeyed last.
 - A player acknowledges commands with `applied_seq`. Only commands after that
@@ -440,8 +445,11 @@ artists are refused as not found. (#140)
 `scrobble` with `submission=true` (the default) counts one play for the calling
 user and the song. The optional `time` parameter (ms since the epoch) is the
 play's time; the n-th `time` goes with the n-th `id`. Without it the server
-clock is used. A retried submission with the same time counts once. Retry keys
-are kept for one day; the counts are kept indefinitely.
+clock is used. A time more than 5 minutes ahead is stored as now, and one more
+than a year old as one year ago, so plays queued offline keep their time and a
+future time cannot top the recent lists (#185). A retried submission with the
+same time counts once, also when its time was clamped. Retry keys are kept for
+one day; the counts are kept indefinitely.
 
 Song objects carry `playCount` for the caller (0 when there are no plays) and,
 once there is a play, `played` (UTC time of the last play). `submission=false`
@@ -470,6 +478,9 @@ remain. Saving with no ids clears the queue.
 players reports as playing. A player's report replaces its previous one and
 expires after 30 minutes without an update. The reports are kept in memory
 only, so a restart clears them. `getNowPlaying` lists the caller's players only.
+A `playerId` is at most 64 characters (error 10 otherwise), and a user has at
+most 16 players listed; a new one replaces the one that reported longest ago
+(#185).
 
 **Similar and top songs**: `getSimilarSongs` and `getSimilarSongs2` take a song
 id and return songs whose BPM is within 3 % of its BPM, nearest first, with the
@@ -745,7 +756,9 @@ query with no letters or digits finds nothing (#195).
 **Playlists** — `getPlaylists`, `getPlaylist`, `createPlaylist`,
 `updatePlaylist`, `deletePlaylist`
 
-**Starring** — `star`, `unstar`
+**Starring** — `star`, `unstar`. Only an existing song, album or artist can be
+starred (error 70 otherwise); `unstar` takes any id, so old entries can be
+removed (#185).
 
 **Bookmarks** — `getBookmarks`, `createBookmark`, `deleteBookmark`
 
@@ -1513,7 +1526,7 @@ to tell apart have a code of their own (`database_error`, `invalid_json`,
 `librarian_required`, `registration_disabled`, `passkeys_unavailable`,
 `no_passkey`, `ceremony_expired`, `sso_not_configured`, `sso_unavailable`,
 `last_sign_in_method`, `job_running`, `no_job_running`, `import_running`,
-`tool_unavailable`, `username_taken`); the rest have the generic code of their
+`tool_unavailable`, `username_taken`, `too_many_players`); the rest have the generic code of their
 status: `bad_request`, `unauthorized`, `forbidden`, `not_found`,
 `method_not_allowed` (with `Allow`), `conflict`,
 `too_large`, `unsupported_media_type`, `rate_limited`, `internal_error` or

@@ -265,6 +265,15 @@ type indexedArtist struct {
 	artist      models.Artist
 }
 
+// indexedIDs is the artist ids of a page of the index.
+func indexedIDs(list []indexedArtist) []string {
+	ids := make([]string, len(list))
+	for i, a := range list {
+		ids[i] = a.artist.ID
+	}
+	return ids
+}
+
 // sortArtistsForIndex orders artists by index letter, then name without
 // article, then id, so the flat order is the order of the grouped index and
 // paging through it is stable. The names themselves are not changed.
@@ -488,12 +497,14 @@ func (s *State) GetArtists(w http.ResponseWriter, r *http.Request) {
 	if headDone(w, r) {
 		return
 	}
-	counts, err := repoAlbumCountsByArtist(ctx, s.Pool)
+	// The sort strips ignored articles, so it runs here on the small
+	// artist rows; album counts are read for the page only (#200).
+	sorted := pageSlice(sortArtistsForIndex(artists, s.ignoredArticles()), pageParams(r))
+	counts, err := repoAlbumCountsByArtist(ctx, s.Pool, indexedIDs(sorted))
 	if err != nil {
 		s.dbFailed(w, "GetArtists", err)
 		return
 	}
-	sorted := pageSlice(sortArtistsForIndex(artists, s.ignoredArticles()), pageParams(r))
 	writeOK(w, J{
 		"artists": J{
 			"ignoredArticles": strings.Join(s.ignoredArticles(), " "),
@@ -646,12 +657,14 @@ func (s *State) GetIndexes(w http.ResponseWriter, r *http.Request) {
 	if headDone(w, r) {
 		return
 	}
-	counts, err := repoAlbumCountsByArtist(ctx, s.Pool)
+	// The sort strips ignored articles, so it runs here on the small
+	// artist rows; album counts are read for the page only (#200).
+	sorted := pageSlice(sortArtistsForIndex(artists, s.ignoredArticles()), pageParams(r))
+	counts, err := repoAlbumCountsByArtist(ctx, s.Pool, indexedIDs(sorted))
 	if err != nil {
 		s.dbFailed(w, "GetIndexes", err)
 		return
 	}
-	sorted := pageSlice(sortArtistsForIndex(artists, s.ignoredArticles()), pageParams(r))
 	writeOK(w, J{
 		"indexes": J{
 			"lastModified":    0,
@@ -980,6 +993,19 @@ func (s *State) starOp(w http.ResponseWriter, r *http.Request, star bool) {
 	}
 	var err error
 	if star {
+		// Only an existing song, album or artist can be starred (#185):
+		// junk ids would pile up per user and go out in the change feed.
+		// Unstarring an unknown id stays allowed, so old junk can be removed.
+		exists, xerr := repoLibraryItemExists(r.Context(), s.Pool, target)
+		if xerr != nil {
+			logging.Errorf("starOp: %v", xerr)
+			writeError(w, 0, "database error")
+			return
+		}
+		if !exists {
+			writeError(w, 70, "Item not found")
+			return
+		}
 		err = repoStar(r.Context(), s.Pool, caller.ID, target, nowISO8601())
 	} else {
 		err = repoUnstar(r.Context(), s.Pool, caller.ID, target)
@@ -1158,7 +1184,9 @@ func (s *State) Scrobble(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for i, id := range ids {
-		if err := repoRecordPlay(ctx, s.Pool, caller.ID, id, playedMs[i], now); err != nil {
+		// The retry key is the time as sent, so a retry dedupes even when
+		// the stored time is clamped (#185).
+		if err := repoRecordPlay(ctx, s.Pool, caller.ID, id, playedMs[i], clampPlayTime(playedMs[i], now), now); err != nil {
 			s.dbFailed(w, "scrobble", err)
 			return
 		}
@@ -1275,26 +1303,18 @@ func (s *State) searchN(w http.ResponseWriter, r *http.Request, wrap string) {
 
 // ── Playlists ───────────────────────────────────────────────────────────────
 
-func (s *State) playlistJSON(r *http.Request, pl *models.Playlist) (J, error) {
-	songs, err := repoPlaylistSongs(r.Context(), s.Pool, pl.ID)
-	if err != nil {
-		return nil, err
-	}
-	var durMs int64
-	for _, sg := range songs {
-		durMs += sg.DurationMs
-	}
+func playlistJSON(pl *models.Playlist, t playlistTotals) J {
 	return J{
 		"id":        pl.ID,
 		"name":      pl.Name,
 		"comment":   nsToAny(pl.Comment),
-		"songCount": len(songs),
-		"duration":  durMs / 1000,
+		"songCount": t.songs,
+		"duration":  t.durationMs / 1000,
 		"public":    false, // playlists are private to their owner (#190)
 		"created":   pl.CreatedAt,
 		"changed":   pl.UpdatedAt,
 		"coverArt":  nil,
-	}, nil
+	}
 }
 
 func (s *State) GetPlaylists(w http.ResponseWriter, r *http.Request) {
@@ -1312,14 +1332,14 @@ func (s *State) GetPlaylists(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	playlists = pageSlice(playlists, pageParams(r))
+	totals, err := repoPlaylistTotals(r.Context(), s.Pool, caller.ID)
+	if err != nil {
+		s.dbFailed(w, "GetPlaylists", err)
+		return
+	}
 	out := make([]J, 0, len(playlists))
 	for i := range playlists {
-		pj, err := s.playlistJSON(r, &playlists[i])
-		if err != nil {
-			s.dbFailed(w, "GetPlaylists", err)
-			return
-		}
-		out = append(out, pj)
+		out = append(out, playlistJSON(&playlists[i], totals[playlists[i].ID]))
 	}
 	writeOK(w, J{"playlists": J{"playlist": out}})
 }
@@ -1416,7 +1436,7 @@ func (s *State) CreatePlaylist(w http.ResponseWriter, r *http.Request) {
 		if pl == nil {
 			err = repoCreatePlaylist(ctx, tx, caller.ID, id, name, now)
 		} else {
-			err = repoRenamePlaylist(ctx, tx, id, name, now)
+			err = repoRenamePlaylist(ctx, tx, caller.ID, id, name, now)
 		}
 		if err != nil || len(songIDs) == 0 {
 			return err
@@ -1499,12 +1519,12 @@ func (s *State) UpdatePlaylist(w http.ResponseWriter, r *http.Request) {
 	// of the playlist before this call, so they run before the additions.
 	err = s.inTx(ctx, func(tx *sql.Tx) error {
 		if v, ok := singleParam(r, "name"); ok {
-			if err := repoRenamePlaylist(ctx, tx, id, v, now); err != nil {
+			if err := repoRenamePlaylist(ctx, tx, caller.ID, id, v, now); err != nil {
 				return err
 			}
 		}
 		if v, ok := singleParam(r, "comment"); ok {
-			if err := repoSetPlaylistComment(ctx, tx, id, v, now); err != nil {
+			if err := repoSetPlaylistComment(ctx, tx, caller.ID, id, v, now); err != nil {
 				return err
 			}
 		}

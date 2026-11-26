@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -104,6 +105,11 @@ type State struct {
 	// for streams is what keeps first-byte latency under client timeouts on
 	// slow hardware (WASM SQLite on armv6 is the dominant cost otherwise).
 	songCache sync.Map
+	// songCacheGen counts evictions. A reader stores what it read from the
+	// database only if no eviction happened since it started reading, so a
+	// slow preload or lookup cannot put back a path a scan just removed
+	// (#197).
+	songCacheGen atomic.Uint64
 }
 
 func (s *State) ignoredArticles() []string {
@@ -123,6 +129,7 @@ func (s *State) lookupSong(ctx context.Context, id string) (path, contentType st
 		r := v.(songRef)
 		return r.Path, r.ContentType, true, nil
 	}
+	gen := s.songCacheGen.Load()
 	song, err := repoFindSong(ctx, s.Pool, id)
 	if err != nil {
 		return "", "", false, err
@@ -130,13 +137,33 @@ func (s *State) lookupSong(ctx context.Context, id string) (path, contentType st
 	if song == nil {
 		return "", "", false, nil
 	}
-	s.songCache.Store(id, songRef{Path: song.Path, ContentType: song.ContentType})
+	s.cacheSong(gen, id, songRef{Path: song.Path, ContentType: song.ContentType})
 	return song.Path, song.ContentType, true, nil
 }
 
-func (s *State) evictSong(id string) { s.songCache.Delete(id) }
+// cacheSong stores ref unless an eviction happened since gen was read.
+// The check and the store are not one step, so an eviction can still slip in
+// between; the stream handler's evictSong on a failed open covers that case.
+func (s *State) cacheSong(gen uint64, id string, ref songRef) bool {
+	if s.songCacheGen.Load() != gen {
+		return false
+	}
+	s.songCache.Store(id, ref)
+	return true
+}
 
+// evictSong drops a song from the cache. The scanner and the watcher call it
+// for every song they insert, update or remove (scanner.Progress.SetSongChanged).
+func (s *State) evictSong(id string) {
+	s.songCacheGen.Add(1)
+	s.songCache.Delete(id)
+}
+
+// preloadSongs warms the cache at startup. It stops at the first eviction:
+// the rows it is reading may be older than the scan that evicted, and the
+// rest of the cache fills on demand.
 func (s *State) preloadSongs(ctx context.Context) {
+	gen := s.songCacheGen.Load()
 	rows, err := s.Pool.QueryContext(ctx, "SELECT id, path, content_type FROM songs")
 	if err != nil {
 		logging.Errorf("song cache preload: %v", err)
@@ -149,7 +176,10 @@ func (s *State) preloadSongs(ctx context.Context) {
 		if err := rows.Scan(&id, &path, &ct); err != nil {
 			continue
 		}
-		s.songCache.Store(id, songRef{Path: path, ContentType: ct})
+		if !s.cacheSong(gen, id, songRef{Path: path, ContentType: ct}) {
+			logging.Debugf("song cache: preload stopped after %d entries, the library changed", n)
+			return
+		}
 		n++
 	}
 	logging.Debugf("song cache: %d entries preloaded", n)
@@ -182,6 +212,7 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 		go s.queueAnalysis()
 	}
 
+	progress.SetSongChanged(s.evictSong)
 	go s.preloadSongs(ctx)
 	s.impressumHTML, s.impressumOK = renderImpressum(cfg.Site.ImpressumFile)
 	s.legacyPasswordOff = !cfg.LegacyPasswordAuth

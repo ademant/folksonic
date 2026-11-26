@@ -216,3 +216,20 @@ func waitFor(t *testing.T, cond func() bool) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+// A tool that exits at once still gets its limits applied without an error:
+// its pid is held until Wait (#187).
+func TestToolLimitsOnAnExitedChild(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("limits are Linux only")
+	}
+	tool := filepath.Join(t.TempDir(), "quick")
+	if err := os.WriteFile(tool, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for range 20 {
+		if _, _, err := runTool(context.Background(), tool, nil, nil, 256<<20); err != nil {
+			t.Fatalf("quick tool: %v", err)
+		}
+	}
+}
