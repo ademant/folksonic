@@ -1,9 +1,11 @@
-# tinysonic
+# Folksonic
 
-A tiny, self-contained [Subsonic](http://www.subsonic.org/pages/api.jsp)-compatible
-music server written in **pure Go** (no cgo). Point it at a folder of music, give
-it an account (created with `tinysonic user add`), and any
-[Subsonic client](https://www.navidrome.org/apps/) can browse and stream your library.
+Folksonic is a self-hosted [Subsonic](http://www.subsonic.org/pages/api.jsp) and
+OpenSubsonic-compatible music server written in **pure Go** (no cgo). Its
+server binary is `tinysonic`. Point it at your music library and Android or
+other Subsonic clients can browse and stream it. Folksonic adds multi-user
+accounts and extensible metadata, including configurable file tags and
+versioned vendor extensions.
 
 ```
  _   _                             _
