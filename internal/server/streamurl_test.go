@@ -21,7 +21,9 @@ import (
 func streamFixture(t *testing.T) (*State, string, int64) {
 	t.Helper()
 	s, _, _ := keyFixture(t)
-	audio := filepath.Join(t.TempDir(), "track.mp3")
+	music := t.TempDir()
+	s.MusicDirs = []string{music} // streams are served from the music folders only (#177)
+	audio := filepath.Join(music, "track.mp3")
 	if err := os.WriteFile(audio, []byte("audio bytes"), 0o644); err != nil {
 		t.Fatal(err)
 	}

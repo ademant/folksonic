@@ -34,6 +34,26 @@ music.example.com {
     #     }
     # }
 
+    # Caddy writes no access log unless a log directive asks for one. Its
+    # access log records the full URI and the request headers, so a log
+    # must drop the credentials (#179): the Subsonic password and token
+    # (p, t, s), API keys (apiKey, and the X-Api-Key header) and signed
+    # stream links (sig). Caddy 2.8 or newer; check with caddy validate.
+    #
+    # log {
+    #     output file /var/log/caddy/tinysonic-access.log
+    #     format filter {
+    #         request>uri query {
+    #             delete p
+    #             delete t
+    #             delete s
+    #             delete apiKey
+    #             delete sig
+    #         }
+    #         request>headers>X-Api-Key delete
+    #     }
+    # }
+
     # WebSocket upgrades (the device relay, #159) are proxied by reverse_proxy
     # without extra configuration.
     reverse_proxy 127.0.0.1:4534 {

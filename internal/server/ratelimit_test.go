@@ -199,7 +199,9 @@ func TestStreamSlotsAreCappedAndReleased(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	file := filepath.Join(t.TempDir(), "track.flac")
+	music := t.TempDir()
+	s.MusicDirs = []string{music} // streams are served from the music folders only (#177)
+	file := filepath.Join(music, "track.flac")
 	if err := os.WriteFile(file, []byte("audio-bytes"), 0o600); err != nil {
 		t.Fatal(err)
 	}
