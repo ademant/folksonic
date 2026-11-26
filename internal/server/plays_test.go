@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tsirysndr/tinysonic/internal/users"
 )
@@ -40,22 +41,32 @@ func TestScrobbleCountsEachPlay(t *testing.T) {
 	}
 }
 
-// A retried submission carries the same play time, so it counts once.
+// A retried submission carries the same play time, so it counts once, also
+// when the time is clamped (more than a year old or in the future, #185).
 func TestScrobbleRetryWithSameTimeCountsOnce(t *testing.T) {
 	s, _, key := keyFixture(t)
-	for i := 0; i < 3; i++ {
-		scrobble(t, s, key, "id=so-1&time=1700000000000")
+	for _, played := range []string{"1700000000000", fmt.Sprint(time.Now().Add(48 * time.Hour).UnixMilli())} {
+		for i := 0; i < 3; i++ {
+			scrobble(t, s, key, "id=so-1&time="+played)
+		}
 	}
-	if body := songBody(t, s, key, "so-1"); !strings.Contains(body, `"playCount":1`) {
+	for i := 0; i < 3; i++ {
+		scrobble(t, s, key, "id=so-2&time=1700000000000")
+	}
+	if body := songBody(t, s, key, "so-2"); !strings.Contains(body, `"playCount":1`) {
 		t.Fatalf("retried play counted more than once: %s", body)
+	}
+	if body := songBody(t, s, key, "so-1"); !strings.Contains(body, `"playCount":2`) {
+		t.Fatalf("retried plays (two distinct times) counted wrong: %s", body)
 	}
 }
 
 // The played field is the time of the last play, in UTC.
 func TestScrobbleSetsPlayedFromTime(t *testing.T) {
 	s, _, key := keyFixture(t)
-	scrobble(t, s, key, "id=so-1&time=1700000000000")
-	if body := songBody(t, s, key, "so-1"); !strings.Contains(body, `"played":"2023-11-14T22:13:20Z"`) {
+	played := time.Now().Add(-30 * 24 * time.Hour).Truncate(time.Second).UTC()
+	scrobble(t, s, key, fmt.Sprintf("id=so-1&time=%d", played.UnixMilli()))
+	if body := songBody(t, s, key, "so-1"); !strings.Contains(body, `"played":"`+played.Format(time.RFC3339)+`"`) {
 		t.Fatalf("played: %s", body)
 	}
 }

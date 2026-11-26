@@ -90,14 +90,16 @@ func handleEvent(w *fsnotify.Watcher, pool *sql.DB, roots []string, coversDir st
 		// We don't know whether the path was a file or a directory anymore.
 		// Try the single-song path first, then a prefix sweep in case a whole
 		// directory disappeared without per-file events.
-		if err := DeletePath(pool, ev.Name); err != nil {
+		if id, err := DeletePath(pool, ev.Name); err != nil {
 			logging.Errorf("watch delete %s: %v", ev.Name, err)
+		} else {
+			progress.songChanged(id)
 		}
 		// A file cannot contain songs, so the directory sweep is only needed
 		// for paths that are not audio files. This avoids a full-table LIKE
 		// scan on every removed audio file.
 		if !hasAudioExt(ev.Name) {
-			if err := deletePrefix(pool, ev.Name); err != nil {
+			if err := deletePrefix(pool, ev.Name, progress); err != nil {
 				logging.Errorf("watch delete prefix %s: %v", ev.Name, err)
 			}
 		}
@@ -117,9 +119,11 @@ func runProcess(pool *sql.DB, roots []string, coversDir string, songTags []strin
 	switch res {
 	case resultInserted:
 		logging.Infof("watch: added %s", path)
+		progress.songChanged(SongID(path))
 		progress.changed()
 	case resultUpdated:
 		logging.Infof("watch: updated %s", path)
+		progress.songChanged(SongID(path))
 		progress.changed()
 	}
 }
@@ -150,12 +154,12 @@ func addRecursive(w *fsnotify.Watcher, root string) int {
 }
 
 // DeletePath removes the song at path from the library and prunes its album
-// and artist if they no longer have any songs. It is a no-op if no song with
-// that path exists.
-func DeletePath(pool *sql.DB, path string) error {
+// and artist if they no longer have any songs. It returns the removed song's
+// id, or "" when no song has that path.
+func DeletePath(pool *sql.DB, path string) (string, error) {
 	tx, err := pool.Begin()
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer tx.Rollback()
 
@@ -164,11 +168,15 @@ func DeletePath(pool *sql.DB, path string) error {
 		"SELECT id, album_id, artist_id FROM songs WHERE path = ?", path,
 	).Scan(&songID, &albumID, &artistID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil
+		return "", nil
 	}
 	if err != nil {
-		return err
+		return "", err
 	}
+	return songID, deleteSongTx(tx, path, songID, albumID, artistID)
+}
+
+func deleteSongTx(tx *sql.Tx, path, songID, albumID, artistID string) error {
 
 	if _, err := tx.Exec("DELETE FROM songs WHERE id = ?", songID); err != nil {
 		return err
@@ -232,15 +240,18 @@ func pruneArtist(tx *sql.Tx, artistID string) error {
 
 // deletePrefix removes every song whose path lives under prefix. Used when a
 // directory is removed and we don't get per-file events for its contents.
-func deletePrefix(pool *sql.DB, prefix string) error {
+func deletePrefix(pool *sql.DB, prefix string, progress *Progress) error {
 	paths, err := songPathsUnder(pool, prefix)
 	if err != nil {
 		return err
 	}
 	for _, p := range paths {
-		if err := DeletePath(pool, p); err != nil {
+		id, err := DeletePath(pool, p)
+		if err != nil {
 			logging.Errorf("watch delete %s: %v", p, err)
+			continue
 		}
+		progress.songChanged(id)
 	}
 	return nil
 }

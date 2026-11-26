@@ -33,6 +33,12 @@ const (
 	maxPlayerName = 64
 	// maxRemotePosition bounds a position, in milliseconds (about 1000 hours).
 	maxRemotePosition = int64(1000 * 3600 * 1000)
+	// maxRemotePlayers bounds the players one account has on record (#169). A
+	// new player past it replaces the one that reported longest ago, if that
+	// one is offline; otherwise it is refused.
+	maxRemotePlayers = 16
+	// maxRemoteField bounds song_id and controller, in bytes (#169).
+	maxRemoteField = 64
 )
 
 // remoteCommandNames are the commands a controller may send.
@@ -142,7 +148,20 @@ func (s *State) APIRemoteReport(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "position_ms or applied_seq is out of range")
 		return
 	}
+	if len(in.SongID) > maxRemoteField || len(in.Controller) > maxRemoteField {
+		writeAPIError(w, http.StatusBadRequest, "song_id and controller are at most 64 bytes")
+		return
+	}
 	name := string([]rune(in.Name)[:min(len([]rune(in.Name)), maxPlayerName)])
+	switch err := s.makeRoomForPlayer(r.Context(), u.ID, pid, time.Now()); {
+	case errors.Is(err, errTooManyPlayers):
+		writeAPIErrorCode(w, http.StatusConflict, codeTooManyPlayers, "this account has 16 players that reported within the last minute; no room for another")
+		return
+	case err != nil:
+		logging.Errorf("remote report %s: %v", pid, err)
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
+		return
+	}
 	_, err := s.Pool.ExecContext(r.Context(),
 		"INSERT INTO remote_players (user_id, player_id, name, status, song_id, position_ms, reported_ms, applied_seq, controller) "+
 			"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "+
@@ -255,6 +274,10 @@ func (s *State) APIRemoteSend(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "seek needs position_ms between 0 and 1000 hours")
 		return
 	}
+	if len(in.SongID) > maxRemoteField {
+		writeAPIError(w, http.StatusBadRequest, "song_id is at most 64 bytes")
+		return
+	}
 	seq, err := repoSendRemoteCommand(r.Context(), s.Pool, u, pid, in.Command, in.PositionMs, in.SongID, time.Now())
 	if errors.Is(err, errUnknownPlayer) {
 		writeAPIError(w, http.StatusNotFound, "no such player; it has to report its state first")
@@ -275,7 +298,47 @@ func (s *State) APIRemoteSend(w http.ResponseWriter, r *http.Request) {
 var (
 	errUnknownPlayer   = errors.New("unknown player")
 	errTooManyCommands = errors.New("too many pending commands")
+	errTooManyPlayers  = errors.New("too many players")
 )
+
+// makeRoomForPlayer lets pid report for userID. A known player always may. A
+// new one past maxRemotePlayers replaces the player that reported longest
+// ago, with its commands, when that one is offline (#169).
+func (s *State) makeRoomForPlayer(ctx context.Context, userID int64, pid string, now time.Time) error {
+	tx, err := s.Pool.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var known, count int
+	if err := tx.QueryRowContext(ctx,
+		"SELECT COUNT(*) FILTER (WHERE player_id = ?), COUNT(*) FROM remote_players WHERE user_id = ?",
+		pid, userID).Scan(&known, &count); err != nil {
+		return err
+	}
+	if known > 0 || count < maxRemotePlayers {
+		return nil
+	}
+	var oldest string
+	var reported int64
+	if err := tx.QueryRowContext(ctx,
+		"SELECT player_id, reported_ms FROM remote_players WHERE user_id = ? ORDER BY reported_ms, player_id LIMIT 1",
+		userID).Scan(&oldest, &reported); err != nil {
+		return err
+	}
+	if reported >= now.Add(-remoteOnlineWindow).UnixMilli() {
+		return errTooManyPlayers
+	}
+	for _, q := range []string{
+		"DELETE FROM remote_commands WHERE user_id = ? AND player_id = ?",
+		"DELETE FROM remote_players WHERE user_id = ? AND player_id = ?",
+	} {
+		if _, err := tx.ExecContext(ctx, q, userID, oldest); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
 
 // repoSendRemoteCommand stores one command, after dropping expired commands for
 // that player. It refuses unknown players and a full queue.
@@ -293,9 +356,11 @@ func repoSendRemoteCommand(ctx context.Context, db *sql.DB, u users.User, pid, c
 	if known == 0 {
 		return 0, errUnknownPlayer
 	}
+	// Expired commands of every player of the account go, not only this
+	// one's, so a player that stopped polling does not keep its queue (#169).
 	cutoff := now.Add(-remoteCommandTTL).UnixMilli()
 	if _, err := tx.ExecContext(ctx,
-		"DELETE FROM remote_commands WHERE user_id = ? AND player_id = ? AND created_ms < ?", u.ID, pid, cutoff); err != nil {
+		"DELETE FROM remote_commands WHERE user_id = ? AND created_ms < ?", u.ID, cutoff); err != nil {
 		return 0, err
 	}
 	var pending int

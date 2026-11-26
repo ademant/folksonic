@@ -24,6 +24,9 @@ func TestMigrateSongCreated(t *testing.T) {
 		    INSERT INTO songs_fts (id, title, artist, album, genre)
 		    VALUES (NEW.id, NEW.title, NEW.artist, NEW.album, COALESCE(NEW.genre, ''));
 		 END`,
+		// The album figures index (#200) covers created_at; a database
+		// this old does not have it yet.
+		"DROP INDEX IF EXISTS idx_songs_album_stats",
 		"ALTER TABLE songs DROP COLUMN created_at",
 		`INSERT INTO artists (id, name, name_lower) VALUES ('ar-1', 'A', 'a')`,
 		`INSERT INTO albums (id, title, artist, artist_id) VALUES ('al-1', 'B', 'A', 'ar-1')`,

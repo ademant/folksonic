@@ -218,7 +218,8 @@ components:
             `sso_not_configured`, `sso_unavailable`, `last_sign_in_method`,
             `job_running`, `no_job_running`, `import_running`,
             `tool_unavailable`, `password_invalid`, `username_taken`
-            (409 from registration), `method_not_allowed` (405, with `Allow`).
+            (409 from registration), `too_many_players` (409 from a remote
+            player report), `method_not_allowed` (405, with `Allow`).
         message:
           type: string
           description: Text for people. Clients should not parse it.
@@ -834,15 +835,24 @@ paths:
               properties:
                 name: {type: string, description: Name shown to controllers (up to 64 characters.)}
                 status: {type: string, enum: [playing, paused, stopped]}
-                song_id: {type: string}
+                song_id: {type: string, maxLength: 64}
                 position_ms: {type: integer}
                 applied_seq: {type: integer}
-                controller: {type: string}
+                controller: {type: string, maxLength: 64}
       responses:
         '200':
           description: Stored.
         '400':
-          description: Invalid id, status, position or sequence.
+          description: Invalid id, status, position or sequence, or a song_id or controller over 64 bytes.
+        '409':
+          description: >-
+            `too_many_players`: the account has 16 players on record and the
+            one that reported longest ago did so within the last minute. A
+            new player otherwise replaces that one, with its commands.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /api/remote/players/{id}/commands:

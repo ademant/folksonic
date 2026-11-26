@@ -36,6 +36,7 @@ var migrations = []migration{
 	{"analysis import grant on api keys", migrateAnalysisImportGrant},
 	{"re-read Ogg durations", migrateOggDurations},
 	{"session activity and labels", migrateSessionActivity},
+	{"covering index for album figures", migrateAlbumStatsIndex},
 }
 
 // migrateBookmarks (version 4, #139) adds one bookmark per user and song. The
@@ -338,5 +339,13 @@ func migrateSessionActivity(tx *sql.Tx) error {
 	}
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	_, err := tx.Exec("UPDATE sessions SET created_at = COALESCE(created_at, ?), last_used_at = COALESCE(last_used_at, ?)", now, now)
+	return err
+}
+
+// migrateAlbumStatsIndex (version 14, #200) adds a covering index for the
+// song count, duration and created date of an album, so the three subqueries
+// in the server's albumCols read the index only, not the song rows.
+func migrateAlbumStatsIndex(tx *sql.Tx) error {
+	_, err := tx.Exec("CREATE INDEX IF NOT EXISTS idx_songs_album_stats ON songs(album_id, duration_ms, created_at)")
 	return err
 }

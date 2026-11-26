@@ -35,6 +35,7 @@ const (
 	codeToolUnavailable      = "tool_unavailable"
 	codeMethodNotAllowed     = "method_not_allowed"
 	codeUsernameTaken        = "username_taken"
+	codeTooManyPlayers       = "too_many_players"
 )
 
 // statusCodes are the generic codes of JSON API errors, by HTTP status.

@@ -41,6 +41,8 @@ func runTool(ctx context.Context, command string, args []string, okExit func(int
 	if err := cmd.Start(); err != nil {
 		return nil, nil, err
 	}
+	// Before Wait: until then the pid stays this child's, even if it has
+	// already exited (#187, see applyToolLimits).
 	bpm.LowerPriority(cmd.Process.Pid)
 	if err := applyToolLimits(cmd.Process.Pid, memLimit); err != nil {
 		_ = cmd.Process.Kill()

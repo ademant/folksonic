@@ -14,6 +14,26 @@ import (
 // counts in play_counts are kept beyond it.
 const playKeyRetention = 24 * time.Hour
 
+// A scrobble time more than playFutureSkew ahead is stored as now; one older
+// than playMaxAge as now − playMaxAge (#185). Plays queued offline keep their
+// time for a year; a future time cannot push a song to the top of the
+// recent lists.
+const (
+	playFutureSkew = 5 * time.Minute
+	playMaxAge     = 365 * 24 * time.Hour
+)
+
+// clampPlayTime bounds a client's play time, in Unix ms, around nowMs.
+func clampPlayTime(t, nowMs int64) int64 {
+	switch {
+	case t > nowMs+playFutureSkew.Milliseconds():
+		return nowMs
+	case t < nowMs-playMaxAge.Milliseconds():
+		return nowMs - playMaxAge.Milliseconds()
+	}
+	return t
+}
+
 // playStat is one user's count for one song.
 type playStat struct {
 	Count  int64
@@ -81,10 +101,11 @@ func repoPlayCounts(ctx context.Context, db *sql.DB, userID int64, ids []any) (p
 	return out, rated.Err()
 }
 
-// repoRecordPlay counts one play of songID for userID at playedMs. A play whose
-// key is already recorded (a retry) is not counted again. The key and the
-// count change in one transaction, and the expired keys are pruned in it too.
-func repoRecordPlay(ctx context.Context, db *sql.DB, userID int64, songID string, playedMs, nowMs int64) error {
+// repoRecordPlay counts one play of songID for userID at playedMs. keyMs is
+// the time the client sent, the retry key: a play whose key is already
+// recorded (a retry) is not counted again. The key and the count change in
+// one transaction, and the expired keys are pruned in it too.
+func repoRecordPlay(ctx context.Context, db *sql.DB, userID int64, songID string, keyMs, playedMs, nowMs int64) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -96,7 +117,7 @@ func repoRecordPlay(ctx context.Context, db *sql.DB, userID int64, songID string
 	res, err := tx.ExecContext(ctx,
 		"INSERT INTO play_keys (user_id, song_id, played_ms, seen_ms) VALUES (?, ?, ?, ?) "+
 			"ON CONFLICT(user_id, song_id, played_ms) DO NOTHING",
-		userID, songID, playedMs, nowMs)
+		userID, songID, keyMs, nowMs)
 	if err != nil {
 		return err
 	}
