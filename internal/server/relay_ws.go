@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -33,6 +34,8 @@ const (
 	relayRateBurst  = 60
 	// relayMaxConnsPerUser bounds the devices of one user connected at once.
 	relayMaxConnsPerUser = 8
+	// relayMaxConns bounds the relay's connections across all users (#182).
+	relayMaxConns = 1000
 	// relayPingEvery is how often the server pings; relayIdle is how long a device
 	// may stay silent before the connection is dropped.
 	relayPingEvery = 30 * time.Second
@@ -116,10 +119,11 @@ func (w *wsConn) readFrame() (byte, []byte, error) {
 		return 0, nil, err
 	}
 	fin := h[0]&0x80 != 0
+	rsv := h[0] & 0x70 // no extension is negotiated, so these must be 0 (#182)
 	op := h[0] & 0x0f
 	masked := h[1]&0x80 != 0
 	n := uint64(h[1] & 0x7f)
-	if !fin || !masked || (op != opText && op != opBinary && op != opClose && op != opPing && op != opPong) {
+	if !fin || rsv != 0 || !masked || (op != opText && op != opBinary && op != opClose && op != opPing && op != opPong) {
 		return 0, nil, errWSProtocol
 	}
 	switch n {
@@ -218,6 +222,7 @@ type relayConn struct {
 type relayHub struct {
 	mu    sync.Mutex
 	conns map[int64]map[string]*relayConn
+	total int // connections across all users, at most relayMaxConns
 }
 
 // add registers a connection. A device that connects again replaces its earlier
@@ -238,10 +243,11 @@ func (h *relayHub) add(c *relayConn) (replaced *relayConn, ok bool) {
 		m[c.dev] = c
 		return prev, true
 	}
-	if len(m) >= relayMaxConnsPerUser {
+	if len(m) >= relayMaxConnsPerUser || h.total >= relayMaxConns {
 		return nil, false
 	}
 	m[c.dev] = c
+	h.total++
 	return nil, true
 }
 
@@ -251,6 +257,7 @@ func (h *relayHub) remove(c *relayConn) {
 	defer h.mu.Unlock()
 	if m := h.conns[c.user]; m != nil && m[c.dev] == c {
 		delete(m, c.dev)
+		h.total--
 		if len(m) == 0 {
 			delete(h.conns, c.user)
 		}
@@ -270,6 +277,7 @@ func (h *relayHub) disconnect(user int64, dev string) {
 	c := h.conns[user][dev]
 	if c != nil {
 		delete(h.conns[user], dev)
+		h.total--
 	}
 	h.mu.Unlock()
 	if c != nil {
@@ -278,8 +286,19 @@ func (h *relayHub) disconnect(user int64, dev string) {
 }
 
 // APIRelayConnect upgrades the request to the relay for one of the caller's
-// devices. The device must have a record. Credentials are headers, never the URL.
+// devices. The device must have a record. Credentials must be headers
+// (X-Api-Key, or a device's DPoP proof): an apiKey in the URL is refused, so a
+// long-lived key never sits in a WebSocket URL (#182). A browser's Origin, when
+// sent, must be this server's.
 func (s *State) APIRelayConnect(w http.ResponseWriter, r *http.Request) {
+	if params(r).Get("apiKey") != "" {
+		writeAPIError(w, http.StatusBadRequest, "send the API key in the X-Api-Key header, not in the URL")
+		return
+	}
+	if !s.sameOrigin(r) {
+		writeAPIError(w, http.StatusForbidden, "cross-origin WebSocket connections are refused")
+		return
+	}
 	u, ok := s.requireUser(w, r)
 	if !ok {
 		return
@@ -356,6 +375,16 @@ func (s *State) relayLoop(conn *relayConn) {
 			}
 			return
 		}
+		// Every client frame spends, pings too: a pong echoes its payload,
+		// so free pings would be free traffic (#182).
+		now := time.Now()
+		tokens = min(float64(relayRateBurst), tokens+now.Sub(last).Seconds()*relayRatePerSec)
+		last = now
+		tokens--
+		if tokens < 0 && op != opClose {
+			ws.closeWith(closePolicy, "rate limit")
+			return
+		}
 		switch op {
 		case opPing:
 			_ = ws.writeFrame(opPong, payload)
@@ -367,14 +396,6 @@ func (s *State) relayLoop(conn *relayConn) {
 			ws.closeWith(closeUnsupported, "binary frames only")
 			return
 		case opBinary:
-			now := time.Now()
-			tokens = min(float64(relayRateBurst), tokens+now.Sub(last).Seconds()*relayRatePerSec)
-			last = now
-			tokens--
-			if tokens < 0 {
-				ws.closeWith(closePolicy, "rate limit")
-				return
-			}
 			if err := s.relayRoute(conn, payload); err != nil {
 				ws.closeWith(closeTooBig, "message too big")
 				return
@@ -425,4 +446,22 @@ func (s *State) relayRoute(from *relayConn, payload []byte) error {
 // sendRelayNote sends a small text control message to one device.
 func sendRelayNote(ws *wsConn, note string) error {
 	return ws.writeFrame(opText, []byte(note))
+}
+
+// sameOrigin reports whether a request's Origin, if it has one, is this
+// server: the scheme and host of base_url, or the request's own host when
+// base_url is unset. Native apps send no Origin and pass (#182).
+func (s *State) sameOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	o, err := url.Parse(origin)
+	if err != nil || o.Host == "" {
+		return false
+	}
+	if b, err := url.Parse(s.BaseURL); err == nil && b.Host != "" {
+		return strings.EqualFold(o.Scheme, b.Scheme) && strings.EqualFold(o.Host, b.Host)
+	}
+	return strings.EqualFold(o.Host, r.Host)
 }

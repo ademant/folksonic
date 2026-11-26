@@ -75,9 +75,11 @@ type Config struct {
 	// APIKeyIdleDays revokes a key that has not been used for this many days.
 	// Load sets the default (180).
 	APIKeyIdleDays int `toml:"api_key_idle_days"`
-	// RequireHTTPS refuses plain HTTP on every endpoint. Unset, it is on when
-	// base_url is a public name and off for a private or loopback address; see
-	// HTTPSRequired.
+	// RequireHTTPS refuses plain HTTP on every endpoint. Unset, it is on; see
+	// HTTPSRequired. A request from the server itself (loopback, without proxy
+	// headers) is let through either way, so local tools and the deploy health
+	// check work over plain HTTP: anything that can open a loopback connection
+	// on the server is trusted as much as the server.
 	RequireHTTPS *bool `toml:"require_https"`
 	// TLSCert and TLSKey serve HTTPS directly, without a reverse proxy: a PEM
 	// certificate and its private key. Both or neither. `tinysonic cert` makes
@@ -209,6 +211,12 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("config: log_level: %w", err)
 	}
 	c.LogLevel = strings.ToLower(lvl.String())
+	if c.Port < 1 || c.Port > 65535 {
+		return nil, fmt.Errorf("config: port: %d is not between 1 and 65535", c.Port)
+	}
+	if err := checkHost(c.Host); err != nil {
+		return nil, err
+	}
 	if c.DBCacheMB < 1 {
 		return nil, errors.New("config: db_cache_mb must be at least 1")
 	}
@@ -408,4 +416,27 @@ func (c *Config) HTTPSRequired() bool {
 		return *c.RequireHTTPS
 	}
 	return true
+}
+
+// checkHost accepts an IP address or a host name for host (#188); empty
+// listens on every interface. Anything else would only fail later, in
+// ListenAndServe, with a less helpful error.
+func checkHost(host string) error {
+	if host == "" {
+		return nil
+	}
+	if _, err := netip.ParseAddr(strings.Trim(host, "[]")); err == nil {
+		return nil
+	}
+	for _, label := range strings.Split(host, ".") {
+		if label == "" || len(label) > 63 || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return fmt.Errorf("config: host: %q is not an IP address or a host name", host)
+		}
+		for _, r := range label {
+			if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-') {
+				return fmt.Errorf("config: host: %q is not an IP address or a host name", host)
+			}
+		}
+	}
+	return nil
 }

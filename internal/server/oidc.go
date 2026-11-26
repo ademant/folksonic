@@ -63,7 +63,12 @@ type timedEntry[T any] struct {
 	expires time.Time
 }
 
-func (t *timedStore[T]) put(key string, v T, ttl time.Duration) {
+// maxTimedEntries bounds a timedStore (#168): pending OIDC flows and
+// hand-offs. A full store refuses new entries until some expire.
+const maxTimedEntries = 1000
+
+// put stores v for ttl. It reports false when the store is full.
+func (t *timedStore[T]) put(key string, v T, ttl time.Duration) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.m == nil {
@@ -75,7 +80,11 @@ func (t *timedStore[T]) put(key string, v T, ttl time.Duration) {
 			delete(t.m, k)
 		}
 	}
+	if len(t.m) >= maxTimedEntries {
+		return false
+	}
 	t.m[key] = timedEntry[T]{v: v, expires: now.Add(ttl)}
+	return true
 }
 
 func (t *timedStore[T]) take(key string) (T, bool) {
@@ -151,7 +160,7 @@ func (s *State) APIOIDCStatus(w http.ResponseWriter, r *http.Request) {
 // Mode signin uses an existing link, link adds an identity to the signed-in
 // account, and invite creates an account with the invitation.
 func (s *State) APIOIDCBegin(w http.ResponseWriter, r *http.Request) {
-	if !s.requireOIDC(w) {
+	if !s.requireOIDC(w) || s.throttled(w, r, &s.beginLimit) {
 		return
 	}
 	var in struct {
@@ -213,7 +222,10 @@ func (s *State) APIOIDCBegin(w http.ResponseWriter, r *http.Request) {
 	state := newCeremonyID()
 	flow.verifier = oauth2.GenerateVerifier()
 	flow.nonce = newCeremonyID()
-	s.sso.flows.put(state, flow, oidcFlowTTL)
+	if !s.sso.flows.put(state, flow, oidcFlowTTL) {
+		errCeremoniesFull(w)
+		return
+	}
 	authURL := oauthCfg.AuthCodeURL(state,
 		oauth2.S256ChallengeOption(flow.verifier), oidc.Nonce(flow.nonce))
 	writeJSON(w, http.StatusOK, J{"url": authURL})
@@ -299,7 +311,10 @@ func (s *State) APIOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	code := newCeremonyID()
-	s.sso.handoffs.put(code, oidcHandoff{userID: userID, client: flow.client}, oidcHandoffTTL)
+	if !s.sso.handoffs.put(code, oidcHandoff{userID: userID, client: flow.client}, oidcHandoffTTL) {
+		s.oidcFail(w, r, flow, "too many sign-ins are in progress; try again in a minute")
+		return
+	}
 	s.oidcRedirect(w, r, flow, url.Values{"code": {code}})
 }
 
@@ -366,7 +381,7 @@ func (s *State) APIOIDCExchange(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, J{"apiKey": key, "username": u.Username, "server": s.serverURL(r)})
 		return
 	}
-	token, err := users.CreateSession(r.Context(), s.Pool, u.ID)
+	token, err := s.newSession(r, u.ID)
 	if err != nil {
 		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return

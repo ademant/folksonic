@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -232,7 +233,7 @@ func (s *State) registerWithInvite(w http.ResponseWriter, r *http.Request, usern
 		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
-	token, err := users.CreateSession(r.Context(), s.Pool, u.ID)
+	token, err := s.newSession(r, u.ID)
 	if err != nil {
 		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
@@ -255,8 +256,11 @@ func (s *State) APICreateKey(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &in) {
 		return
 	}
-	if in.ExpiresDays < 0 || in.ExpiresDays > 3650 {
-		writeAPIError(w, http.StatusBadRequest, "expires_days must be between 0 and 3650")
+	// A key may ask for less than the server's lifetime, never more
+	// (#199): api_key_ttl_days is the administrator's upper bound.
+	maxDays := int(users.KeyTTL / (24 * time.Hour))
+	if in.ExpiresDays < 0 || in.ExpiresDays > maxDays {
+		writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("expires_days must be between 0 and %d (api_key_ttl_days)", maxDays))
 		return
 	}
 	ttl := time.Duration(in.ExpiresDays) * 24 * time.Hour

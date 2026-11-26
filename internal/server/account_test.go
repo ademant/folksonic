@@ -41,7 +41,7 @@ func TestPasskeyRemovalKeepsOneSignInMethod(t *testing.T) {
 	if err := users.AddPasskey(ctx, s.Pool, withPassword.ID, "{}", "laptop"); err != nil {
 		t.Fatal(err)
 	}
-	token, _ := users.CreateSession(ctx, s.Pool, withPassword.ID)
+	token, _ := users.CreateSession(ctx, s.Pool, withPassword.ID, "")
 	list := bearerCall(t, s, token, http.MethodGet, "/api/passkeys", "")
 	if list.Code != http.StatusOK || !strings.Contains(list.Body.String(), `"label":"laptop"`) {
 		t.Fatalf("list: %d %s", list.Code, list.Body.String())
@@ -56,7 +56,7 @@ func TestPasskeyRemovalKeepsOneSignInMethod(t *testing.T) {
 	if err := users.AddPasskey(ctx, s.Pool, judy.ID, "{}", ""); err != nil {
 		t.Fatal(err)
 	}
-	judyToken, _ := users.CreateSession(ctx, s.Pool, judy.ID)
+	judyToken, _ := users.CreateSession(ctx, s.Pool, judy.ID, "")
 	passkeys, _ := users.ListPasskeys(ctx, s.Pool, judy.ID)
 	rec := bearerCall(t, s, judyToken, http.MethodDelete, "/api/passkeys/"+itoa(passkeys[0].ID), "")
 	if rec.Code != http.StatusConflict {
@@ -94,7 +94,7 @@ func TestPasskeyCannotBeRemovedByAnotherAccount(t *testing.T) {
 	}
 	recs, _ := users.ListPasskeys(ctx, s.Pool, owner.ID)
 	intruder, _ := users.Create(ctx, s.Pool, "lee", "pw", users.RoleUser, users.StatusActive)
-	token, _ := users.CreateSession(ctx, s.Pool, intruder.ID)
+	token, _ := users.CreateSession(ctx, s.Pool, intruder.ID, "")
 	if rec := bearerCall(t, s, token, http.MethodDelete, "/api/passkeys/"+itoa(recs[0].ID), ""); rec.Code != http.StatusNotFound {
 		t.Fatalf("status %d, want 404", rec.Code)
 	}
@@ -109,7 +109,7 @@ func TestPairQRFormats(t *testing.T) {
 	s := newTestState(t)
 	ctx := context.Background()
 	mona, _ := users.Create(ctx, s.Pool, "mona", "pw", users.RoleUser, users.StatusActive)
-	token, _ := users.CreateSession(ctx, s.Pool, mona.ID)
+	token, _ := users.CreateSession(ctx, s.Pool, mona.ID, "")
 
 	svg := bearerCall(t, s, token, http.MethodPost, "/api/pair/qr", "image/svg+xml")
 	if svg.Code != http.StatusOK || svg.Header().Get("Content-Type") != "image/svg+xml" {

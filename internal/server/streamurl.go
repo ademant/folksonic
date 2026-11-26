@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -15,35 +16,40 @@ import (
 // Signed stream URLs (#93). A signed-in client asks GET /api/stream-url for a
 // URL per track. The URL carries the song id, the user id, an expiry and an
 // HMAC over them, and the stream and download endpoints accept it in place of
-// credentials. Verification needs no database lookup, only the signing key.
+// credentials. Verification checks the HMAC with the signing key, then that
+// the account is still active (#181).
 // Apps that know the tinysonicStreamUrl extension use this; Subsonic clients
 // keep apiKeyAuthentication.
 
-// streamSecretCache holds the signing key once it is loaded. It is read on
-// the first signed request, so a rotation takes effect at the next restart.
+// streamSecretCache holds the signing key, reloaded after streamSecretTTL.
 type streamSecretCache struct {
 	mu     sync.Mutex
 	secret []byte
+	loaded time.Time
 }
 
-// streamSecret returns the signing key, loading it from the database on first
-// use.
+// streamSecretTTL is how long the signing key is cached. `tinysonic stream
+// rotate` changes it in the database; within this time the running server
+// uses the new key, and links signed with the old one stop working (#181).
+const streamSecretTTL = time.Minute
+
+// streamSecret returns the signing key, loading it from the database when
+// the cached copy is older than streamSecretTTL.
 func (s *State) streamSecret(ctx context.Context) ([]byte, error) {
 	s.stream.mu.Lock()
 	defer s.stream.mu.Unlock()
-	if s.stream.secret != nil {
+	if s.stream.secret != nil && time.Since(s.stream.loaded) < streamSecretTTL {
 		return s.stream.secret, nil
 	}
 	secret, err := users.LoadStreamSecret(ctx, s.Pool)
 	if err != nil {
 		return nil, err
 	}
-	s.stream.secret = secret
+	s.stream.secret, s.stream.loaded = secret, time.Now()
 	return secret, nil
 }
 
-// forgetStreamSecret drops the cached key so the next use reloads it. A
-// restart does the same after `tinysonic stream rotate`.
+// forgetStreamSecret drops the cached key so the next use reloads it.
 func (s *State) forgetStreamSecret() {
 	s.stream.mu.Lock()
 	defer s.stream.mu.Unlock()
@@ -89,7 +95,21 @@ func (s *State) verifySignedStream(r *http.Request, q url.Values) (users.User, b
 		s.logRefused(r, users.CodeStreamURLExpired, 0, "")
 		return users.User{}, false
 	}
-	return users.User{ID: uid}, true
+	// The link names an account; it must still be an active one, so
+	// disabling or deleting it ends its links at once (#181). The stream
+	// then runs as the full account, not a bare id.
+	u, err := users.ByID(r.Context(), s.Pool, uid)
+	if err != nil || u.Status != users.StatusActive {
+		code := users.CodeUserDisabled
+		if errors.Is(err, users.ErrNotFound) {
+			code = users.CodeStreamURLInvalid
+		} else if err != nil {
+			logging.Errorf("signed stream: account %d: %v", uid, err)
+		}
+		s.logRefused(r, code, 0, "")
+		return users.User{}, false
+	}
+	return u, true
 }
 
 // APIStreamURL returns a signed stream URL for one song, for the signed-in

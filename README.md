@@ -147,7 +147,7 @@ Configuration is checked at startup:
 | `db_cache_mb`        | SQLite page cache per database connection, in MiB. Default 4; at least 1. Hot pages are also held by the memory map and the OS cache, so a small value costs little speed. Raise it for a large library on a host with spare memory. |
 | `legacy_password_auth` | Allow Subsonic clients to sign in with `u`/`p` on every request. Default `false` (since #175): Subsonic calls need an API key (or a session), and `u`/`p` gets error 42. Set `true` for clients that cannot use an API key; the startup log warns that the password then travels in every request URL. |
 | `trusted_proxies`    | Addresses (IPs or CIDR ranges) of reverse proxies whose `X-Forwarded-For` is believed. Empty by default: the connecting address is the client. See [Sign-in limits](#sign-in-limits). |
-| `api_key_ttl_days`   | Lifetime of an API key, in days (1–3650). Default 365. Every key expires; a key in use within its last 30 days is renewed to a full lifetime. A request can ask for its own `expires_days`. |
+| `api_key_ttl_days`   | Lifetime of an API key, in days (1–3650). Default 365. Every key expires; a key in use within its last 30 days is renewed to a full lifetime. A request can ask for a shorter `expires_days`, never a longer one. |
 | `api_key_idle_days`  | A key unused for this many days is revoked (1–3650). Default 180. Revoked keys are logged as `api key revoked: idle`. |
 | `analysis_upload_max_mb` | Largest upload to `POST /api/analysis/results`, in MiB after decompression (1–4096). Default 64. See [Analysis over the API](#analysis-over-the-api). |
 | `require_https`      | Refuse plain HTTP on every endpoint. Default on, for a LAN install too. Set `false` only on a trusted test network. See [Running over HTTPS](#running-over-https). |
@@ -208,7 +208,7 @@ tinysonic pair [-c FILE] --user <username>            print a pairing QR code (v
 tinysonic device list [-c FILE] --user <username>     list the account's paired devices
 tinysonic device remove [-c FILE] --user <username> <id>   remove one; its next request fails
 
-tinysonic stream rotate [-c FILE]                     new key for signed stream URLs; links made with the old key stop at the next restart
+tinysonic stream rotate [-c FILE]                     new key for signed stream URLs; links made with the old key stop within a minute
 
 tinysonic cert [-c FILE] [--dir DIR] [--force]        make a self-signed certificate for the host in base_url (10 years, mode 0600 key)
 tinysonic cert fingerprint [-c FILE]                  print the pin (sha256/…) of tls_cert, to confirm in the app
@@ -235,10 +235,12 @@ An invitation code lets one person create their own account, without
 $ tinysonic invite create --note "for Anna" -c /etc/tinysonic/tinysonic.toml
 invite 3 (user), valid until 2026-11-10T09:00:00Z, single use
 inv-7KQ2-M9XD-4TPA-HR3C
-https://cloud.ademant.de/folksonic/login?invite=inv-7KQ2-M9XD-4TPA-HR3C
+https://cloud.ademant.de/folksonic/login#invite=inv-7KQ2-M9XD-4TPA-HR3C
 ```
 
-The link opens the sign-in page with the registration form filled in. The
+The link opens the sign-in page with the registration form filled in. The code
+is in the fragment (`#invite=`), which the browser does not send, so it never
+appears in a server or proxy log. The
 account is active as soon as it is created, with the invite's role (`--librarian`
 for a librarian).
 
@@ -417,9 +419,13 @@ standard library (RFC 6455). It forwards each binary frame to the recipient of
 the same account and nothing else. The devices encrypt the payload end to end,
 so folksonic sees only sizes, addresses and times. Nothing is stored or logged.
 A frame to a device that is not connected is dropped, and the sender gets a
-`{"type":"undelivered"}` note. Limits: 16 KiB per message, 30 messages a second
-(burst 60), 8 devices connected per account, and a drop after 60 seconds of
-silence. Credentials are headers, never the URL.
+`{"type":"undelivered"}` note. Limits: 16 KiB per message, 30 frames a second
+(burst 60, pings included), 8 devices connected per account, 1000 connections
+in all, and a drop after 60 seconds of silence. Credentials are headers
+(`X-Api-Key` or a DPoP proof): an `apiKey` in the URL is refused with 400. A
+browser's `Origin` must be `base_url`'s (403 otherwise); native apps send none.
+Frames with reserved bits set end the connection, since no extension is
+negotiated (#182).
 
 ### Personal ratings
 
@@ -966,6 +972,8 @@ API, even when the key is valid (#170).
 
 Credentials may be sent in the query string or as a form-encoded POST body.
 Only active accounts authenticate; pending and disabled accounts are refused.
+That includes signed stream links: one made before its account was disabled
+stops working at once (#181).
 
 Passwords are stored as argon2id hashes, with a per-password salt, so a copy of
 the database does not reveal them. Each password check costs about 70 ms on a
@@ -1101,7 +1109,7 @@ The JSON endpoints below are described in [`docs/openapi.yaml`](docs/openapi.yam
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |
 | POST | `/api/register` | none | Create an account. With `invite` and `password`: active and signed in (returns a session `token`). Without an invite: pending, needs `allow_registration`, and needs a password of 8 to 1024 bytes |
-| POST | `/api/keys` | session | Create an API key (shown once). `expires_days` sets its lifetime; without it the key lives `api_key_ttl_days` |
+| POST | `/api/keys` | session | Create an API key (shown once). `expires_days` (1 to `api_key_ttl_days`) sets a shorter lifetime; without it the key lives `api_key_ttl_days` |
 | GET | `/api/keys` | session | List own keys |
 | GET | `/api/stream-url?id=so-…` | session or device grant | Signed stream URL for one song, valid 2 hours. Play it at `/rest/stream.view` or `/rest/download.view` with no other credentials |
 | POST | `/api/device/authorize` | none | Start a device grant: returns `device_code`, `user_code` (`XXXX-XXXX`), `interval`, `expires_in` (10 minutes) |
@@ -1124,6 +1132,9 @@ The JSON endpoints below are described in [`docs/openapi.yaml`](docs/openapi.yam
 | POST | `/api/register/passkey/begin` · `/finish` | none | Sign up with an invite and a passkey, no password. The account is created only after the passkey is verified |
 | POST | `/api/login` | none | Sign in with username and password. Refused with 429 when the address has failed too often (`Retry-After`), or `server_busy` when all password checks are in use |
 | POST | `/api/logout` | Bearer | End a session |
+| GET | `/api/sessions` | session | List own sessions (client label, created, last used). A session lasts at most 30 days and ends after 7 days without use |
+| DELETE | `/api/sessions/{id}` | session | End one of them |
+| DELETE | `/api/sessions` | session | Sign out everywhere: end all own sessions, this one too |
 | GET | `/account` | page | Account page: API keys, pairing QR and link, passkeys and linked identities. Redirects to sign-in when there is no session |
 | GET | `/pair` | page | Shows a pairing link with a copy button. The token is read from the URL fragment in the browser and never sent to the server |
 | POST | `/api/pair/qr` | session | Create a pairing token and return its QR code, SVG by default; PNG with `Accept: image/png` or `?format=png`. The same token's link is in the `X-Pairing-Link` header |
@@ -1151,7 +1162,21 @@ The QR code encodes `tinysonic://pair?server=<base_url>&token=<token>`. The app
 posts the token to `/api/pair/complete` and stores the returned key.
 
 Passkeys need HTTPS (or `localhost`) and `base_url`. Without `base_url` the
-passkey endpoints return 503, and every other method keeps working.
+passkey endpoints return 503, and every other method keeps working. A passkey
+must verify its user (PIN, fingerprint or face) at registration and at every
+sign-in; an authenticator that only checks presence is refused (#199).
+
+The endpoints that start a sign-in or a pairing without credentials
+(`/api/passkey/login/begin`, `/api/oidc/begin`, `/api/device/authorize`) allow 10
+requests per address at once and one more every 5 seconds; above that they
+answer 429 `rate_limited` with `Retry-After`. The device token poll allows 30
+at once and two a second, and answers `slow_down` above that. IPv6 clients are
+counted per /64. Pending passkey ceremonies and OIDC flows are capped at 1000
+each; when full, a new one gets 503 `server_busy` (#168, #178).
+
+`/api/passkey/login/begin` answers `no_passkey` for a name without an active
+account with passkeys, so it tells whether a name has passkey sign-in; the
+limit above bounds how fast names can be tried.
 
 ### Account page
 
@@ -1505,7 +1530,7 @@ A 401 carries `WWW-Authenticate: Bearer realm="tinysonic"`, and an unknown
 | `key_revoked` | The key was revoked |
 | `key_idle` | The key was revoked for going unused (`api_key_idle_days`) |
 | `key_expired` | The key is past its lifetime |
-| `session_unknown`, `session_expired` | The web session token is unknown or expired |
+| `session_unknown`, `session_expired` | The web session token is unknown, or expired (30 days, or 7 days unused) |
 | `user_disabled` | The account is disabled |
 | `scope_forbidden` | The key may not be used for this request (a key with a scope, such as the removed analysis worker keys) |
 | `session_required` | The request needs a signed-in session, not an API key (account and library management) |

@@ -91,7 +91,9 @@ func CreateDeviceAuth(ctx context.Context, db *sql.DB, label string, now time.Ti
 		_, err = db.ExecContext(ctx,
 			"INSERT INTO oauth_device_codes (device_hash, user_code, label, expires_ms, interval_ms, created_ms) "+
 				"VALUES (?, ?, ?, ?, ?, ?)",
-			hashToken(deviceCode), userCode, label,
+			// The user code is stored hashed, like every other secret (#188):
+			// whoever reads the table cannot approve a pending grant with it.
+			hashToken(deviceCode), hashToken(userCode), label,
 			now.Add(DeviceCodeTTL).UnixMilli(), DeviceInterval.Milliseconds(), now.UnixMilli())
 		if err == nil {
 			return DeviceAuth{
@@ -124,7 +126,7 @@ func ApproveUserCode(ctx context.Context, db *sql.DB, userID int64, userCode str
 	res, err := db.ExecContext(ctx,
 		"UPDATE oauth_device_codes SET user_id = ? "+
 			"WHERE user_code = ? AND user_id IS NULL AND expires_ms > ?",
-		userID, normalizeUserCode(userCode), now.UnixMilli())
+		userID, hashToken(normalizeUserCode(userCode)), now.UnixMilli())
 	if err != nil {
 		return err
 	}
@@ -410,15 +412,23 @@ func randomBytes(n int) ([]byte, error) {
 	return b, nil
 }
 
-// randomUserCode draws userCodeLength characters from userCodeAlphabet.
+// randomUserCode draws userCodeLength characters from userCodeAlphabet,
+// uniformly: bytes at or above the largest multiple of the alphabet's size
+// are drawn again, so no character is more likely than another (#188).
 func randomUserCode() (string, error) {
+	n := len(userCodeAlphabet)
+	limit := 256 - 256%n
 	var b strings.Builder
-	buf, err := randomBytes(userCodeLength)
-	if err != nil {
-		return "", err
-	}
-	for _, c := range buf {
-		b.WriteByte(userCodeAlphabet[int(c)%len(userCodeAlphabet)])
+	for b.Len() < userCodeLength {
+		buf, err := randomBytes(userCodeLength)
+		if err != nil {
+			return "", err
+		}
+		for _, c := range buf {
+			if int(c) < limit && b.Len() < userCodeLength {
+				b.WriteByte(userCodeAlphabet[int(c)%n])
+			}
+		}
 	}
 	return b.String(), nil
 }

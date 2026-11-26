@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"unicode"
 
@@ -636,7 +637,14 @@ func repoCountRandomSongs(ctx context.Context, db *sql.DB, fromYear, toYear *int
 
 // repoCountSearch counts the matches of a search term in table (artists,
 // albums or songs), the same set the repoSearch* functions page through.
+// searchTables are the tables repoCountSearch may name; the name goes into
+// the SQL, so it must never come from a caller's input (#188).
+var searchTables = map[string]bool{"artists": true, "albums": true, "songs": true}
+
 func repoCountSearch(ctx context.Context, db *sql.DB, table, term string) (int, error) {
+	if !searchTables[table] {
+		return 0, fmt.Errorf("repoCountSearch: unknown table %q", table)
+	}
 	q := fts5Match(term)
 	if q == "" {
 		return repoCount(ctx, db, "SELECT COUNT(*) FROM "+table)

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -13,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 
 	"github.com/tsirysndr/tinysonic/internal/logging"
@@ -45,7 +47,13 @@ type ceremonyStore struct {
 	m  map[string]ceremony
 }
 
-func (c *ceremonyStore) put(id string, cer ceremony) {
+// maxCeremonies bounds the pending challenges (#168). Each lives for
+// ceremonyTTL; with the per-address limit on starting one, a full store
+// means many addresses at once, and new ones are refused until some expire.
+const maxCeremonies = 1000
+
+// put stores a challenge. It reports false when the store is full.
+func (c *ceremonyStore) put(id string, cer ceremony) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := time.Now()
@@ -54,7 +62,17 @@ func (c *ceremonyStore) put(id string, cer ceremony) {
 			delete(c.m, k)
 		}
 	}
+	if len(c.m) >= maxCeremonies {
+		return false
+	}
 	c.m[id] = cer
+	return true
+}
+
+// errCeremoniesFull answers a ceremony that could not be stored.
+func errCeremoniesFull(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", "60")
+	writeAPIErrorCode(w, http.StatusServiceUnavailable, codeBusy, "too many sign-ins are in progress; try again in a minute")
 }
 
 // take returns and removes a challenge; each one can be used once.
@@ -85,9 +103,14 @@ func (w waUser) WebAuthnName() string                       { return w.u.Usernam
 func (w waUser) WebAuthnDisplayName() string                { return w.u.Username }
 func (w waUser) WebAuthnCredentials() []webauthn.Credential { return w.creds }
 
+// newCeremonyID returns a random id for a challenge. rand.Read does not fail
+// on supported systems; if it ever did, a predictable id would let anyone
+// take over a ceremony, so the server stops instead (#188).
 func newCeremonyID() string {
 	var b [24]byte
-	_, _ = rand.Read(b[:])
+	if _, err := rand.Read(b[:]); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
 	return base64.RawURLEncoding.EncodeToString(b[:])
 }
 
@@ -123,6 +146,11 @@ func newWebAuthn(baseURL string) (*webauthn.WebAuthn, error) {
 		RPDisplayName: "tinysonic",
 		RPID:          u.Hostname(),
 		RPOrigins:     []string{origin},
+		// A passkey is a whole sign-in on its own, so the authenticator must
+		// verify the user (PIN, fingerprint) every time, at registration and
+		// at sign-in; FinishRegistration and FinishLogin then refuse an
+		// assertion without the UV flag (#199).
+		AuthenticatorSelection: protocol.AuthenticatorSelection{UserVerification: protocol.VerificationRequired},
 	})
 }
 
@@ -155,7 +183,10 @@ func (s *State) APIPasskeyRegisterBegin(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	id := newCeremonyID()
-	s.ceremonies.put(id, ceremony{session: *session, userID: caller.ID, expires: time.Now().Add(ceremonyTTL)})
+	if !s.ceremonies.put(id, ceremony{session: *session, userID: caller.ID, expires: time.Now().Add(ceremonyTTL)}) {
+		errCeremoniesFull(w)
+		return
+	}
 	writeJSON(w, http.StatusOK, J{"ceremony": id, "options": options})
 }
 
@@ -181,7 +212,10 @@ func (s *State) APIPasskeyRegisterFinish(w http.ResponseWriter, r *http.Request)
 	}
 	cred, err := s.webAuthn.FinishRegistration(wu, cer.session, r)
 	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "passkey registration failed: "+err.Error())
+		// The library's error names what failed to verify; that goes to the
+		// log, the client gets a fixed message (#199).
+		logging.Infof("passkey registration refused: %s", protocolDetail(err))
+		writeAPIError(w, http.StatusBadRequest, "passkey registration failed")
 		return
 	}
 	raw, err := json.Marshal(cred)
@@ -202,7 +236,7 @@ func (s *State) APIPasskeyRegisterFinish(w http.ResponseWriter, r *http.Request)
 
 // APIPasskeyLoginBegin starts a passkey sign-in for the named account.
 func (s *State) APIPasskeyLoginBegin(w http.ResponseWriter, r *http.Request) {
-	if !s.requireWebAuthn(w) {
+	if !s.requireWebAuthn(w) || s.throttled(w, r, &s.beginLimit) {
 		return
 	}
 	var in struct {
@@ -228,7 +262,10 @@ func (s *State) APIPasskeyLoginBegin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := newCeremonyID()
-	s.ceremonies.put(id, ceremony{session: *session, userID: target.ID, expires: time.Now().Add(ceremonyTTL)})
+	if !s.ceremonies.put(id, ceremony{session: *session, userID: target.ID, expires: time.Now().Add(ceremonyTTL)}) {
+		errCeremoniesFull(w)
+		return
+	}
 	writeJSON(w, http.StatusOK, J{"ceremony": id, "options": options})
 }
 
@@ -260,7 +297,7 @@ func (s *State) APIPasskeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 	}
 	s.storeUpdatedPasskey(r.Context(), wu, cred)
 
-	token, err := users.CreateSession(r.Context(), s.Pool, target.ID)
+	token, err := s.newSession(r, target.ID)
 	if err != nil {
 		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
@@ -288,4 +325,14 @@ func (s *State) APILogout(w http.ResponseWriter, r *http.Request) {
 		_ = users.DeleteSession(r.Context(), s.Pool, tok)
 	}
 	writeJSON(w, http.StatusOK, J{"status": "signed out"})
+}
+
+// protocolDetail is the full text of a WebAuthn verification error, for the
+// log: the library keeps the useful part in DevInfo.
+func protocolDetail(err error) string {
+	var pe *protocol.Error
+	if errors.As(err, &pe) && pe.DevInfo != "" {
+		return pe.Error() + ": " + pe.DevInfo
+	}
+	return err.Error()
 }

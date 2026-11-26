@@ -75,7 +75,7 @@ func importReq(t *testing.T, s *State, method, path, key, user string, body []by
 		req.Header.Set("X-Api-Key", key)
 	}
 	if user != "" {
-		tok, err := users.CreateSession(context.Background(), s.Pool, userIDOf(t, s, user))
+		tok, err := users.CreateSession(context.Background(), s.Pool, userIDOf(t, s, user), "")
 		if err != nil {
 			t.Fatal(err)
 		}

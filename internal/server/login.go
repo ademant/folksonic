@@ -47,8 +47,10 @@ func (s *State) APILogin(w http.ResponseWriter, r *http.Request) {
 	}
 	defer passwords.Release()
 	u, err := users.ByName(r.Context(), s.Pool, in.Username)
-	if err != nil {
-		// Unknown username: spend the same time as a wrong password.
+	if err != nil || u.PasswordHash == "" {
+		// Unknown username, or a passkey-only account without a hash: spend
+		// the same time as a wrong password, so the answer's timing does not
+		// tell which accounts exist or have a password (#199).
 		passwords.Burn(in.Password)
 	}
 	// A passkey-only account has no hash, and an empty password never matches.
@@ -66,7 +68,7 @@ func (s *State) APILogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.auth.succeed(ip)
-	token, err := users.CreateSession(r.Context(), s.Pool, u.ID)
+	token, err := s.newSession(r, u.ID)
 	if err != nil {
 		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return

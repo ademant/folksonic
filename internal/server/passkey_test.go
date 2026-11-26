@@ -27,6 +27,17 @@ type softAuthenticator struct {
 	credID []byte
 	origin string
 	rpID   string
+	// noUV leaves out the user-verified flag, like an authenticator that
+	// only checks presence.
+	noUV bool
+}
+
+// flags is the authenticator data flags byte: UP and, unless noUV, UV.
+func (a *softAuthenticator) flags() byte {
+	if a.noUV {
+		return 0x01
+	}
+	return 0x05
 }
 
 func newSoftAuthenticator(t *testing.T, origin, rpID string) *softAuthenticator {
@@ -80,7 +91,7 @@ func (a *softAuthenticator) registration(t *testing.T, challenge string) []byte 
 		t.Fatal(err)
 	}
 	authData := append([]byte{}, rpHash[:]...)
-	authData = append(authData, 0x41)                // UP | AT
+	authData = append(authData, 0x40|a.flags())      // AT | UP | UV
 	authData = append(authData, 0, 0, 0, 0)          // signCount
 	authData = append(authData, make([]byte, 16)...) // AAGUID
 	var l [2]byte
@@ -112,7 +123,7 @@ func (a *softAuthenticator) assertion(t *testing.T, challenge string) []byte {
 	clientJSON, clientHash := a.clientData(t, "webauthn.get", challenge)
 	rpHash := sha256.Sum256([]byte(a.rpID))
 	authData := append([]byte{}, rpHash[:]...)
-	authData = append(authData, 0x05)       // UP | UV
+	authData = append(authData, a.flags())  // UP | UV
 	authData = append(authData, 0, 0, 0, 1) // signCount
 	signed := sha256.Sum256(append(append([]byte{}, authData...), clientHash[:]...))
 	sig, err := ecdsa.SignASN1(rand.Reader, a.key, signed[:])
@@ -151,7 +162,7 @@ func TestPasskeyRegisterAndLogin(t *testing.T) {
 	s := passkeyState(t)
 	ctx := context.Background()
 	admin, _ := users.ByName(ctx, s.Pool, "admin")
-	key, err := users.CreateSession(ctx, s.Pool, admin.ID)
+	key, err := users.CreateSession(ctx, s.Pool, admin.ID, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +240,7 @@ func TestPasskeyRejectsForeignKey(t *testing.T) {
 	s := passkeyState(t)
 	ctx := context.Background()
 	admin, _ := users.ByName(ctx, s.Pool, "admin")
-	key, _ := users.CreateSession(ctx, s.Pool, admin.ID)
+	key, _ := users.CreateSession(ctx, s.Pool, admin.ID, "")
 	enrolled := newSoftAuthenticator(t, "http://localhost:4598", "localhost")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/passkey/register/begin", nil)
