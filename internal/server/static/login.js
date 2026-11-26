@@ -91,15 +91,17 @@
       finish(j.token, j.username);
     } catch (e) { say(e.message || String(e)); }
   });
-  // A registration link carries the code as ?invite=. Move it into the form
-  // and drop the query from the address bar so it does not linger in history.
+  // A registration link carries the code in the fragment, #invite=, which the
+  // browser never sends to the server (older links used ?invite=). Move it into
+  // the form and drop it from the address bar so it does not linger in history.
   // This runs after the error message above has read its parameter.
-  var invite = new URLSearchParams(location.search).get("invite");
+  var invite = new URLSearchParams(location.hash.replace(/^#/, "")).get("invite") ||
+    new URLSearchParams(location.search).get("invite");
   if (invite) {
     document.getElementById("ri").value = invite;
     document.getElementById("reg").open = true;
   }
-  if (location.search) { try { history.replaceState(null, "", location.pathname); } catch (e) {} }
+  if (location.search || invite) { try { history.replaceState(null, "", location.pathname); } catch (e) {} }
   document.getElementById("register").addEventListener("click", async function () {
     var code = document.getElementById("ri").value.trim();
     var name = document.getElementById("ru").value.trim();

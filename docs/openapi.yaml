@@ -485,6 +485,89 @@ paths:
                   status:
                     type: string
                     enum: ['signed out']
+  /api/sessions:
+    get:
+      security:
+        - bearerAuth: []
+      tags: [Accounts]
+      summary: List the caller's sessions
+      description: >-
+        Sessions only (an API key or device grant gets 403). A session lasts
+        at most 30 days and ends after 7 days without use; ended ones are not
+        listed. `current` marks the session the request came with.
+      responses:
+        '200':
+          description: The live sessions, most recently used first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: {type: integer}
+                        label: {type: string, description: 'The client, from its User-Agent at sign-in.'}
+                        createdAt: {type: string, format: date-time}
+                        lastUsedAt: {type: string, format: date-time}
+                        expiresAt: {type: string, format: date-time}
+                        current: {type: boolean}
+        '401':
+          description: No valid session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      security:
+        - bearerAuth: []
+      tags: [Accounts]
+      summary: Sign out everywhere
+      description: Ends every session of the caller, the current one too. API keys are not touched.
+      responses:
+        '200':
+          description: All sessions ended.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, enum: ['signed out everywhere']}
+                  count: {type: integer}
+        '401':
+          description: No valid session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/sessions/{id}:
+    delete:
+      security:
+        - bearerAuth: []
+      tags: [Accounts]
+      summary: End one of the caller's sessions
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer}
+      responses:
+        '200':
+          description: Session ended.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, enum: ['signed out']}
+        '404':
+          description: The caller has no session with this id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/stream-url:
     get:
       security:
@@ -1173,8 +1256,9 @@ paths:
                 expires_days:
                   type: integer
                   minimum: 0
-                  maximum: 3650
-                  description: Lifetime in days. Zero (default) means the key does not expire.
+                  description: >-
+                    Lifetime in days, at most `api_key_ttl_days` (400 above it).
+                    Zero (default) means `api_key_ttl_days`; every key expires.
       responses:
         '201':
           description: Key created.

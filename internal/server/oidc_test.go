@@ -341,7 +341,7 @@ func TestOIDCLinkAttachesIdentityToSignedInAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := users.CreateSession(ctx, s.Pool, frank.ID)
+	token, err := users.CreateSession(ctx, s.Pool, frank.ID, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,7 +364,7 @@ func TestOIDCLinkRefusesIdentityOfAnotherAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, _ := users.CreateSession(ctx, s.Pool, hal.ID)
+	token, _ := users.CreateSession(ctx, s.Pool, hal.ID, "")
 	idp.sub = "subject-shared"
 
 	loc := finish(t, s, begin(t, s, token, `{"mode":"link"}`))

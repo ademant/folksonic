@@ -63,7 +63,7 @@ func apiCall(t *testing.T, s *State, user, method, path, body string) (int, map[
 		if err != nil {
 			t.Fatal(err)
 		}
-		tok, err := users.CreateSession(context.Background(), s.Pool, u.ID)
+		tok, err := users.CreateSession(context.Background(), s.Pool, u.ID, "")
 		if err != nil {
 			t.Fatal(err)
 		}

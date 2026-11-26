@@ -96,7 +96,7 @@ func TestAPIAnalysis(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/analysis?id=so-2", nil)
 	u, _ := users.ByName(context.Background(), s.Pool, "bob")
-	tok, _ := users.CreateSession(context.Background(), s.Pool, u.ID)
+	tok, _ := users.CreateSession(context.Background(), s.Pool, u.ID, "")
 	req.Header.Set("Authorization", "Bearer "+tok)
 	s.routes().ServeHTTP(rec, req)
 	if rec.Code != http.StatusAccepted || rec.Header().Get("Retry-After") != "30" || !strings.Contains(rec.Body.String(), `"pending":["key"]`) {

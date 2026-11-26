@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -43,18 +44,50 @@ type authEntry struct {
 // failures spend the budget. Subsonic clients send their credentials with every
 // request, including cover art, so counting successes would throttle normal
 // use. The zero value is ready to use.
+//
+// The same type limits requests to public begin endpoints (beginLimit,
+// pollLimit), with its own burst and refill; there every request spends.
 type authLimiter struct {
 	mu      sync.Mutex
 	clock   func() time.Time // nil means time.Now; tests set it
 	entries map[string]*authEntry
+	// burst and refill override authBurst and authRefill when set.
+	burst, refill float64
 }
 
-// authMaxEntries bounds memory. Entries idle for authIdle are dropped when the
-// table is full.
+func (l *authLimiter) rates() (burst, refill float64) {
+	burst, refill = authBurst, authRefill
+	if l.burst > 0 {
+		burst = l.burst
+	}
+	if l.refill > 0 {
+		refill = l.refill
+	}
+	return burst, refill
+}
+
+// authMaxEntries bounds memory, hard (#167). When the table is full, idle
+// entries go first, then the entry that has spent least; a new address never
+// grows the table past the bound.
 const (
 	authMaxEntries = 10000
 	authIdle       = 10 * time.Minute
 )
+
+// limiterKey is the table key for a client address. An IPv6 client gets its
+// /64, which one host or home network has in full, so cycling through its
+// addresses does not give it fresh budgets or fill the table (#167).
+func limiterKey(ip string) string {
+	a, err := netip.ParseAddr(ip)
+	if err != nil || a.Unmap().Is4() {
+		return ip
+	}
+	p, err := a.Prefix(64)
+	if err != nil {
+		return ip
+	}
+	return p.String()
+}
 
 func (l *authLimiter) now() time.Time {
 	if l.clock != nil {
@@ -68,21 +101,41 @@ func (l *authLimiter) entry(ip string, now time.Time) *authEntry {
 	if l.entries == nil {
 		l.entries = map[string]*authEntry{}
 	}
-	if len(l.entries) >= authMaxEntries {
-		for k, e := range l.entries {
-			if now.Sub(e.last) > authIdle {
-				delete(l.entries, k)
-			}
-		}
-	}
+	burst, refill := l.rates()
+	ip = limiterKey(ip)
 	e, ok := l.entries[ip]
 	if !ok {
-		e = &authEntry{tokens: authBurst, last: now}
+		if len(l.entries) >= authMaxEntries {
+			l.evict(now, burst, refill)
+		}
+		e = &authEntry{tokens: burst, last: now}
 		l.entries[ip] = e
 	}
-	e.tokens = min(authBurst, e.tokens+now.Sub(e.last).Seconds()*authRefill)
+	e.tokens = min(burst, e.tokens+now.Sub(e.last).Seconds()*refill)
 	e.last = now
 	return e
+}
+
+// evict makes room for one entry: every idle entry goes, and if none was
+// idle, the one with the most budget left (refilled to now), which is the
+// cheapest to forget (#167). Callers hold l.mu.
+func (l *authLimiter) evict(now time.Time, burst, refill float64) {
+	var best string
+	bestTokens := -1.0
+	removed := false
+	for k, e := range l.entries {
+		if now.Sub(e.last) > authIdle {
+			delete(l.entries, k)
+			removed = true
+			continue
+		}
+		if t := min(burst, e.tokens+now.Sub(e.last).Seconds()*refill); t > bestTokens {
+			best, bestTokens = k, t
+		}
+	}
+	if !removed && best != "" {
+		delete(l.entries, best)
+	}
 }
 
 // allow reports whether ip may try a password now. It spends one token before
@@ -98,7 +151,8 @@ func (l *authLimiter) allow(ip string) (ok bool, retryAfter time.Duration) {
 		e.tokens--
 		return true, 0
 	}
-	wait := (1 - e.tokens) / authRefill
+	_, refill := l.rates()
+	wait := (1 - e.tokens) / refill
 	return false, time.Duration(wait * float64(time.Second))
 }
 
@@ -117,9 +171,10 @@ func (l *authLimiter) fail(ip string) time.Duration {
 func (l *authLimiter) succeed(ip string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if e, ok := l.entries[ip]; ok {
+	burst, _ := l.rates()
+	if e, ok := l.entries[limiterKey(ip)]; ok {
 		e.fails = 0
-		e.tokens = min(authBurst, e.tokens+1)
+		e.tokens = min(burst, e.tokens+1)
 	}
 }
 
@@ -128,9 +183,36 @@ func (l *authLimiter) succeed(ip string) {
 func (l *authLimiter) refund(ip string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if e, ok := l.entries[ip]; ok {
-		e.tokens = min(authBurst, e.tokens+1)
+	burst, _ := l.rates()
+	if e, ok := l.entries[limiterKey(ip)]; ok {
+		e.tokens = min(burst, e.tokens+1)
 	}
+}
+
+// Limits on the public endpoints that start a sign-in or a pairing (#168,
+// #178): each request spends, successful or not. beginLimit allows 10 at
+// once and one more every 5 seconds; pollLimit, for the device token poll,
+// 30 at once and two a second, far above a client polling at the RFC 8628
+// interval.
+const (
+	beginBurst  = 10
+	beginRefill = 0.2
+	pollBurst   = 30
+	pollRefill  = 2
+)
+
+// throttled answers 429 with Retry-After when ip has spent its budget on l,
+// and reports whether it did.
+func (s *State) throttled(w http.ResponseWriter, r *http.Request, l *authLimiter) bool {
+	ip := s.clientIP(r)
+	ok, retry := l.allow(ip)
+	if ok {
+		return false
+	}
+	logAuthFailure(ip, "rate-limit", r.URL.Path)
+	w.Header().Set("Retry-After", strconv.Itoa(retrySeconds(retry)))
+	writeAPIErrorCode(w, http.StatusTooManyRequests, codeRateLimited, "too many requests; wait before trying again")
+	return true
 }
 
 // delayFor returns the wait after the n-th consecutive failure.

@@ -31,7 +31,7 @@ func streamFixture(t *testing.T) (*State, string, int64) {
 		t.Fatal(err)
 	}
 	bob := userIDOf(t, s, "bob")
-	tok, err := users.CreateSession(context.Background(), s.Pool, bob)
+	tok, err := users.CreateSession(context.Background(), s.Pool, bob, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,19 +125,35 @@ func TestSignedStreamURLExpires(t *testing.T) {
 	}
 }
 
-func TestRotatingTheKeyInvalidatesLinksAfterRestart(t *testing.T) {
+func TestRotatingTheKeyInvalidatesLinksWithinAMinute(t *testing.T) {
 	s, tok, _ := streamFixture(t)
 	u := mintStreamURL(t, s, tok, "so-1")
 	if _, err := users.RotateStreamSecret(context.Background(), s.Pool); err != nil {
 		t.Fatal(err)
 	}
-	// Still the old key in memory: the link keeps working until a restart.
+	// The cached key is still the old one: the link keeps working briefly.
 	if rec := getURL(t, s, u); rec.Code != http.StatusOK {
-		t.Fatalf("before restart: status %d", rec.Code)
+		t.Fatalf("before reload: status %d", rec.Code)
 	}
-	s.forgetStreamSecret() // what a restart does
+	s.stream.mu.Lock()
+	s.stream.loaded = time.Now().Add(-streamSecretTTL) // the cache has aged out
+	s.stream.mu.Unlock()
 	if rec := getURL(t, s, u); rec.Code != http.StatusForbidden {
 		t.Fatalf("after rotation: status %d, want 403", rec.Code)
+	}
+}
+
+// A link stops working when its account is disabled, without waiting for
+// its expiry (#181).
+func TestSignedStreamURLEndsWithItsAccount(t *testing.T) {
+	s, tok, bob := streamFixture(t)
+	u := mintStreamURL(t, s, tok, "so-1")
+	if _, err := s.Pool.Exec("UPDATE users SET status = 'disabled' WHERE id = ?", bob); err != nil {
+		t.Fatal(err)
+	}
+	// A Subsonic auth failure: the error envelope, not the audio.
+	if rec := getURL(t, s, u); rec.Body.String() == "audio bytes" || !strings.Contains(rec.Body.String(), "The account is disabled") {
+		t.Fatalf("disabled account's link: status %d body %s", rec.Code, rec.Body.String())
 	}
 }
 

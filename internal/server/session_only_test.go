@@ -64,7 +64,7 @@ func TestAPIKeyCannotManageTheAccount(t *testing.T) {
 func TestSessionStillManagesTheAccount(t *testing.T) {
 	s, _, _ := keyFixture(t)
 	bob := userIDOf(t, s, "bob")
-	tok, err := users.CreateSession(context.Background(), s.Pool, bob)
+	tok, err := users.CreateSession(context.Background(), s.Pool, bob, "")
 	if err != nil {
 		t.Fatal(err)
 	}

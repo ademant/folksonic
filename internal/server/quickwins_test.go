@@ -161,7 +161,7 @@ func TestCredentialProblemReasons(t *testing.T) {
 	if got := users.SessionProblem(ctx, s.Pool, "not-a-session"); got != users.CodeSessionUnknown {
 		t.Errorf("SessionProblem unknown: %q", got)
 	}
-	tok, err := users.CreateSession(ctx, s.Pool, bob)
+	tok, err := users.CreateSession(ctx, s.Pool, bob, "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -38,10 +38,10 @@ func TestSetPasswordEndsSessionsKeepsKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := CreateSession(ctx, db, u.ID); err != nil {
+	if _, err := CreateSession(ctx, db, u.ID, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := CreateSession(ctx, db, u.ID); err != nil {
+	if _, err := CreateSession(ctx, db, u.ID, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := CreateAPIKey(ctx, db, u.ID, "phone", 0); err != nil {
@@ -68,7 +68,7 @@ func TestRefusedSetPasswordChangesNothing(t *testing.T) {
 	db := testDB(t)
 	ctx := context.Background()
 	u, _ := Create(ctx, db, "dave", "original-pass", RoleUser, StatusActive)
-	if _, err := CreateSession(ctx, db, u.ID); err != nil {
+	if _, err := CreateSession(ctx, db, u.ID, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := SetPassword(ctx, db, u.ID, "short"); !errors.Is(err, ErrInvalid) {

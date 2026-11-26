@@ -27,3 +27,26 @@ func TestDBCacheMBValidated(t *testing.T) {
 		t.Fatalf("default db_cache_mb %d, want %d", c.DBCacheMB, DefaultDBCacheMB)
 	}
 }
+
+// port and host are checked at load, not first at listen (#188).
+func TestPortAndHostValidated(t *testing.T) {
+	dir := t.TempDir()
+	load := func(extra string) error {
+		p := filepath.Join(dir, "smolsonic.toml")
+		if err := os.WriteFile(p, []byte("music_dirs = [\"/music\"]\n"+extra), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := Load(p)
+		return err
+	}
+	for _, bad := range []string{"port = 0\n", "port = 70000\n", "port = -1\n", "host = \"bad host\"\n", "host = \"-x.example\"\n", "host = \"a..b\"\n"} {
+		if load(bad) == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+	for _, good := range []string{"", "port = 443\n", "host = \"127.0.0.1\"\n", "host = \"::1\"\n", "host = \"music.example.org\"\n", "host = \"\"\n"} {
+		if err := load(good); err != nil {
+			t.Errorf("%q refused: %v", good, err)
+		}
+	}
+}

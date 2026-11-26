@@ -75,6 +75,9 @@ type State struct {
 	impressumOK   bool
 	// auth throttles failed password attempts per client address.
 	auth authLimiter
+	// beginLimit and pollLimit throttle the public sign-in and pairing
+	// endpoints per address (#168, #178); Start sets their rates.
+	beginLimit, pollLimit authLimiter
 	// streams counts audio streams in progress. maxStreams and
 	// maxStreamsPerUser are its caps (zero means none).
 	streams           streamLimiter
@@ -216,6 +219,8 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 	}
 	s.webAuthn = wa
 	s.ceremonies = &ceremonyStore{m: map[string]ceremony{}}
+	s.beginLimit.burst, s.beginLimit.refill = beginBurst, beginRefill
+	s.pollLimit.burst, s.pollLimit.refill = pollBurst, pollRefill
 	if cfg.OIDC.Enabled() {
 		s.sso = newOIDCService(cfg.OIDC, cfg.BaseURL)
 	}
@@ -577,6 +582,9 @@ func (s *State) routes() http.Handler {
 	mux.HandleFunc("POST /api/passkey/login/finish", s.APIPasskeyLoginFinish)
 	mux.HandleFunc("POST /api/login", s.APILogin)
 	mux.HandleFunc("POST /api/logout", s.APILogout)
+	mux.HandleFunc("GET /api/sessions", s.APIListSessions)
+	mux.HandleFunc("DELETE /api/sessions", s.APIRevokeAllSessions)
+	mux.HandleFunc("DELETE /api/sessions/{id}", s.APIRevokeSession)
 	mux.HandleFunc("POST /api/pair/qr", s.APIPairQR)
 	mux.HandleFunc("GET /api/passkeys", s.APIListPasskeys)
 	mux.HandleFunc("DELETE /api/passkeys/{id}", s.APIRemovePasskey)
@@ -637,6 +645,11 @@ func (s *State) maintainKeys(ctx context.Context) {
 			logging.Warnf("pairing token cleanup failed: %v", err)
 		} else if n > 0 {
 			logging.Infof("pairing tokens: %d expired removed", n)
+		}
+		if n, err := users.PruneSessions(ctx, s.Pool, time.Now()); err != nil {
+			logging.Warnf("session cleanup failed: %v", err)
+		} else if n > 0 {
+			logging.Infof("sessions: %d expired or idle removed", n)
 		}
 	}
 	sweep()

@@ -316,6 +316,36 @@
     });
   }
   async function loadPasskeys() { renderPasskeys((await api("GET", "passkeys")).passkeys || []); }
+
+  // Sessions
+  function renderSessions(list) {
+    var ul = $("sessions");
+    ul.textContent = "";
+    if (!list.length) ul.appendChild(el("li", "No sessions.", "meta"));
+    list.forEach(function (x) {
+      var li = el("li");
+      var info = el("div");
+      info.appendChild(el("strong", (x.label || "Unknown client") + (x.current ? " (this session)" : "")));
+      info.appendChild(el("div", "Signed in " + whenTime(x.createdAt) + " · last used " + whenTime(x.lastUsedAt), "meta"));
+      li.appendChild(info);
+      var b = el("button", "Sign out", "danger small");
+      b.addEventListener("click", async function () {
+        try {
+          await api("DELETE", "sessions/" + x.id);
+          if (x.current) { signedOut(); return; }
+          say("Session ended."); await loadSessions();
+        } catch (e) { say(e.message); }
+      });
+      li.appendChild(b);
+      ul.appendChild(li);
+    });
+  }
+  async function loadSessions() { renderSessions((await api("GET", "sessions")).sessions || []); }
+  $("signoutAll").addEventListener("click", async function () {
+    if (!confirm("Sign out every browser and app signed in to this account, this one too?")) return;
+    try { await api("DELETE", "sessions"); } catch (e) {}
+    signedOut();
+  });
   function prepareCreation(o) {
     o.challenge = b64uToBuf(o.challenge);
     o.user.id = b64uToBuf(o.user.id);
@@ -374,7 +404,7 @@
   });
 
   // Load everything; each section fails on its own so one problem does not hide the rest.
-  [loadKeys, loadPasskeys, refreshDevices].forEach(function (f) { f().catch(function (e) { say(e.message); }); });
+  [loadKeys, loadPasskeys, loadSessions, refreshDevices].forEach(function (f) { f().catch(function (e) { say(e.message); }); });
   // Pairings appear while a phone is waiting; refresh while the page is in view.
   setInterval(function () {
     if (document.visibilityState === "visible") refreshDevices().catch(function () {});

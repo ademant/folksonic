@@ -59,13 +59,16 @@ func (s *State) APIRegisterPasskeyBegin(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	id := newCeremonyID()
-	s.ceremonies.put(id, ceremony{
+	if !s.ceremonies.put(id, ceremony{
 		session:  *session,
 		expires:  time.Now().Add(ceremonyTTL),
 		invite:   in.Invite,
 		username: in.Username,
 		handle:   handle,
-	})
+	}) {
+		errCeremoniesFull(w)
+		return
+	}
 	writeJSON(w, http.StatusOK, J{"ceremony": id, "options": options})
 }
 
@@ -84,7 +87,8 @@ func (s *State) APIRegisterPasskeyFinish(w http.ResponseWriter, r *http.Request)
 	wu := waUser{u: users.User{Username: cer.username, WebAuthnHandle: cer.handle}}
 	cred, err := s.webAuthn.FinishRegistration(wu, cer.session, r)
 	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "passkey registration failed: "+err.Error())
+		logging.Infof("passkey sign-up refused: %s", protocolDetail(err))
+		writeAPIError(w, http.StatusBadRequest, "passkey registration failed")
 		return
 	}
 	raw, err := json.Marshal(cred)
@@ -107,7 +111,7 @@ func (s *State) APIRegisterPasskeyFinish(w http.ResponseWriter, r *http.Request)
 		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
-	token, err := users.CreateSession(r.Context(), s.Pool, u.ID)
+	token, err := s.newSession(r, u.ID)
 	if err != nil {
 		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return

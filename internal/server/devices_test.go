@@ -28,7 +28,7 @@ func deviceFixture(t *testing.T) (*State, int64, string) {
 	s, _, _ := keyFixture(t)
 	s.BaseURL = testBase
 	bob := userIDOf(t, s, "bob")
-	sess, err := users.CreateSession(context.Background(), s.Pool, bob)
+	sess, err := users.CreateSession(context.Background(), s.Pool, bob, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -348,7 +348,7 @@ func TestDeviceConfirmationNeedsTheKeysProof(t *testing.T) {
 		t.Fatalf("stranger: %d %s", rec.Code, rec.Body.String())
 	}
 	// A session cannot confirm for the device.
-	sess, _ := users.CreateSession(context.Background(), s.Pool, bob)
+	sess, _ := users.CreateSession(context.Background(), s.Pool, bob, "")
 	if rec := devCall(t, s, http.MethodPost, "/api/pair/confirm", `{"result":"match"}`, bearer(sess)); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("session confirming for the device: %d", rec.Code)
 	}

@@ -26,7 +26,7 @@ invite list
 invite revoke <id>
 ```
 
-- Codes are single use and stored hashed. `create` prints the code (`inv-XXXX-XXXX-XXXX-XXXX`) and a link `https://cloud.ademant.de/folksonic/login?invite=…` exactly once; `list` never shows codes. A lost code cannot be recovered — revoke it and create a new one.
+- Codes are single use and stored hashed. `create` prints the code (`inv-XXXX-XXXX-XXXX-XXXX`) and a link `https://cloud.ademant.de/folksonic/login#invite=…` exactly once; `list` never shows codes. A lost code cannot be recovered — revoke it and create a new one.
 - Default expiry is 7 days. Give a librarian invite a short expiry (e.g. `1d`) and a `--note`.
 - Present the result as: code, link, role, expiry (UTC), single use. Mention other still-open invites from `invite list`, especially open librarian invites, since those are the sensitive ones.
 - Registration through the link can use a passkey only. Such accounts have no password, which matters for Subsonic apps (see below).

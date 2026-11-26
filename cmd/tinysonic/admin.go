@@ -67,7 +67,7 @@ func runStream(args []string) error {
 	if _, err := users.RotateStreamSecret(context.Background(), pool); err != nil {
 		return err
 	}
-	fmt.Println("stream URL key rotated; restart the server so it takes effect")
+	fmt.Println("stream URL key rotated; the running server uses it within a minute, and links signed before stop working")
 	return nil
 }
 
@@ -320,7 +320,9 @@ func runInvite(args []string) error {
 		}
 		fmt.Println(code)
 		if cfg.BaseURL != "" {
-			fmt.Println(strings.TrimRight(cfg.BaseURL, "/") + "/login?invite=" + code)
+			// The code goes in the fragment, which browsers do not send, so it
+			// stays out of server and proxy logs and Referer headers (#199).
+			fmt.Println(strings.TrimRight(cfg.BaseURL, "/") + "/login#invite=" + code)
 		} else {
 			fmt.Fprintln(os.Stderr, "note: set base_url in the config to print a registration link")
 		}

@@ -321,32 +321,49 @@ func RedeemPairingToken(ctx context.Context, db *sql.DB, plain, deviceLabel stri
 }
 
 // CreateSession issues a login token for the web UI or API clients that
-// sign in with a passkey.
-func CreateSession(ctx context.Context, db *sql.DB, userID int64) (string, error) {
+// sign in with a passkey. label names the client in the session list.
+func CreateSession(ctx context.Context, db *sql.DB, userID int64, label string) (string, error) {
 	plain, err := randomToken(sessionPrefix)
 	if err != nil {
 		return "", err
 	}
+	now := time.Now()
 	_, err = db.ExecContext(ctx,
-		"INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)",
-		hashToken(plain), userID, ts(time.Now().Add(sessionTTL)))
+		"INSERT INTO sessions (token_hash, user_id, expires_at, created_at, last_used_at, label) VALUES (?, ?, ?, ?, ?, ?)",
+		hashToken(plain), userID, ts(now.Add(sessionTTL)), ts(now), ts(now), label)
 	if err != nil {
 		return "", err
 	}
 	return plain, nil
 }
 
+// sessionIdle ends a session that has not been used for a week, within its
+// 30-day lifetime (#189). sessionTouchEvery bounds how often a use is written.
+const (
+	sessionIdle       = 7 * 24 * time.Hour
+	sessionTouchEvery = time.Minute
+)
+
+// sessionLive reports whether a session with these times is still valid.
+func sessionLive(expires, lastUsed string, now time.Time) bool {
+	return expires > ts(now) && lastUsed > ts(now.Add(-sessionIdle))
+}
+
 func LookupSession(ctx context.Context, db *sql.DB, plain string) (User, error) {
 	var userID int64
-	var expires string
+	var expires, lastUsed string
+	now := time.Now()
 	err := db.QueryRowContext(ctx,
-		"SELECT user_id, expires_at FROM sessions WHERE token_hash = ?", hashToken(plain),
-	).Scan(&userID, &expires)
-	if errors.Is(err, sql.ErrNoRows) || (err == nil && expires <= Now()) {
+		"SELECT user_id, expires_at, COALESCE(last_used_at, '') FROM sessions WHERE token_hash = ?", hashToken(plain),
+	).Scan(&userID, &expires, &lastUsed)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && !sessionLive(expires, lastUsed, now)) {
 		return User{}, ErrNotFound
 	}
 	if err != nil {
 		return User{}, err
+	}
+	if lastUsed < ts(now.Add(-sessionTouchEvery)) {
+		_, _ = db.ExecContext(ctx, "UPDATE sessions SET last_used_at = ? WHERE token_hash = ?", ts(now), hashToken(plain))
 	}
 	u, err := ByID(ctx, db, userID)
 	if err != nil {
@@ -361,6 +378,76 @@ func LookupSession(ctx context.Context, db *sql.DB, plain string) (User, error) 
 func DeleteSession(ctx context.Context, db *sql.DB, plain string) error {
 	_, err := db.ExecContext(ctx, "DELETE FROM sessions WHERE token_hash = ?", hashToken(plain))
 	return err
+}
+
+// SessionInfo is one session in the account's list (#189). Current marks the
+// session the request came with.
+type SessionInfo struct {
+	ID         int64  `json:"id"`
+	Label      string `json:"label"`
+	CreatedAt  string `json:"createdAt"`
+	LastUsedAt string `json:"lastUsedAt"`
+	ExpiresAt  string `json:"expiresAt"`
+	Current    bool   `json:"current"`
+}
+
+// ListSessions returns the live sessions of userID, most recently used
+// first. current is the token of the request, to mark it.
+func ListSessions(ctx context.Context, db *sql.DB, userID int64, current string) ([]SessionInfo, error) {
+	rows, err := db.QueryContext(ctx,
+		"SELECT rowid, label, COALESCE(created_at, ''), COALESCE(last_used_at, ''), expires_at, token_hash = ? "+
+			"FROM sessions WHERE user_id = ? ORDER BY last_used_at DESC, rowid DESC",
+		hashToken(current), userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	now := time.Now()
+	out := []SessionInfo{}
+	for rows.Next() {
+		var si SessionInfo
+		if err := rows.Scan(&si.ID, &si.Label, &si.CreatedAt, &si.LastUsedAt, &si.ExpiresAt, &si.Current); err != nil {
+			return nil, err
+		}
+		if sessionLive(si.ExpiresAt, si.LastUsedAt, now) {
+			out = append(out, si)
+		}
+	}
+	return out, rows.Err()
+}
+
+// RevokeSession ends one session of userID. ErrNotFound means it has none
+// with that id.
+func RevokeSession(ctx context.Context, db *sql.DB, userID, id int64) error {
+	res, err := db.ExecContext(ctx, "DELETE FROM sessions WHERE rowid = ? AND user_id = ?", id, userID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// RevokeAllSessions ends every session of userID ("sign out everywhere") and
+// returns how many there were.
+func RevokeAllSessions(ctx context.Context, db *sql.DB, userID int64) (int64, error) {
+	res, err := db.ExecContext(ctx, "DELETE FROM sessions WHERE user_id = ?", userID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// PruneSessions deletes sessions that are past their lifetime or idle limit.
+func PruneSessions(ctx context.Context, db *sql.DB, now time.Time) (int64, error) {
+	res, err := db.ExecContext(ctx,
+		"DELETE FROM sessions WHERE expires_at <= ? OR COALESCE(last_used_at, '') <= ?",
+		ts(now), ts(now.Add(-sessionIdle)))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // APIKeyProblem says why a presented API key is not valid, for the log: an
@@ -435,14 +522,14 @@ const (
 // an unknown token, an expired one, or one whose account is disabled.
 func SessionProblem(ctx context.Context, db *sql.DB, plain string) string {
 	var userID int64
-	var expires string
+	var expires, lastUsed string
 	err := db.QueryRowContext(ctx,
-		"SELECT user_id, expires_at FROM sessions WHERE token_hash = ?", hashToken(plain),
-	).Scan(&userID, &expires)
+		"SELECT user_id, expires_at, COALESCE(last_used_at, '') FROM sessions WHERE token_hash = ?", hashToken(plain),
+	).Scan(&userID, &expires, &lastUsed)
 	if err != nil {
 		return CodeSessionUnknown
 	}
-	if expires <= Now() {
+	if !sessionLive(expires, lastUsed, time.Now()) {
 		return CodeSessionExpired
 	}
 	var status string

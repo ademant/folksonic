@@ -3,6 +3,8 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"strings"
+	"time"
 )
 
 // schemaBaseline is the user_version stamped once the probe-based steps in
@@ -33,6 +35,7 @@ var migrations = []migration{
 	{"device registry for remote control", migrateRelayDevices},
 	{"analysis import grant on api keys", migrateAnalysisImportGrant},
 	{"re-read Ogg durations", migrateOggDurations},
+	{"session activity and labels", migrateSessionActivity},
 }
 
 // migrateBookmarks (version 4, #139) adds one bookmark per user and song. The
@@ -312,5 +315,28 @@ func migrateAnalysisImportGrant(tx *sql.Tx) error {
 // Songs with a duration keep theirs; IDs come from tags and do not change.
 func migrateOggDurations(tx *sql.Tx) error {
 	_, err := tx.Exec("UPDATE songs SET mtime = 0 WHERE duration_ms = 0")
+	return err
+}
+
+// migrateSessionActivity (version 13, #189) records when each session was
+// created and last used, and a label naming the client, for the session list
+// and the idle timeout. Existing sessions count as used now, so the upgrade
+// does not sign anyone out. Columns are added only when missing.
+func migrateSessionActivity(tx *sql.Tx) error {
+	for _, col := range []string{"created_at TEXT", "last_used_at TEXT", "label TEXT NOT NULL DEFAULT ''"} {
+		name := col[:strings.IndexByte(col, ' ')]
+		var n int
+		if err := tx.QueryRow("SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = ?", name).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			continue
+		}
+		if _, err := tx.Exec("ALTER TABLE sessions ADD COLUMN " + col); err != nil {
+			return err
+		}
+	}
+	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	_, err := tx.Exec("UPDATE sessions SET created_at = COALESCE(created_at, ?), last_used_at = COALESCE(last_used_at, ?)", now, now)
 	return err
 }

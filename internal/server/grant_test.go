@@ -25,7 +25,7 @@ func grantState(t *testing.T) (*State, string) {
 	t.Helper()
 	s, _, _ := keyFixture(t)
 	s.BaseURL = grantBase
-	session, err := users.CreateSession(context.Background(), s.Pool, userIDOf(t, s, "bob"))
+	session, err := users.CreateSession(context.Background(), s.Pool, userIDOf(t, s, "bob"), "")
 	if err != nil {
 		t.Fatal(err)
 	}

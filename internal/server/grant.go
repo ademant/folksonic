@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +26,9 @@ const grantDeviceCode = "urn:ietf:params:oauth:grant-type:device_code"
 // APIDeviceAuthorize starts a grant (RFC 8628 section 3.1). The body may name
 // the device, for the account page.
 func (s *State) APIDeviceAuthorize(w http.ResponseWriter, r *http.Request) {
+	if s.throttled(w, r, &s.beginLimit) {
+		return
+	}
 	var in struct {
 		Label string `json:"label"`
 	}
@@ -51,18 +55,18 @@ func (s *State) APIDeviceAuthorize(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, J{
 		"device_code":      auth.DeviceCode,
 		"user_code":        auth.UserCode,
-		"verification_uri": s.accountURL(),
+		"verification_uri": s.accountURL(r),
 		"expires_in":       auth.ExpiresIn,
 		"interval":         auth.Interval,
 	})
 }
 
 // accountURL is where the user types the code: the account page.
-func (s *State) accountURL() string {
-	if s.BaseURL == "" {
-		return "/account"
-	}
-	return strings.TrimSuffix(s.BaseURL, "/") + "/account"
+// accountURL is the absolute address of the account page, which RFC 8628
+// requires for verification_uri (#188): base_url, or the address the request
+// came to when base_url is unset (serverURL).
+func (s *State) accountURL(r *http.Request) string {
+	return s.serverURL(r) + "/account"
 }
 
 // APIDeviceApprove gives a pending code to the signed-in user (session only).
@@ -108,6 +112,13 @@ func (s *State) APIDeviceRevoke(w http.ResponseWriter, r *http.Request) {
 // APIDeviceToken is the token endpoint (RFC 8628 section 3.4). It needs a DPoP
 // proof: the tokens are bound to the key that signed it.
 func (s *State) APIDeviceToken(w http.ResponseWriter, r *http.Request) {
+	// Per-address limit before any lookup (#178). RFC 8628 clients back off
+	// on slow_down, so the limit answers in that shape.
+	if ok, retry := s.pollLimit.allow(s.clientIP(r)); !ok {
+		w.Header().Set("Retry-After", strconv.Itoa(retrySeconds(retry)))
+		writeGrantError(w, "slow_down")
+		return
+	}
 	if r.FormValue("grant_type") != grantDeviceCode {
 		writeGrantError(w, "unsupported_grant_type")
 		return
