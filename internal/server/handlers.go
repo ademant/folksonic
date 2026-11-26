@@ -267,21 +267,21 @@ func (s *State) GetUser(w http.ResponseWriter, r *http.Request) {
 	}
 	writeOK(w, J{
 		"user": J{
-			"username":           s.Username,
-			"email":              "",
-			"scrobblingEnabled":  false,
-			"adminRole":          true,
-			"settingsRole":       true,
-			"downloadRole":       true,
-			"uploadRole":         false,
-			"playlistRole":       true,
-			"coverArtRole":       true,
-			"commentRole":        false,
-			"podcastRole":        false,
-			"streamRole":         true,
-			"jukeboxRole":        false,
-			"shareRole":          false,
-			"folder":             []int{1},
+			"username":          s.Username,
+			"email":             "",
+			"scrobblingEnabled": false,
+			"adminRole":         true,
+			"settingsRole":      true,
+			"downloadRole":      true,
+			"uploadRole":        false,
+			"playlistRole":      true,
+			"coverArtRole":      true,
+			"commentRole":       false,
+			"podcastRole":       false,
+			"streamRole":        true,
+			"jukeboxRole":       false,
+			"shareRole":         false,
+			"folder":            []int{1},
 		},
 	})
 }
@@ -741,7 +741,7 @@ func (s *State) Stream(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 70, "Song not found")
 		return
 	}
-	f, err := os.Open(path)
+	f, err := scanner.OpenContained(s.MusicDir, path)
 	if err != nil {
 		s.evictSong(id)
 		log.Printf("stream open %s: %v", path, err)

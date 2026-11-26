@@ -58,10 +58,10 @@ func Scan(pool *sql.DB, musicDir, coversDir string, progress *Progress) (Stats, 
 
 	var stats Stats
 	visited := make(map[string]bool)
-	walkAudio(musicDir, visited, func(path string) {
+	walkAudio(musicDir, musicDir, visited, func(path string) {
 		stats.Scanned++
 		progress.count.Store(int64(stats.Scanned))
-		switch res, perr := processFile(pool, path, coversDir); {
+		switch res, perr := processFile(pool, musicDir, path, coversDir); {
 		case perr != nil:
 			log.Printf("scan %s: %v", path, perr)
 			stats.Skipped++
@@ -81,12 +81,16 @@ func Scan(pool *sql.DB, musicDir, coversDir string, progress *Progress) (Stats, 
 // walkAudio recursively walks dir, following symlinks for both files and
 // directories. Cycles are broken by tracking the canonical (symlink-resolved)
 // path of every directory we descend into.
-func walkAudio(dir string, visited map[string]bool, fn func(path string)) {
+func walkAudio(root, dir string, visited map[string]bool, fn func(path string)) {
 	real, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		return
 	}
 	if visited[real] {
+		return
+	}
+	if !Contained(root, dir) {
+		log.Printf("scan: skipping %s: it leads outside the music folder", dir)
 		return
 	}
 	visited[real] = true
@@ -104,8 +108,12 @@ func walkAudio(dir string, visited map[string]bool, fn func(path string)) {
 		}
 		switch {
 		case info.IsDir():
-			walkAudio(full, visited, fn)
+			walkAudio(root, full, visited, fn)
 		case info.Mode().IsRegular() && hasAudioExt(full):
+			if entry.Type()&os.ModeSymlink != 0 && !Contained(root, full) {
+				log.Printf("scan: skipping %s: it links outside the music folder", full)
+				continue
+			}
 			fn(full)
 		}
 	}
@@ -132,7 +140,10 @@ type extracted struct {
 	CoverFilename sql.NullString
 }
 
-func processFile(pool *sql.DB, path, coversDir string) (processResult, error) {
+func processFile(pool *sql.DB, root, path, coversDir string) (processResult, error) {
+	if !Contained(root, path) {
+		return 0, fmt.Errorf("%s: %w", path, ErrOutsideMusic)
+	}
 	meta, err := os.Stat(path)
 	if err != nil {
 		return 0, err
@@ -153,7 +164,7 @@ func processFile(pool *sql.DB, path, coversDir string) (processResult, error) {
 		return 0, err
 	}
 
-	ex, err := extractMetadata(path, filesize, coversDir)
+	ex, err := extractMetadata(root, path, filesize, coversDir)
 	if err != nil {
 		return 0, err
 	}
@@ -244,7 +255,7 @@ func processFile(pool *sql.DB, path, coversDir string) (processResult, error) {
 	return resultInserted, nil
 }
 
-func extractMetadata(path string, filesize int64, coversDir string) (extracted, error) {
+func extractMetadata(root, path string, filesize int64, coversDir string) (extracted, error) {
 	suffix := strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
 	ex := extracted{
 		Title:       fileStem(path),
@@ -307,7 +318,7 @@ func extractMetadata(path string, filesize int64, coversDir string) (extracted, 
 		}
 	}
 	if !ex.CoverFilename.Valid {
-		if name, ok := findDirCover(path, coversDir, albumKey); ok {
+		if name, ok := findDirCover(root, path, coversDir, albumKey); ok {
 			ex.CoverFilename = sql.NullString{String: name, Valid: true}
 		}
 	}
@@ -360,7 +371,7 @@ var coverCandidates = []string{
 	"album.jpg", "album.png",
 }
 
-func findDirCover(audioPath, coversDir, albumKey string) (string, bool) {
+func findDirCover(root, audioPath, coversDir, albumKey string) (string, bool) {
 	dir := filepath.Dir(audioPath)
 	for _, cand := range coverCandidates {
 		p := filepath.Join(dir, cand)
@@ -374,7 +385,7 @@ func findDirCover(audioPath, coversDir, albumKey string) (string, bool) {
 		if _, err := os.Stat(dest); err == nil {
 			return filename, true
 		}
-		if err := copyFile(p, dest); err != nil {
+		if err := copyFile(root, p, dest); err != nil {
 			continue
 		}
 		return filename, true
@@ -382,8 +393,8 @@ func findDirCover(audioPath, coversDir, albumKey string) (string, bool) {
 	return "", false
 }
 
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
+func copyFile(root, src, dst string) error {
+	in, err := OpenContained(root, src)
 	if err != nil {
 		return err
 	}

@@ -50,12 +50,12 @@ func Watch(ctx context.Context, pool *sql.DB, musicDir, coversDir string) error 
 			if !ok {
 				return nil
 			}
-			handleEvent(w, pool, coversDir, ev, d)
+			handleEvent(w, pool, musicDir, coversDir, ev, d)
 		}
 	}
 }
 
-func handleEvent(w *fsnotify.Watcher, pool *sql.DB, coversDir string, ev fsnotify.Event, d *debouncer) {
+func handleEvent(w *fsnotify.Watcher, pool *sql.DB, root, coversDir string, ev fsnotify.Event, d *debouncer) {
 	switch {
 	case ev.Op&fsnotify.Create != 0:
 		info, err := os.Stat(ev.Name)
@@ -63,21 +63,25 @@ func handleEvent(w *fsnotify.Watcher, pool *sql.DB, coversDir string, ev fsnotif
 			return
 		}
 		if info.IsDir() {
+			if !Contained(root, ev.Name) {
+				log.Printf("watch: skipping %s: it leads outside the music folder", ev.Name)
+				return
+			}
 			if err := addRecursive(w, ev.Name); err != nil {
 				log.Printf("watch add %s: %v", ev.Name, err)
 			}
-			walkAudio(ev.Name, make(map[string]bool), func(p string) {
-				d.schedule(p, func() { runProcess(pool, coversDir, p) })
+			walkAudio(root, ev.Name, make(map[string]bool), func(p string) {
+				d.schedule(p, func() { runProcess(pool, root, coversDir, p) })
 			})
 			return
 		}
 		if hasAudioExt(ev.Name) {
-			d.schedule(ev.Name, func() { runProcess(pool, coversDir, ev.Name) })
+			d.schedule(ev.Name, func() { runProcess(pool, root, coversDir, ev.Name) })
 		}
 
 	case ev.Op&fsnotify.Write != 0:
 		if hasAudioExt(ev.Name) {
-			d.schedule(ev.Name, func() { runProcess(pool, coversDir, ev.Name) })
+			d.schedule(ev.Name, func() { runProcess(pool, root, coversDir, ev.Name) })
 		}
 
 	case ev.Op&(fsnotify.Remove|fsnotify.Rename) != 0:
@@ -94,12 +98,12 @@ func handleEvent(w *fsnotify.Watcher, pool *sql.DB, coversDir string, ev fsnotif
 	}
 }
 
-func runProcess(pool *sql.DB, coversDir, path string) {
+func runProcess(pool *sql.DB, root, coversDir, path string) {
 	// File may have vanished between event and debounce fire.
 	if _, err := os.Stat(path); err != nil {
 		return
 	}
-	res, err := processFile(pool, path, coversDir)
+	res, err := processFile(pool, root, path, coversDir)
 	if err != nil {
 		log.Printf("watch process %s: %v", path, err)
 		return
