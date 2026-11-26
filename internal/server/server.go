@@ -157,7 +157,7 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           requestLogger(corsMiddleware(mux)),
+		Handler:           requestLogger(corsMiddleware(limitBody(mux))),
 		ReadHeaderTimeout: 15 * time.Second,
 	}
 
@@ -173,6 +173,17 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 		return err
 	}
 	return nil
+}
+
+// limitBody caps request bodies and bounds how long a client has to upload
+// them. Streaming and long-poll responses are not affected after the body is
+// read.
+func limitBody(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		boundBodyRead(w, r, bodyTotalTimeout)
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		h.ServeHTTP(w, r)
+	})
 }
 
 // corsMiddleware mirrors actix-cors permissive: allow any origin, any method,
