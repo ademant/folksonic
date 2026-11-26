@@ -154,7 +154,7 @@ Configuration is checked at startup:
 | `analysis_upload_max_mb` | Largest upload to `POST /api/analysis/results`, in MiB after decompression (1–4096). Default 64. See [Analysis over the API](#analysis-over-the-api). |
 | `require_https`      | Refuse plain HTTP on every endpoint. Default on, for a LAN install too. Set `false` only on a trusted test network. See [Running over HTTPS](#running-over-https). |
 | `tls_cert`, `tls_key` | PEM certificate and private key: serve HTTPS directly, without a proxy. Both or neither. `tinysonic cert` makes them. When set, the server accepts only HTTPS. |
-| `[site]` table       | Public description: `name`, `description`, `contact` (email or URL), `repository` (default `https://github.com/ademant/folksonic`) and `impressum_file` (a Markdown file). Empty fields are not shown. See [Public pages](#public-pages). |
+| `[site]` table       | Public description: `name`, `description`, `contact` (email or URL), `repository` (default `https://github.com/ademant/folksonic`), `impressum_file` (a Markdown file), `lang` (page language, default `en`) and `impressum_lang` (default `lang`). Empty fields are not shown. See [Public pages](#public-pages). |
 | `[oidc]` table       | Optional single sign-on with an OpenID Connect provider: `issuer`, `client_id` and optional `client_secret`. Needs `base_url`. See [Single sign-on](#single-sign-on). Off unless `issuer` is set. |
 
 ## Roles
@@ -312,8 +312,10 @@ search and starred endpoints. `HEAD` returns only these headers. Every list has
 a stable order (id as last tie-breaker), so paging neither skips nor repeats
 items; `getArtists`/`getIndexes` page over the article-free sorted list and
 group each page by letter. Random lists ignore `offset` but report the number
-of candidates. The standard `songCount`/`albumCount`/`artistCount` are not
-capped, so existing clients that fetch everything at once keep working.
+of candidates. Every count is capped at 500, the standard
+`songCount`/`albumCount`/`artistCount` and `count` included (#114): a client
+that asks for more gets 500 and must page with the offset, until a page comes
+back short or the offset reaches the `X-Total-Count…` header (#202).
 
 **Library info (vendor extension `tinysonicLibraryInfo`)** —
 `GET /rest/tinysonicLibraryInfo` returns `artists`, `albums`, `songs`, total
@@ -720,7 +722,11 @@ ran, error), and `analysis_attempts` (interrupted runs, see above). All go
 with the song when it is removed, and the attempts are cleared when its audio
 changes.
 
-**Response conventions** — optional fields without a value are omitted, never
+**Response conventions** — every response is JSON, whatever `f` asks for:
+`f=xml` and `f=jsonp` are not implemented, so a client must use `f=json`
+(#202). `v` is accepted and not checked; responses report version 1.16.1. `c`
+names the client in the request log and in the saved play queue's `changedBy`.
+Optional fields without a value are omitted, never
 sent as `null`. A song's `path` is relative to the music directory that holds
 it (`Artist/Album/01.opus`); server paths are not exposed. `created` is when a
 file was first added to the library (kept across rescans; on upgrade it starts
@@ -1336,7 +1342,8 @@ Every response carries `X-Frame-Options: DENY` and `X-Content-Type-Options:
 nosniff`, so no other site can frame tinysonic, including the sign-in page.
 That includes the HTTPS refusals below (#191).
 The web pages have no inline script or style. Their scripts and stylesheets
-are served from `/static/` and the policy is `'self'` only. A reverse proxy
+are served from `/static/` and the policy is `'self'` only, with
+`base-uri 'none'` and `object-src 'none'` (#201). A reverse proxy
 should not add `'unsafe-inline'` to that policy.
 
 Every response also carries `Referrer-Policy: no-referrer`, so the URL of a
@@ -1375,11 +1382,22 @@ name          = "Folk Cloud"
 description   = "Private library of folk recordings for the dance group."
 contact       = "admin@example.com"
 impressum_file = "impressum.md"   # relative paths resolve from this file's directory
+lang          = "en"              # page language (BCP 47)
+impressum_lang = "de"             # the Impressum's, when it differs
 ```
 
 Under `base_path`, all four pages are served under that prefix. Crawlers only
-read `robots.txt` from the host root, so a subpath deployment needs its own
-`robots.txt` at the proxy.
+read `robots.txt` from the host root, so a subpath deployment needs one there:
+the nginx, Apache and Caddy templates in `deploy/` have a commented block that
+serves tinysonic's at `/robots.txt` for a host without its own. A host with its
+own copies the `Disallow` and `Sitemap` lines into it (#201).
+
+With `base_url` set, `/` and `/impressum` carry a canonical link and OpenGraph
+tags (title, description, address). All public pages have an icon
+(`/static/favicon.svg`). `lang` and `impressum_lang` set the page language
+(default `en`; the Impressum follows `lang` unless set). `/` sends
+`Vary: Accept`, since browsers get the page and other clients the banner.
+Static files carry an `ETag`, so a revalidating browser gets 304.
 
 ## Serving under a subpath
 

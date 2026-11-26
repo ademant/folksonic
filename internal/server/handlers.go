@@ -32,6 +32,8 @@ func (s *State) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	// The page and the plain-text banner share the address (#201).
+	w.Header().Set("Vary", "Accept")
 	if acceptsHTML(r) {
 		s.serveInfoPage(w, r)
 		return

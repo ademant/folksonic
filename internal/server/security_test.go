@@ -72,6 +72,9 @@ func TestPagesHaveNoInlineCodeAndStrictPolicy(t *testing.T) {
 		if !strings.Contains(csp, "frame-ancestors 'none'") {
 			t.Errorf("%s: policy does not forbid framing: %s", c.path, csp)
 		}
+		if !strings.Contains(csp, "base-uri 'none'") || (c.path != "/" && c.path != "/impressum" && !strings.Contains(csp, "object-src 'none'")) {
+			t.Errorf("%s: policy lacks base-uri or object-src (#201): %s", c.path, csp)
+		}
 	}
 }
 

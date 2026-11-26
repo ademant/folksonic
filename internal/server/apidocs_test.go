@@ -247,3 +247,136 @@ func TestJSONErrorsHaveOneShape(t *testing.T) {
 		}
 	}
 }
+
+// openAPIOperations returns, for each "METHOD /api/path" in openapi.yaml, the
+// lines of that operation.
+func openAPIOperations(t *testing.T) map[string][]string {
+	t.Helper()
+	ops := map[string][]string{}
+	pathRE := regexp.MustCompile(`^  (/api/\S+):$`)
+	methodRE := regexp.MustCompile(`^    (get|post|put|delete):$`)
+	var path, cur string
+	inPaths := false
+	for _, line := range strings.Split(readDoc(t, "openapi.yaml"), "\n") {
+		switch {
+		case line == "paths:":
+			inPaths = true
+		case inPaths && !strings.HasPrefix(line, " ") && line != "":
+			inPaths, cur = false, ""
+		case inPaths && pathRE.MatchString(line):
+			path, cur = pathRE.FindStringSubmatch(line)[1], ""
+		case inPaths && methodRE.MatchString(line):
+			cur = strings.ToUpper(methodRE.FindStringSubmatch(line)[1]) + " " + path
+		case cur != "":
+			ops[cur] = append(ops[cur], line)
+		}
+	}
+	return ops
+}
+
+// Every $ref in openapi.yaml names a component the document defines, and
+// every operation documents a success response (#202).
+func TestOpenAPIRefsResolve(t *testing.T) {
+	doc := readDoc(t, "openapi.yaml")
+	defined := map[string]bool{}
+	section := ""
+	for _, line := range strings.Split(doc, "\n") {
+		if m := regexp.MustCompile(`^  (schemas|responses|securitySchemes|parameters):$`).FindStringSubmatch(line); m != nil {
+			section = m[1]
+			continue
+		}
+		if !strings.HasPrefix(line, "  ") {
+			section = ""
+		}
+		if m := regexp.MustCompile(`^    ([A-Za-z][A-Za-z0-9]*):`).FindStringSubmatch(line); m != nil && section != "" {
+			defined[section+"/"+m[1]] = true
+		}
+	}
+	for _, m := range regexp.MustCompile(`\$ref: '#/components/([a-zA-Z]+/[A-Za-z0-9]+)'`).FindAllStringSubmatch(doc, -1) {
+		if !defined[m[1]] {
+			t.Errorf("$ref to undefined component %s", m[1])
+		}
+	}
+	for op, lines := range openAPIOperations(t) {
+		ok := false
+		for _, l := range lines {
+			// 101 (WebSocket) and 302 (redirect) succeed too.
+			if regexp.MustCompile(`^        '(101|2\d\d|3\d\d)':`).MatchString(l) {
+				ok = true
+			}
+		}
+		if !ok {
+			t.Errorf("%s documents no success response", op)
+		}
+	}
+}
+
+// resolvesCaller matches a call that resolves the caller; a handler without one is
+// public.
+var resolvesCaller = regexp.MustCompile(`s\.(requireUser|requireSession|requireSessionOrGrant|requireCaller|requireAuth|requireLibrarian|requireDevice|requireAnalysisImporter|checkProof|authenticate)\(`)
+
+// methodCall finds calls to other State methods, to follow a handler that
+// delegates to a helper.
+var methodCall = regexp.MustCompile(`s\.(\w+)\(w, r`)
+
+// optionalAuth are handlers that serve anonymous callers but look at a
+// caller when one is sent; the docs call them public.
+var optionalAuth = map[string]bool{
+	"APIOIDCBegin": true, // link mode needs a session, sign-in does not
+	// RFC 8628 token endpoints: the credential is the device code or refresh
+	// token in the body, bound to the DPoP key; there is no account yet.
+	"APIDeviceToken":   true,
+	"APIDeviceRefresh": true,
+}
+
+// The operations documented as public (security: []) are the handlers that
+// do not resolve a caller, and the others require credentials (#202).
+func TestOpenAPISecurityMatchesHandlers(t *testing.T) {
+	var src strings.Builder
+	files, _ := filepath.Glob("*.go")
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		src.Write(b)
+	}
+	code := src.String()
+	bodyOf := func(handler string) string {
+		i := strings.Index(code, "func (s *State) "+handler+"(")
+		if i < 0 {
+			t.Fatalf("handler %s not found", handler)
+		}
+		end := strings.Index(code[i:], "\n}\n")
+		return code[i : i+end]
+	}
+	ops := openAPIOperations(t)
+	routeRE := regexp.MustCompile(`mux\.HandleFunc\("(GET|POST|DELETE|PUT) (/api/[^"]+)", s\.(\w+)\)`)
+	n := 0
+	for _, m := range routeRE.FindAllStringSubmatch(serverSource(t), -1) {
+		op, handler := m[1]+" "+m[2], m[3]
+		n++
+		body := bodyOf(handler)
+		for _, c := range methodCall.FindAllStringSubmatch(body, -1) {
+			if strings.Contains(code, "func (s *State) "+c[1]+"(") {
+				body += bodyOf(c[1])
+			}
+		}
+		public := !resolvesCaller.MatchString(body) || optionalAuth[handler]
+		documentedPublic := false
+		for _, l := range ops[op] {
+			if strings.TrimSpace(l) == "security: []" {
+				documentedPublic = true
+			}
+		}
+		if public != documentedPublic {
+			t.Errorf("%s (%s): public in code %v, documented public %v", op, handler, public, documentedPublic)
+		}
+	}
+	if n == 0 {
+		t.Fatal("found no /api routes")
+	}
+}
