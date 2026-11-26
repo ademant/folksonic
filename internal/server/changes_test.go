@@ -283,10 +283,10 @@ func TestLibraryChangesAuth(t *testing.T) {
 	ctx := context.Background()
 	seedFeed(t, s, 1)
 
-	// Token auth is not supported: error 42, not a password failure.
+	// Token auth is not supported: error 41, not a password failure.
 	_, body := changesCall(t, s, url.Values{"u": {"admin"}, "t": {"abc"}, "s": {"xyz"}})
-	if !strings.Contains(body, `"code":42`) {
-		t.Fatalf("token auth: want error 42, got %s", body)
+	if !strings.Contains(body, `"code":41`) {
+		t.Fatalf("token auth: want error 41, got %s", body)
 	}
 
 	// A wrong password is error 40.
@@ -459,5 +459,19 @@ func TestLibraryChangesRejectsUnknownInclude(t *testing.T) {
 	_, body := changesCall(t, s, url.Values{"u": {"admin"}, "p": {"s3cret"}, "include": {"everything"}})
 	if !strings.Contains(body, `"status":"failed"`) {
 		t.Fatalf("unknown include accepted: %s", body)
+	}
+}
+
+// A database failure is reported as "database error", never with the
+// driver's text, which names tables and columns (#176).
+func TestLibraryChangesHidesDatabaseErrors(t *testing.T) {
+	s := feedState(t)
+	seedFeed(t, s, 1)
+	if _, err := s.Pool.Exec("ALTER TABLE songs RENAME TO songs_gone"); err != nil {
+		t.Fatal(err)
+	}
+	_, body := changesCall(t, s, url.Values{"u": {"admin"}, "p": {"s3cret"}})
+	if !strings.Contains(body, `"message":"database error"`) || strings.Contains(body, "songs") || strings.Contains(body, "no such table") {
+		t.Fatalf("database error leaked: %s", body)
 	}
 }

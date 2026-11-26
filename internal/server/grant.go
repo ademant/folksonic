@@ -31,7 +31,7 @@ func (s *State) APIDeviceAuthorize(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.ContentLength != 0 {
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-			writeAPIError(w, http.StatusBadRequest, "invalid JSON body")
+			writeAPIErrorCode(w, http.StatusBadRequest, codeInvalidJSON, "invalid JSON body")
 			return
 		}
 	}
@@ -39,7 +39,7 @@ func (s *State) APIDeviceAuthorize(w http.ResponseWriter, r *http.Request) {
 	pending, err := users.PendingDeviceCodes(r.Context(), s.Pool, now)
 	if err != nil {
 		logging.Errorf("device authorize: %v", err)
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	if pending >= maxPendingDeviceCodes {
@@ -49,7 +49,7 @@ func (s *State) APIDeviceAuthorize(w http.ResponseWriter, r *http.Request) {
 	auth, err := users.CreateDeviceAuth(r.Context(), s.Pool, in.Label, now)
 	if err != nil {
 		logging.Errorf("device authorize: %v", err)
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	writeJSON(w, http.StatusOK, J{
@@ -88,7 +88,7 @@ func (s *State) APIDeviceApprove(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		logging.Errorf("device approve: %v", err)
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	writeJSON(w, http.StatusOK, J{"approved": true})
@@ -103,7 +103,7 @@ func (s *State) APIDeviceRevoke(w http.ResponseWriter, r *http.Request) {
 	n, err := users.RevokeUserGrants(r.Context(), s.Pool, u.ID, time.Now())
 	if err != nil {
 		logging.Errorf("device revoke: %v", err)
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	writeJSON(w, http.StatusOK, J{"revoked": n})
@@ -126,7 +126,7 @@ func (s *State) APIDeviceToken(w http.ResponseWriter, r *http.Request) {
 	// codes cannot fill the replay store (#111).
 	known, err := users.DeviceCodeKnown(r.Context(), s.Pool, deviceCode, now)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	jkt, jti, ok := s.grantProof(w, r)
@@ -163,7 +163,7 @@ func (s *State) APIDeviceRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 	known, err := users.GrantKnown(r.Context(), s.Pool, refresh)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	jkt, jti, ok := s.grantProof(w, r)

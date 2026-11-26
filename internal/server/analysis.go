@@ -43,7 +43,7 @@ func (s *State) APIAnalysis(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 
@@ -65,14 +65,14 @@ func (s *State) APIAnalysis(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.Pool.QueryContext(ctx, "SELECT name, value FROM song_values WHERE song_id = ?", id)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var name, value string
 		if err := rows.Scan(&name, &value); err != nil {
-			writeAPIError(w, http.StatusInternalServerError, "database error")
+			writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 			return
 		}
 		if _, known := out[name]; known && name != "bpm" && json.Valid([]byte(value)) {
@@ -80,7 +80,7 @@ func (s *State) APIAnalysis(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 

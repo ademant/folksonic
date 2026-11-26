@@ -182,6 +182,14 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 	go s.preloadSongs(ctx)
 	s.impressumHTML, s.impressumOK = renderImpressum(cfg.Site.ImpressumFile)
 	s.legacyPasswordOff = !cfg.LegacyPasswordAuth
+	if cfg.BaseURL == "" {
+		logging.Warnf("base_url is not set: signed stream links, pairing codes and the device flow take their address from the request's Host header; set base_url to the address clients use")
+	}
+	if cfg.LegacyPasswordAuth {
+		logging.Warnf("legacy_password_auth = true: Subsonic clients may sign in with u and p, which puts the password in every request URL")
+	} else {
+		logging.Infof("Subsonic sign-in: API keys only (legacy_password_auth = false); u and p get error 42")
+	}
 	s.httpsRequired = cfg.HTTPSRequired()
 	if s.httpsRequired && len(cfg.TrustedProxies) == 0 {
 		logging.Warnf("require_https is on but trusted_proxies is empty: requests from a reverse proxy are refused; list the proxy's address there")
@@ -216,8 +224,9 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 	srv := &http.Server{
-		Addr:              addr,
-		Handler:           requestLogger(s.httpsGate(securityHeaders(corsMiddleware(limitBody(handler))))),
+		Addr: addr,
+		// securityHeaders is outside httpsGate, so refusals carry them too (#191).
+		Handler:           requestLogger(securityHeaders(s.httpsGate(corsMiddleware(limitBody(handler))))),
 		ReadHeaderTimeout: 15 * time.Second,
 		ErrorLog:          logging.StdLogger(slog.LevelWarn),
 	}
@@ -271,12 +280,16 @@ func corsMiddleware(h http.Handler) http.Handler {
 // edits), so anything larger is rejected before it is read into memory. The
 // analysis results upload applies its own, configurable limit
 // (APIAnalysisResults).
+//
+// It also bounds how long reading a body may take (boundBodyRead, #172).
 func limitBody(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, resultsPath) {
+			boundBodyRead(w, r, bodyUploadTimeout)
 			h.ServeHTTP(w, r)
 			return
 		}
+		boundBodyRead(w, r, bodyTotalTimeout)
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		h.ServeHTTP(w, r)
 	})
@@ -507,7 +520,7 @@ func (s *State) routes() *http.ServeMux {
 	register("getArtistInfo", s.GetArtistInfo)
 	register("getArtistInfo2", s.GetArtistInfo2)
 	register("getAlbumInfo", s.GetAlbumInfo)
-	register("getAlbumInfo2", s.GetAlbumInfo)
+	register("getAlbumInfo2", s.GetAlbumInfo2)
 	register("getSimilarSongs", s.GetSimilarSongs)
 	register("getSimilarSongs2", s.GetSimilarSongs2)
 	register("getTopSongs", s.GetTopSongs)

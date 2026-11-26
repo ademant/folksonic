@@ -197,10 +197,30 @@ components:
           description: Only in 202 responses.
     Error:
       type: object
-      required: [error]
+      description: |
+        Every JSON API error (#194), except the RFC 8628 device-flow errors of
+        `/api/device/token` and `/api/device/refresh`. Branch on `error`, show
+        `message`. Besides the refusal codes (README, "Refusal codes") and the
+        specific codes below, an error has the generic code of its status:
+        `bad_request` (400), `unauthorized` (401), `forbidden` (403),
+        `not_found` (404), `conflict` (409), `too_large` (413),
+        `unsupported_media_type` (415), `rate_limited` (429),
+        `internal_error` (500), `unavailable` (503).
+      required: [error, message]
       properties:
         error:
           type: string
+          pattern: '^[a-z][a-z0-9_]*$'
+          description: |
+            Stable code. Specific codes: `database_error`, `invalid_json`,
+            `librarian_required`, `registration_disabled`,
+            `passkeys_unavailable`, `no_passkey`, `ceremony_expired`,
+            `sso_not_configured`, `sso_unavailable`, `last_sign_in_method`,
+            `job_running`, `no_job_running`, `import_running`,
+            `tool_unavailable`, `password_invalid`.
+        message:
+          type: string
+          description: Text for people. Clients should not parse it.
     Session:
       type: object
       required: [token, username, role]

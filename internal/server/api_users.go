@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/tsirysndr/tinysonic/internal/users"
@@ -14,8 +15,17 @@ import (
 // JSON endpoints for accounts, API keys and device pairing. These are not part
 // of the Subsonic API, so they use a plain JSON body and status codes.
 
+// writeAPIError answers a JSON API error with the generic code for its
+// status (statusCodes) and msg as the message: {"error": "<code>",
+// "message": "<text>"}, the one error shape of the API (#194). Use
+// writeAPIErrorCode for an error clients need to tell apart.
 func writeAPIError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, J{"error": msg})
+	writeAPIErrorCode(w, status, statusCode(status), msg)
+}
+
+// writeAPIErrorCode answers a JSON API error with a specific code.
+func writeAPIErrorCode(w http.ResponseWriter, status int, code, msg string) {
+	writeJSON(w, status, J{"error": code, "message": msg})
 }
 
 // requireUser authenticates the caller for an /api request.
@@ -49,7 +59,7 @@ func (s *State) requireSession(w http.ResponseWriter, r *http.Request) (users.Us
 
 func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid JSON body")
+		writeAPIErrorCode(w, http.StatusBadRequest, codeInvalidJSON, "invalid JSON body")
 		return false
 	}
 	return true
@@ -64,13 +74,20 @@ func pathID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	return id, true
 }
 
-// serverURL is the address clients should use: the configured base_url, or the
-// host the request arrived on when none is configured.
+// serverURL is the address clients should use: the configured base_url, or,
+// when none is configured, the host the request arrived on, with https when it
+// came over TLS or through a trusted proxy that says so (#183). The Host
+// header is the client's, so a security-relevant address needs base_url; the
+// server warns at startup when it is unset.
 func (s *State) serverURL(r *http.Request) string {
 	if s.BaseURL != "" {
-		return s.BaseURL
+		return strings.TrimRight(s.BaseURL, "/")
 	}
-	return "http://" + r.Host
+	scheme := "http://"
+	if isHTTPS(r, s.trusted) {
+		scheme = "https://"
+	}
+	return scheme + r.Host + s.BasePath
 }
 
 // nullableString is nil for an empty string, so a JSON field is null, not "".
@@ -118,7 +135,7 @@ func (s *State) APIRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.AllowRegistration {
-		writeAPIError(w, http.StatusForbidden, "registration is disabled")
+		writeAPIErrorCode(w, http.StatusForbidden, codeRegistrationDisabled, "registration is disabled")
 		return
 	}
 	err := users.CheckPassword(in.Password)
@@ -131,7 +148,7 @@ func (s *State) APIRegister(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, users.ErrInvalid):
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 	case err != nil:
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 	default:
 		writeJSON(w, http.StatusAccepted, J{"status": users.StatusPending, "message": "awaiting approval"})
 	}
@@ -157,12 +174,12 @@ func (s *State) registerWithInvite(w http.ResponseWriter, r *http.Request, usern
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	case err != nil:
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	token, err := users.CreateSession(r.Context(), s.Pool, u.ID)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	writeJSON(w, http.StatusCreated, J{"status": u.Status, "token": token, "username": u.Username, "role": u.Role})
@@ -193,7 +210,7 @@ func (s *State) APICreateKey(w http.ResponseWriter, r *http.Request) {
 	}
 	key, err := users.CreateAPIKey(r.Context(), s.Pool, u.ID, in.Label, ttl)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	resp := J{"apiKey": key, "label": in.Label, "expiresAt": time.Now().Add(ttl).UTC().Format(time.RFC3339)}
@@ -207,7 +224,7 @@ func (s *State) APIListKeys(w http.ResponseWriter, r *http.Request) {
 	}
 	keys, err := users.ListAPIKeys(r.Context(), s.Pool, u.ID)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	out := make([]J, 0, len(keys))
@@ -242,7 +259,7 @@ func (s *State) APIRevokeKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	writeJSON(w, http.StatusOK, J{"status": "revoked"})
@@ -257,7 +274,7 @@ func (s *State) APIPairStart(w http.ResponseWriter, r *http.Request) {
 	}
 	token, err := users.CreatePairingToken(r.Context(), s.Pool, u.ID)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	server := s.serverURL(r)
@@ -297,7 +314,7 @@ func (s *State) APIPairComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	writeJSON(w, http.StatusOK, J{

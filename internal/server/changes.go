@@ -165,7 +165,7 @@ func (s *State) GetLibraryChanges(w http.ResponseWriter, r *http.Request) {
 		}
 		floor, err := db.ChangeFloor(ctx, s.Pool)
 		if err != nil {
-			writeError(w, 0, err.Error())
+			s.dbFailed(w, "getLibraryChanges floor", err)
 			return
 		}
 		full := since == 0 || since < floor
@@ -191,7 +191,7 @@ func (s *State) GetLibraryChanges(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := changeRows(ctx, s.Pool, caller.ID, c, limit)
 	if err != nil {
-		writeError(w, 0, err.Error())
+		s.dbFailed(w, "getLibraryChanges rows", err)
 		return
 	}
 
@@ -208,7 +208,7 @@ func (s *State) GetLibraryChanges(w http.ResponseWriter, r *http.Request) {
 	if withItems {
 		items, err = s.changeItems(ctx, caller.ID, rows)
 		if err != nil {
-			writeError(w, 0, err.Error())
+			s.dbFailed(w, "getLibraryChanges items", err)
 			return
 		}
 	}

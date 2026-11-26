@@ -41,7 +41,7 @@ func (s *State) requireLibrarian(w http.ResponseWriter, r *http.Request) (users.
 		return u, false
 	}
 	if u.Role != users.RoleLibrarian {
-		writeAPIError(w, http.StatusForbidden, "librarians only")
+		writeAPIErrorCode(w, http.StatusForbidden, codeLibrarianRequired, "librarians only")
 		return u, false
 	}
 	return u, true
@@ -329,7 +329,7 @@ func (s *State) APILibraryStats(w http.ResponseWriter, r *http.Request) {
 		(SELECT value FROM settings WHERE key = ?)
 		FROM songs`, scanner.LastScanKey).Scan(&artists, &albums, &songs, &durMs, &bpmTag, &bpmCalc, &bpmMissing, &lastScan)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	// "ffmpeg" is whether the BPM buttons can work: the tool assigned to bpm
@@ -350,7 +350,7 @@ func (s *State) APILibraryStats(w http.ResponseWriter, r *http.Request) {
 	var failed int
 	if err := s.Pool.QueryRowContext(r.Context(),
 		"SELECT COUNT(DISTINCT song_id) FROM analysis WHERE error IS NOT NULL").Scan(&failed); err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	scan := J{"running": false}
@@ -378,7 +378,7 @@ func (s *State) APILibraryScan(w http.ResponseWriter, r *http.Request) {
 	busy := s.jobs.active || s.Progress == nil || !s.Progress.Begin()
 	s.jobs.mu.Unlock()
 	if busy {
-		writeAPIError(w, http.StatusConflict, errBusy.Error())
+		writeAPIErrorCode(w, http.StatusConflict, codeJobRunning, errBusy.Error())
 		return
 	}
 	go func() {
@@ -406,11 +406,11 @@ func (s *State) APILibraryBPM(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, errBadMode):
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, errBusy):
-		writeAPIError(w, http.StatusConflict, err.Error())
+		writeAPIErrorCode(w, http.StatusConflict, codeJobRunning, err.Error())
 	case errors.Is(err, errNoTool), errors.Is(err, errNotAssigned):
-		writeAPIError(w, http.StatusServiceUnavailable, err.Error())
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, codeToolUnavailable, err.Error())
 	default:
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 	}
 }
 
@@ -446,11 +446,11 @@ func (s *State) APILibraryAnalysis(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, errNotAssigned):
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, errBusy):
-		writeAPIError(w, http.StatusConflict, err.Error())
+		writeAPIErrorCode(w, http.StatusConflict, codeJobRunning, err.Error())
 	case errors.Is(err, errNoTool):
-		writeAPIError(w, http.StatusServiceUnavailable, err.Error())
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, codeToolUnavailable, err.Error())
 	default:
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 	}
 }
 
@@ -475,7 +475,7 @@ func (s *State) APILibraryFailed(w http.ResponseWriter, r *http.Request) {
 	var total int
 	if err := s.Pool.QueryRowContext(ctx,
 		"SELECT COUNT(DISTINCT song_id) FROM analysis WHERE error IS NOT NULL").Scan(&total); err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	rows, err := s.Pool.QueryContext(ctx, `SELECT a.song_id, s.title, s.artist, a.tool, MAX(a.error), MAX(a.analysed_ms)
@@ -485,7 +485,7 @@ func (s *State) APILibraryFailed(w http.ResponseWriter, r *http.Request) {
 		ORDER BY MAX(a.analysed_ms) DESC, a.song_id, a.tool
 		LIMIT ?`, limit)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	defer rows.Close()
@@ -494,7 +494,7 @@ func (s *State) APILibraryFailed(w http.ResponseWriter, r *http.Request) {
 		var id, title, artist, tool, msg string
 		var ms int64
 		if err := rows.Scan(&id, &title, &artist, &tool, &msg, &ms); err != nil {
-			writeAPIError(w, http.StatusInternalServerError, "database error")
+			writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 			return
 		}
 		for _, dir := range s.MusicDirs {
@@ -509,7 +509,7 @@ func (s *State) APILibraryFailed(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	if err := rows.Err(); err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	writeJSON(w, http.StatusOK, J{"total": total, "songs": songs})
@@ -524,7 +524,7 @@ func (s *State) APILibraryCancel(w http.ResponseWriter, r *http.Request) {
 	cancel := s.jobs.cancel
 	s.jobs.mu.Unlock()
 	if cancel == nil {
-		writeAPIError(w, http.StatusConflict, "no job is running")
+		writeAPIErrorCode(w, http.StatusConflict, codeNoJobRunning, "no job is running")
 		return
 	}
 	cancel()

@@ -254,7 +254,10 @@
   // pairingImage returns the QR image and the pairing link for the same token.
   async function pairingImage(accept) {
     var r = await raw("POST", "pair/qr", undefined, accept);
-    if (!r.ok) throw new Error((await r.json().catch(function () { return {}; })).error || ("HTTP " + r.status));
+    if (!r.ok) {
+      var e = await r.json().catch(function () { return {}; });
+      throw new Error(e.message || e.error || ("HTTP " + r.status));
+    }
     return { blob: await r.blob(), link: r.headers.get("X-Pairing-Link") || "" };
   }
   function showPairLink(link) {
@@ -336,7 +339,7 @@
       if (cred.response.getTransports) resp.response.transports = cred.response.getTransports();
       var r = await raw("POST", "passkey/register/finish?ceremony=" + encodeURIComponent(begin.ceremony) + "&label=" + encodeURIComponent(label), resp);
       var j = await r.json().catch(function () { return {}; });
-      if (!r.ok) throw new Error(j.error || "registration failed");
+      if (!r.ok) throw new Error(j.message || j.error || "registration failed");
       $("pkLabel").value = "";
       say("Passkey added.");
       await loadPasskeys();

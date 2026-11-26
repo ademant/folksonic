@@ -17,7 +17,7 @@
   async function post(path, body) {
     var r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
     var j = await r.json().catch(function () { return {}; });
-    if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+    if (!r.ok) throw new Error(j.message || j.error || ("HTTP " + r.status));
     return j;
   }
   // finish stores the session and opens the account page.
@@ -87,7 +87,7 @@
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(resp)
       });
       var j = await done.json();
-      if (!done.ok) throw new Error(j.error || "sign-in failed");
+      if (!done.ok) throw new Error(j.message || j.error || "sign-in failed");
       finish(j.token, j.username);
     } catch (e) { say(e.message || String(e)); }
   });
@@ -139,7 +139,7 @@
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(resp)
       });
       var j = await done.json();
-      if (!done.ok) throw new Error(j.error || "registration failed");
+      if (!done.ok) throw new Error(j.message || j.error || "registration failed");
       finish(j.token, j.username);
     } catch (e) { say(e.message || String(e)); }
   });

@@ -27,7 +27,7 @@
     }
     var j = await r.json().catch(function () { return {}; });
     if (r.status === 403) { location.replace("account"); throw new Error("librarians only"); }
-    if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+    if (!r.ok) throw new Error(j.message || j.error || ("HTTP " + r.status));
     return j;
   }
 

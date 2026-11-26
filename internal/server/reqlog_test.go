@@ -77,7 +77,7 @@ func TestRequestLogShowsSubsonicError(t *testing.T) {
 		}
 	}
 	line := logLine(t, s, http.MethodGet, "/rest/getLibraryChanges?u=admin&t=x&s=y", nil, false)
-	if !strings.HasSuffix(line, " err=42") || strings.Contains(line, "user=") {
+	if !strings.HasSuffix(line, " err=41") || strings.Contains(line, "user=") {
 		t.Fatalf("token auth: got %q", line)
 	}
 }

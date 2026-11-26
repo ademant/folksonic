@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/tsirysndr/tinysonic/internal/logging"
 	"github.com/tsirysndr/tinysonic/internal/users"
 )
 
@@ -39,7 +40,7 @@ func (s *State) APIRegisterPasskeyBegin(w http.ResponseWriter, r *http.Request) 
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	case err != nil:
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 
@@ -53,7 +54,8 @@ func (s *State) APIRegisterPasskeyBegin(w http.ResponseWriter, r *http.Request) 
 	wu := waUser{u: users.User{Username: in.Username, WebAuthnHandle: handle}}
 	options, session, err := s.webAuthn.BeginRegistration(wu)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		logging.Errorf("%s: %v", "passkey registration", err)
+		writeAPIError(w, http.StatusInternalServerError, "passkey registration could not start")
 		return
 	}
 	id := newCeremonyID()
@@ -76,7 +78,7 @@ func (s *State) APIRegisterPasskeyFinish(w http.ResponseWriter, r *http.Request)
 	}
 	cer, ok := s.ceremonies.take(r.URL.Query().Get("ceremony"))
 	if !ok || cer.invite == "" {
-		writeAPIError(w, http.StatusBadRequest, "registration expired; start again")
+		writeAPIErrorCode(w, http.StatusBadRequest, codeCeremonyExpired, "registration expired; start again")
 		return
 	}
 	wu := waUser{u: users.User{Username: cer.username, WebAuthnHandle: cer.handle}}
@@ -102,12 +104,12 @@ func (s *State) APIRegisterPasskeyFinish(w http.ResponseWriter, r *http.Request)
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	case err != nil:
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	token, err := users.CreateSession(r.Context(), s.Pool, u.ID)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "database error")
+		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
 		return
 	}
 	writeJSON(w, http.StatusCreated, J{"status": u.Status, "token": token, "username": u.Username, "role": u.Role})
