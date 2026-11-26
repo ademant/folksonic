@@ -32,6 +32,7 @@ var migrations = []migration{
 	{"remote playback control", migrateRemotePlayback},
 	{"device registry for remote control", migrateRelayDevices},
 	{"analysis import grant on api keys", migrateAnalysisImportGrant},
+	{"re-read Ogg durations", migrateOggDurations},
 }
 
 // migrateBookmarks (version 4, #139) adds one bookmark per user and song. The
@@ -303,5 +304,13 @@ func migrateAnalysisImportGrant(tx *sql.Tx) error {
 		return nil
 	}
 	_, err := tx.Exec("ALTER TABLE api_keys ADD COLUMN analysis_import_at TEXT")
+	return err
+}
+
+// migrateOggDurations (version 11, #165) resets the mtime of songs without a
+// duration, so the next scan probes them again with the corrected Ogg reader.
+// Songs with a duration keep theirs; IDs come from tags and do not change.
+func migrateOggDurations(tx *sql.Tx) error {
+	_, err := tx.Exec("UPDATE songs SET mtime = 0 WHERE duration_ms = 0")
 	return err
 }
