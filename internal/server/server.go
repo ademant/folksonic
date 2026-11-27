@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,6 +28,8 @@ import (
 
 // State is shared by all handlers.
 type State struct {
+	// codeKey keys the user codes of device grants; see users.LoadOrCreateCodeKey.
+	codeKey []byte
 	// relay routes frames between a user's devices (#159); the zero value is ready.
 	relay     relayHub
 	Pool      *sql.DB
@@ -186,7 +189,12 @@ func (s *State) preloadSongs(ctx context.Context) {
 }
 
 func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scanner.Progress) error {
+	codeKey, err := users.LoadOrCreateCodeKey(filepath.Join(filepath.Dir(cfg.DatabasePath), "device-code.key"))
+	if err != nil {
+		return fmt.Errorf("device code key: %w", err)
+	}
 	s := &State{
+		codeKey:             codeKey,
 		Pool:                pool,
 		BaseURL:             cfg.BaseURL,
 		Site:                cfg.Site,

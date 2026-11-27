@@ -1049,6 +1049,26 @@ as part of multi-factor authentication). Password-failure throttles and the
 DPoP replay cache are process-local: they reset on restart and do not
 coordinate across multiple server instances.
 
+### Hashing and secret storage
+
+Each kind of secret gets the primitive that fits it. Only hashes are stored,
+never the secrets themselves.
+
+| Secret | Stored as | Why |
+|---|---|---|
+| Passwords | argon2id, per-password salt | People choose them, so guessing is the threat. The slow, salted KDF makes offline guessing expensive. |
+| Random tokens (API keys, sessions, pairing and invite codes, device-grant access and refresh tokens) | SHA-256 of the token | They carry 256 random bits, so guessing is infeasible and a slow KDF adds nothing. Switching to a keyed hash would change every stored hash and invalidate every existing key and session. |
+| Device-grant device codes | SHA-256 of the code | Random, 256 bits, and not typed by a person. |
+| Device-grant user codes (`XXXX-XXXX`) | HMAC-SHA256 under a per-installation key | Only about 38 bits and typed by a person, so an unkeyed hash could be checked offline if the database leaked. The key is what stops that. |
+
+The user-code key is a random 32-byte value, created on first start in
+`device-code.key` next to the database, with mode 0600. It is kept out of the
+database on purpose: the deploy backup copies `tinysonic.db*`, and a backup then
+does not carry the key. Losing the file only cancels grants that are pending at
+that moment; delete it and the next start creates a new one. A file that does
+not hold a 32-byte key stops the server, so a damaged key is never replaced
+silently.
+
 ### Hardening the Subsonic API
 
 Subsonic clients send their credentials with every request, including each
