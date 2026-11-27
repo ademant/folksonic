@@ -59,7 +59,7 @@ Impressum page is [goldmark](https://github.com/yuin/goldmark), also pure Go.
 - Subsonic **username and password** (`u` with `p=…` or `p=enc:<hex>`) are
   supported. Subsonic token auth (`t` with `s`) is not: such requests get error
   42, and clients should use an API key or the password instead.
-- CORS is permissive — works directly from web clients.
+- CORS is permissive — works directly from web clients. Preflights allow the API methods (GET, HEAD, POST, PUT, DELETE) and the `Authorization`, `X-Api-Key` and `DPoP` headers. Browsers can read `X-Pairing-Link` and `Retry-After`. An OPTIONS on an API route answers with that route's `Allow` header (#220).
 
 ## Install
 
