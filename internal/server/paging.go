@@ -76,7 +76,7 @@ const (
 )
 
 // exposedHeaders are readable by browser clients across origins.
-const exposedHeaders = hdrTotal + ", " + hdrTotalArtist + ", " + hdrTotalAlbum + ", " + hdrTotalSong + ", Preference-Applied"
+const exposedHeaders = hdrTotal + ", " + hdrTotalArtist + ", " + hdrTotalAlbum + ", " + hdrTotalSong + ", Preference-Applied, X-Pairing-Link, Retry-After"
 
 func setTotal(w http.ResponseWriter, n int) {
 	w.Header().Set(hdrTotal, strconv.Itoa(n))

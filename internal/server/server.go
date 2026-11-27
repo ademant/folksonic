@@ -298,13 +298,36 @@ func Start(ctx context.Context, cfg *config.Config, pool *sql.DB, progress *scan
 // need Access-Control-Allow-Credentials. Reflecting the origin together with
 // that header would let any site read responses for anyone who holds the
 // credentials, which this avoids.
+// corsMethods are the methods browser clients may use (#220). PUT is an API
+// method (the device relay registry).
+const corsMethods = "GET, HEAD, POST, PUT, DELETE, OPTIONS"
+
+// corsRequestHeaders are the request headers a browser preflight may allow. A
+// wildcard does not cover Authorization in a preflight, so they are listed.
+const corsRequestHeaders = "Authorization, Content-Type, X-Api-Key, DPoP, Range, Prefer, If-None-Match, If-Modified-Since"
+
+// corsMiddleware sets the CORS headers and answers preflights. An OPTIONS that
+// is not a preflight goes to the routes, so an endpoint answers with its own
+// Allow header (#220). Subsonic paths keep the 204 with GET, HEAD and POST:
+// their handlers accept any method, so the mux cannot tell them apart.
 func corsMiddleware(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "*")
 		w.Header().Set("Access-Control-Expose-Headers", exposedHeaders)
-		if r.Method == http.MethodOptions {
+		if r.Method != http.MethodOptions {
+			h.ServeHTTP(w, r)
+			return
+		}
+		if r.Header.Get("Access-Control-Request-Method") != "" {
+			w.Header().Set("Access-Control-Allow-Methods", corsMethods)
+			w.Header().Set("Access-Control-Allow-Headers", corsRequestHeaders)
+			w.Header().Set("Access-Control-Max-Age", "600")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		// The base path may be in front of /rest/, so match it anywhere.
+		if strings.Contains(r.URL.Path, "/rest/") {
+			w.Header().Set("Allow", "GET, HEAD, POST, OPTIONS")
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
