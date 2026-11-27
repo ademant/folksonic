@@ -25,6 +25,7 @@ func grantState(t *testing.T) (*State, string) {
 	t.Helper()
 	s, _, _ := keyFixture(t)
 	s.BaseURL = grantBase
+	s.codeKey = []byte("0123456789abcdef0123456789abcdef")
 	session, err := users.CreateSession(context.Background(), s.Pool, userIDOf(t, s, "bob"), "")
 	if err != nil {
 		t.Fatal(err)

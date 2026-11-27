@@ -67,7 +67,10 @@ const maxLabel = 64
 
 // CreateDeviceAuth starts a grant for a device called label. The device code is
 // kept only as a hash; the user code is short enough to type.
-func CreateDeviceAuth(ctx context.Context, db *sql.DB, label string, now time.Time) (DeviceAuth, error) {
+func CreateDeviceAuth(ctx context.Context, db *sql.DB, codeKey []byte, label string, now time.Time) (DeviceAuth, error) {
+	if len(codeKey) != codeKeyLen {
+		return DeviceAuth{}, ErrNoCodeKey
+	}
 	label = truncateRunes(strings.TrimSpace(label), maxLabel)
 	deviceCode, err := randomToken(devicePrefix)
 	if err != nil {
@@ -93,7 +96,7 @@ func CreateDeviceAuth(ctx context.Context, db *sql.DB, label string, now time.Ti
 				"VALUES (?, ?, ?, ?, ?, ?)",
 			// The user code is stored hashed, like every other secret (#188):
 			// whoever reads the table cannot approve a pending grant with it.
-			hashToken(deviceCode), hashToken(userCode), label,
+			hashToken(deviceCode), UserCodeHash(codeKey, userCode), label,
 			now.Add(DeviceCodeTTL).UnixMilli(), DeviceInterval.Milliseconds(), now.UnixMilli())
 		if err == nil {
 			return DeviceAuth{
@@ -122,11 +125,14 @@ func PendingDeviceCodes(ctx context.Context, db *sql.DB, now time.Time) (int, er
 
 // ApproveUserCode gives a pending grant to userID. The user code is matched
 // without its dash and without case. ErrNotFound means no pending grant has it.
-func ApproveUserCode(ctx context.Context, db *sql.DB, userID int64, userCode string, now time.Time) error {
+func ApproveUserCode(ctx context.Context, db *sql.DB, codeKey []byte, userID int64, userCode string, now time.Time) error {
+	if len(codeKey) != codeKeyLen {
+		return ErrNoCodeKey
+	}
 	res, err := db.ExecContext(ctx,
 		"UPDATE oauth_device_codes SET user_id = ? "+
 			"WHERE user_code = ? AND user_id IS NULL AND expires_ms > ?",
-		userID, hashToken(normalizeUserCode(userCode)), now.UnixMilli())
+		userID, UserCodeHash(codeKey, normalizeUserCode(userCode)), now.UnixMilli())
 	if err != nil {
 		return err
 	}

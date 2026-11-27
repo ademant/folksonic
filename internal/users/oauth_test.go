@@ -13,6 +13,8 @@ import (
 )
 
 // grantFixture is a database with bob and a device that asks for tokens.
+var testCodeKey = []byte("0123456789abcdef0123456789abcdef")
+
 func grantFixture(t *testing.T) (context.Context, *sql.DB, int64, time.Time) {
 	t.Helper()
 	pool, err := db.Init(filepath.Join(t.TempDir(), "grant.db"))
@@ -31,11 +33,11 @@ func grantFixture(t *testing.T) (context.Context, *sql.DB, int64, time.Time) {
 // approvedGrant runs the device flow up to tokens, for the key jkt.
 func approvedGrant(t *testing.T, ctx context.Context, pool *sql.DB, userID int64, now time.Time, jkt string) (DeviceAuth, Tokens) {
 	t.Helper()
-	auth, err := CreateDeviceAuth(ctx, pool, "phone", now)
+	auth, err := CreateDeviceAuth(ctx, pool, testCodeKey, "phone", now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ApproveUserCode(ctx, pool, userID, auth.UserCode, now); err != nil {
+	if err := ApproveUserCode(ctx, pool, testCodeKey, userID, auth.UserCode, now); err != nil {
 		t.Fatal(err)
 	}
 	toks, err := ExchangeDeviceCode(ctx, pool, auth.DeviceCode, jkt, now.Add(DeviceInterval*2))
@@ -49,7 +51,7 @@ func approvedGrant(t *testing.T, ctx context.Context, pool *sql.DB, userID int64
 // rotation, and reuse of a rotated refresh token revoking the grant.
 func TestDeviceGrantLifecycle(t *testing.T) {
 	ctx, pool, bob, now := grantFixture(t)
-	auth, err := CreateDeviceAuth(ctx, pool, "phone", now)
+	auth, err := CreateDeviceAuth(ctx, pool, testCodeKey, "phone", now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +62,7 @@ func TestDeviceGrantLifecycle(t *testing.T) {
 		t.Fatalf("before approval: %v, want authorization_pending", err)
 	}
 	// The user types the code without its dash and in lower case.
-	if err := ApproveUserCode(ctx, pool, bob, strings.ToLower(strings.ReplaceAll(auth.UserCode, "-", "")), now); err != nil {
+	if err := ApproveUserCode(ctx, pool, testCodeKey, bob, strings.ToLower(strings.ReplaceAll(auth.UserCode, "-", "")), now); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
 	toks, err := ExchangeDeviceCode(ctx, pool, auth.DeviceCode, "key-a", now.Add(DeviceInterval*2))
@@ -124,7 +126,7 @@ func TestAccessTokenExpires(t *testing.T) {
 // Polling faster than the interval gets slow_down; a code past its life expires.
 func TestPollingAndExpiry(t *testing.T) {
 	ctx, pool, bob, now := grantFixture(t)
-	auth, err := CreateDeviceAuth(ctx, pool, "phone", now)
+	auth, err := CreateDeviceAuth(ctx, pool, testCodeKey, "phone", now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +140,7 @@ func TestPollingAndExpiry(t *testing.T) {
 		t.Fatalf("after its life: %v, want expired_token", err)
 	}
 	// An expired code cannot be approved any more.
-	if err := ApproveUserCode(ctx, pool, bob, auth.UserCode, now.Add(DeviceCodeTTL+time.Second)); !errors.Is(err, ErrNotFound) {
+	if err := ApproveUserCode(ctx, pool, testCodeKey, bob, auth.UserCode, now.Add(DeviceCodeTTL+time.Second)); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("approve after expiry: %v", err)
 	}
 }

@@ -46,7 +46,7 @@ func (s *State) APIDeviceAuthorize(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusServiceUnavailable, "too many devices are waiting for approval; try again later")
 		return
 	}
-	auth, err := users.CreateDeviceAuth(r.Context(), s.Pool, in.Label, now)
+	auth, err := users.CreateDeviceAuth(r.Context(), s.Pool, s.codeKey, in.Label, now)
 	if err != nil {
 		logging.Errorf("device authorize: %v", err)
 		writeAPIErrorCode(w, http.StatusInternalServerError, codeDatabaseError, "database error")
@@ -81,7 +81,7 @@ func (s *State) APIDeviceApprove(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &in) {
 		return
 	}
-	err := users.ApproveUserCode(r.Context(), s.Pool, u.ID, in.UserCode, time.Now())
+	err := users.ApproveUserCode(r.Context(), s.Pool, s.codeKey, u.ID, in.UserCode, time.Now())
 	if errors.Is(err, users.ErrNotFound) {
 		writeAPIError(w, http.StatusNotFound, "that code is not waiting for approval; check it on the app and try again")
 		return
